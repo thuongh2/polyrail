@@ -31,6 +31,7 @@ type Pipeline struct {
 	spendCache sync.Map // key -> cachedAgg
 	stop       chan struct{}
 	done       chan struct{}
+	closeOnce  sync.Once
 }
 
 type cachedAgg struct {
@@ -167,9 +168,9 @@ func (p *Pipeline) flush(batch []store.RequestLog) {
 	}
 }
 
-// Close flushes everything still pending.
+// Close flushes everything still pending. Safe to call more than once.
 func (p *Pipeline) Close() {
-	close(p.stop)
+	p.closeOnce.Do(func() { close(p.stop) })
 	<-p.done
 }
 

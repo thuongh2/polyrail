@@ -89,7 +89,7 @@ func setup(t *testing.T, cfg Config) *fixture {
 // cookie mints a session cookie for a fixture user (login itself is covered by TestLogin).
 func (f *fixture) cookie(name string) *http.Cookie {
 	u := f.users[name]
-	return &http.Cookie{Name: sessionCookie, Value: f.a.sign.sign(expiry(time.Hour), u.ID, sessionEpoch(u))}
+	return &http.Cookie{Name: sessionCookie, Value: f.a.sign.sign("sess", time.Hour, u.ID, sessionEpoch(u))}
 }
 
 type resp struct {
@@ -157,11 +157,18 @@ func (f *fixture) createKey(t *testing.T, as, org string) (id, secret string) {
 func TestLogin(t *testing.T) {
 	f := setup(t, Config{})
 	post := func(body string) *http.Response {
-		res, err := http.Post(f.srv.URL+"/api/auth/login", "application/json", strings.NewReader(body))
+		req, _ := http.NewRequest("POST", f.srv.URL+"/api/auth/login", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-GW-CSRF", "1")
+		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return res
+	}
+	// login CSRF: a cross-site form cannot set the header
+	if res, _ := http.Post(f.srv.URL+"/api/auth/login", "text/plain", strings.NewReader(`{"email":"owner@example.com","password":"`+testPassword+`"}`)); res.StatusCode != 403 {
+		t.Fatalf("login without CSRF header: %d", res.StatusCode)
 	}
 	for _, body := range []string{
 		`{"email":"owner@example.com","password":"wrong-password-123"}`,
@@ -435,8 +442,12 @@ func TestCrossTenantProvidersAndModels(t *testing.T) {
 	expect(t, f.do(t, "admin", "DELETE", A+"/providers/"+pubProv.ID, ""), 404, "tenant deletes public provider")
 	expect(t, f.do(t, "op", "POST", "/api/admin/models", `{"id":"pub/steal","enabled":true,"targets":[{"provider_id":"`+bProv.ID+`","model":"m"}]}`), 400, "public model targeting a private provider")
 
-	// org A may build a private model on a public provider; it stays private
-	expect(t, f.do(t, "admin", "POST", A+"/models", `{"id":"acme/private","name":"P","enabled":true,"targets":[{"provider_id":"`+pubProv.ID+`","model":"m"}]}`), 200, "private model on public provider")
+	// org models may not route to public providers at their own price (billing bypass, SECURITY H4)
+	expect(t, f.do(t, "admin", "POST", A+"/models", `{"id":"acme/cheap","enabled":true,"targets":[{"provider_id":"`+pubProv.ID+`","model":"m"}]}`), 400, "private model on public provider")
+	pa := f.do(t, "admin", "POST", A+"/providers", `{"name":"a","type":"openai","base_url":"https://8.8.8.8","enabled":true}`)
+	var aProv store.Provider
+	pa.json(t, &aProv)
+	expect(t, f.do(t, "admin", "POST", A+"/models", `{"id":"acme/private","name":"P","enabled":true,"targets":[{"provider_id":"`+aProv.ID+`","model":"m"}]}`), 200, "private model on own provider")
 	expect(t, f.do(t, "op", "POST", "/api/admin/models", `{"id":"vendor/public","name":"Pub","enabled":true,"input_price_micros":1500000,"output_price_micros":3000000,"context_length":8192,"targets":[{"provider_id":"`+pubProv.ID+`","model":"m"}]}`), 200, "public model")
 	if err := f.g.Reload(context.Background()); err != nil {
 		t.Fatal(err)
@@ -596,4 +607,27 @@ func TestKeyRevocationImmediateOnSameNode(t *testing.T) {
 	if c := call(); c != 401 {
 		t.Fatalf("revoked key still accepted right after revocation: status %d (served from the 30 s auth cache until the next catalog poll)", c)
 	}
+}
+
+func TestMemberCannotLiftAdminLimits(t *testing.T) {
+	f := setup(t, Config{})
+	A := "/api/orgs/" + f.orgA.ID + "/keys/"
+	id, _ := f.createKey(t, "member", f.orgA.ID)
+	expect(t, f.do(t, "admin", "PATCH", A+id, `{"rpm":10}`), 200, "admin sets limit")
+	expect(t, f.do(t, "member", "PATCH", A+id, `{"rpm":0}`), 403, "member lifts limit")
+	expect(t, f.do(t, "member", "PATCH", A+id, `{"name":"renamed"}`), 200, "member renames own key")
+	expect(t, f.do(t, "member", "PATCH", A+id, `{"revoked":true}`), 200, "member revokes own key")
+}
+
+func TestModelIDTraversalRejected(t *testing.T) {
+	f := setup(t, Config{})
+	for _, id := range []string{"x/../..", "a/b/../c", "noslash", "a/b c"} {
+		expect(t, f.do(t, "op", "POST", "/api/admin/models", `{"id":"`+id+`","targets":[{"provider_id":"x","model":"m"}]}`), 400, "model id "+id)
+	}
+}
+
+func TestMCPGrantOperatorOnly(t *testing.T) {
+	f := setup(t, Config{})
+	expect(t, f.do(t, "owner", "PATCH", "/api/orgs/"+f.orgA.ID, `{"mcp_servers":["*"]}`), 403, "owner grants MCP")
+	expect(t, f.do(t, "op", "PATCH", "/api/orgs/"+f.orgA.ID, `{"mcp_servers":["search"]}`), 200, "operator grants MCP")
 }

@@ -23,8 +23,10 @@ type Pipeline struct {
 	logs     chan store.RequestLog
 	interval time.Duration
 
-	mu      sync.Mutex
-	pending map[string]store.Agg // counters not yet flushed; billing is never dropped
+	mu       sync.Mutex
+	pending  map[string]store.Agg // counters not yet flushed; billing is never dropped
+	inflight map[string]store.Agg // counters being written by the current flush
+	gen      int64                // bumped when a flush commits; guards Spent against double reads
 
 	DroppedLogs atomic.Int64
 
@@ -36,6 +38,7 @@ type Pipeline struct {
 
 type cachedAgg struct {
 	a   store.Agg
+	gen int64
 	exp time.Time
 }
 
@@ -92,21 +95,30 @@ func (p *Pipeline) Record(l store.RequestLog) {
 // Spent returns flushed + pending cost for a spend counter. Flushed values are cached for one
 // flush interval, which bounds overspend to about one interval of traffic per node (D7).
 func (p *Pipeline) Spent(ctx context.Context, key string) (int64, error) {
-	var stored store.Agg
-	if c, ok := p.spendCache.Load(key); ok && time.Now().Before(c.(cachedAgg).exp) {
-		stored = c.(cachedAgg).a
-	} else {
-		a, err := p.kv.GetAgg(ctx, key)
-		if err != nil {
-			return 0, err
+	for {
+		p.mu.Lock()
+		gen := p.gen
+		p.mu.Unlock()
+		var stored store.Agg
+		if c, ok := p.spendCache.Load(key); ok && c.(cachedAgg).gen == gen && time.Now().Before(c.(cachedAgg).exp) {
+			stored = c.(cachedAgg).a
+		} else {
+			a, err := p.kv.GetAgg(ctx, key)
+			if err != nil {
+				return 0, err
+			}
+			stored = a
+			p.spendCache.Store(key, cachedAgg{a, gen, time.Now().Add(p.interval)})
 		}
-		stored = a
-		p.spendCache.Store(key, cachedAgg{a, time.Now().Add(p.interval)})
+		p.mu.Lock()
+		if p.gen != gen { // a flush committed while we read: the stored value may miss or double count
+			p.mu.Unlock()
+			continue
+		}
+		pend, infl := p.pending[key], p.inflight[key]
+		p.mu.Unlock()
+		return stored[store.AggCostMicros] + pend[store.AggCostMicros] + infl[store.AggCostMicros], nil
 	}
-	p.mu.Lock()
-	pend := p.pending[key]
-	p.mu.Unlock()
-	return stored[store.AggCostMicros] + pend[store.AggCostMicros], nil
 }
 
 func (p *Pipeline) run() {
@@ -139,22 +151,24 @@ func (p *Pipeline) flush(batch []store.RequestLog) {
 	defer cancel()
 	p.mu.Lock()
 	adds := p.pending
-	p.pending = map[string]store.Agg{}
+	p.pending, p.inflight = map[string]store.Agg{}, adds
 	p.mu.Unlock()
 	if len(adds) > 0 {
-		if err := p.kv.AddAgg(ctx, adds); err != nil {
-			slog.Error("usage: counter flush failed, will retry", "err", err, "keys", len(adds))
-			p.mu.Lock() // put the counters back so they are retried on the next flush
+		err := p.kv.AddAgg(ctx, adds)
+		p.mu.Lock()
+		if err != nil { // put the counters back so they are retried on the next flush
 			for k, a := range adds {
 				cur := p.pending[k]
 				cur.Add(a)
 				p.pending[k] = cur
 			}
-			p.mu.Unlock()
 		} else {
-			for k := range adds {
-				p.spendCache.Delete(k) // next Spent() reads the fresh value
-			}
+			p.gen++ // cached stored values are stale now
+		}
+		p.inflight = nil
+		p.mu.Unlock()
+		if err != nil {
+			slog.Error("usage: counter flush failed, will retry", "err", err, "keys", len(adds))
 		}
 	}
 	if len(batch) == 0 {

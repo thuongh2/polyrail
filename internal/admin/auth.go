@@ -23,7 +23,7 @@ import (
 
 const (
 	sessionCookie = "gw_session"
-	sessionTTL    = 7 * 24 * time.Hour
+	sessionTTL    = 3 * 24 * time.Hour
 )
 
 // signer issues stateless, HMAC-signed tokens: base64(payload) + "." + hex(mac).
@@ -40,13 +40,15 @@ func (s signer) mac(payload string) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
-func (s signer) sign(parts ...string) string {
-	p := base64.RawURLEncoding.EncodeToString([]byte(strings.Join(parts, "|")))
+// sign issues a token for one purpose ("sess", "oidc") that expires after ttl.
+func (s signer) sign(purpose string, ttl time.Duration, parts ...string) string {
+	all := append([]string{purpose, strconv.FormatInt(time.Now().Add(ttl).Unix(), 10)}, parts...)
+	p := base64.RawURLEncoding.EncodeToString([]byte(strings.Join(all, "|")))
 	return p + "." + s.mac(p)
 }
 
-// verify returns the parts of a valid token whose first part is a unix expiry in the future.
-func (s signer) verify(tok string) ([]string, bool) {
+// verify returns the parts of a valid, unexpired token issued for purpose.
+func (s signer) verify(purpose, tok string) ([]string, bool) {
 	p, mac, ok := strings.Cut(tok, ".")
 	if !ok || !hmac.Equal([]byte(mac), []byte(s.mac(p))) {
 		return nil, false
@@ -56,23 +58,24 @@ func (s signer) verify(tok string) ([]string, bool) {
 		return nil, false
 	}
 	parts := strings.Split(string(raw), "|")
-	exp, err := strconv.ParseInt(parts[0], 10, 64)
+	if len(parts) < 2 || parts[0] != purpose {
+		return nil, false
+	}
+	exp, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
 		return nil, false
 	}
-	return parts[1:], true
+	return parts[2:], true
 }
 
-func expiry(d time.Duration) string { return strconv.FormatInt(time.Now().Add(d).Unix(), 10) }
-
-// sessionEpoch changes when the password hash changes, so a password change logs out other sessions.
+// sessionEpoch changes when the password changes or the user signs out, ending every session.
 func sessionEpoch(u *store.User) string {
-	h := sha256.Sum256([]byte(u.PasswordHash))
-	return hex.EncodeToString(h[:4])
+	h := sha256.Sum256([]byte(u.PasswordHash + "|" + strconv.Itoa(u.SessionGen)))
+	return hex.EncodeToString(h[:8])
 }
 
 func (a *API) setSession(w http.ResponseWriter, u *store.User) {
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: a.sign.sign(expiry(sessionTTL), u.ID, sessionEpoch(u)),
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: a.sign.sign("sess", sessionTTL, u.ID, sessionEpoch(u)),
 		Path: "/", HttpOnly: true, Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: int(sessionTTL.Seconds())})
 }
 
@@ -82,7 +85,7 @@ func (a *API) currentUser(r *http.Request) (*store.User, error) {
 	if err != nil {
 		return nil, errUnauthorized
 	}
-	parts, ok := a.sign.verify(c.Value)
+	parts, ok := a.sign.verify("sess", c.Value)
 	if !ok || len(parts) != 2 {
 		return nil, errUnauthorized
 	}
@@ -119,7 +122,8 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, _ := a.Lim.Incr(r.Context(), "login:"+clientIP(r), 1)
-	if n > 20 {
+	m, _ := a.Lim.Incr(r.Context(), "login-email:"+strings.ToLower(strings.TrimSpace(in.Email)), 1)
+	if n > 20 || m > 10 {
 		writeErr(w, http.StatusTooManyRequests, "too many login attempts, wait a minute")
 		return
 	}
@@ -137,7 +141,11 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	a.me(w, r.WithContext(context.WithValue(r.Context(), userCtx{}, u)))
 }
 
+// logout ends every session of the user (a stolen cookie stops working too).
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
+	if u, err := a.currentUser(r); err == nil {
+		_, _ = a.S.UpdateUser(r.Context(), u.ID, func(x *store.User) error { x.SessionGen++; return nil })
+	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -205,6 +213,7 @@ type OIDCConfig struct {
 	AllowedDomains                              []string
 	DefaultOrg                                  string
 	DefaultRole                                 store.Role
+	TrustUnverifiedEmail                        bool // some IdPs (e.g. Entra ID) omit email_verified
 }
 
 type oidcClient struct {
@@ -214,6 +223,12 @@ type oidcClient struct {
 }
 
 func newOIDC(ctx context.Context, cfg OIDCConfig) (*oidcClient, error) {
+	if cfg.DefaultOrg != "" && len(cfg.AllowedDomains) == 0 {
+		return nil, errors.New("OIDC_DEFAULT_ORG requires OIDC_ALLOWED_DOMAINS, or any IdP account would join that org")
+	}
+	if cfg.DefaultRole.Rank() == 0 || cfg.DefaultRole == store.RoleOwner {
+		return nil, errors.New("OIDC_DEFAULT_ROLE must be viewer, member or admin")
+	}
 	p, err := oidc.NewProvider(ctx, cfg.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("oidc discovery: %w", err)
@@ -237,7 +252,7 @@ func (a *API) oidcLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, nonce := randHex(16), randHex(16)
-	http.SetCookie(w, &http.Cookie{Name: "gw_oidc", Value: a.sign.sign(expiry(10*time.Minute), state, nonce),
+	http.SetCookie(w, &http.Cookie{Name: "gw_oidc", Value: a.sign.sign("oidc", 10*time.Minute, state, nonce),
 		Path: "/api/auth/oidc", HttpOnly: true, Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: 600})
 	http.Redirect(w, r, a.oidc.oauth.AuthCodeURL(state, oidc.Nonce(nonce)), http.StatusFound)
 }
@@ -250,7 +265,7 @@ func (a *API) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie("gw_oidc")
 	parts, ok := []string(nil), false
 	if err == nil {
-		parts, ok = a.sign.verify(c.Value)
+		parts, ok = a.sign.verify("oidc", c.Value)
 	}
 	if !ok || len(parts) != 2 || r.URL.Query().Get("state") != parts[0] {
 		writeErr(w, http.StatusBadRequest, "invalid SSO state, start the login again")
@@ -273,7 +288,9 @@ func (a *API) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		Verified *bool  `json:"email_verified"`
 		Name     string `json:"name"`
 	}
-	if err := idt.Claims(&claims); err != nil || claims.Email == "" || (claims.Verified != nil && !*claims.Verified) {
+	err = idt.Claims(&claims)
+	verified := claims.Verified != nil && *claims.Verified || (claims.Verified == nil && a.oidc.cfg.TrustUnverifiedEmail)
+	if err != nil || claims.Email == "" || !verified {
 		writeErr(w, http.StatusForbidden, "SSO account has no verified email")
 		return
 	}
@@ -282,10 +299,21 @@ func (a *API) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "your email domain is not allowed on this gateway")
 		return
 	}
+	subject := idt.Issuer + "|" + idt.Subject
 	u, err := a.S.GetUserByEmail(ctx, claims.Email)
-	if errors.Is(err, store.ErrNotFound) {
-		u = &store.User{Email: claims.Email, Name: claims.Name}
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		u = &store.User{Email: claims.Email, Name: claims.Name, SSOSubject: subject}
 		err = a.S.CreateUser(ctx, u)
+	case err != nil:
+	case u.SSOSubject == subject:
+	case u.SSOSubject == "" && u.PasswordHash == "":
+		// an invited account nobody has claimed with a password: link it to this identity
+		u, err = a.S.UpdateUser(ctx, u.ID, func(x *store.User) error { x.SSOSubject = subject; return nil })
+	default:
+		// never silently link SSO to an account someone else may have created with this email
+		writeErr(w, http.StatusConflict, "an account with this email already exists; sign in with its password or ask an operator")
+		return
 	}
 	if err != nil {
 		fail(w, err)

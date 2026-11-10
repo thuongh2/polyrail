@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -122,6 +123,8 @@ func run() error {
 		Buffer:       envInt("PROVIDER_BUFFER", 256),
 		CacheMB:      envInt("RESPONSE_CACHE_MB", 64),
 		PollInterval: 2 * time.Second,
+
+		AllowPrivateURLs: envBool("ALLOW_PRIVATE_PROVIDER_URLS"),
 	})
 	if err != nil {
 		return err
@@ -145,7 +148,8 @@ func run() error {
 		}
 		acfg.OIDC = &admin.OIDCConfig{Issuer: iss, ClientID: os.Getenv("OIDC_CLIENT_ID"), ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
 			RedirectURL: publicURL + "/api/auth/oidc/callback", AllowedDomains: domains,
-			DefaultOrg: os.Getenv("OIDC_DEFAULT_ORG"), DefaultRole: store.Role(env("OIDC_DEFAULT_ROLE", "member"))}
+			DefaultOrg: os.Getenv("OIDC_DEFAULT_ORG"), DefaultRole: store.Role(env("OIDC_DEFAULT_ROLE", "member")),
+			TrustUnverifiedEmail: envBool("OIDC_TRUST_UNVERIFIED_EMAIL")}
 	}
 	api, err := admin.New(ctx, s, g, lim, acfg)
 	if err != nil {
@@ -161,7 +165,7 @@ func run() error {
 	mux.HandleFunc("GET /v1/models", g.Models)
 	mux.HandleFunc("POST /v1/mcp/tool/execute", g.MCPExecute)
 	api.Register(mux)
-	mux.Handle("GET /metrics", promhttp.Handler())
+	mux.Handle("GET /metrics", metricsAuth(os.Getenv("METRICS_TOKEN"), promhttp.Handler()))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := kv.Ping(r.Context()); err != nil {
@@ -175,7 +179,8 @@ func run() error {
 	go retention(ctx, s, acfg.LogRetentionDays)
 
 	srv := &http.Server{Addr: env("LISTEN_ADDR", ":8080"), Handler: withCORS(mux),
-		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
+	// No global WriteTimeout: streams can run for minutes; each stream write sets its own deadline.
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
 	slog.Info("agent-gateway listening", "addr", srv.Addr, "store", env("STORE", "pebble"), "public_url", publicURL)
@@ -192,6 +197,17 @@ func run() error {
 	up.Close()
 	g.BF.Shutdown()
 	return nil
+}
+
+// metricsAuth requires "Authorization: Bearer <METRICS_TOKEN>" when a token is configured.
+func metricsAuth(token string, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // withCORS lets browser apps call the OpenAI-compatible API (key auth, no cookies).

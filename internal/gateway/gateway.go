@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,12 +30,13 @@ import (
 const KeyPrefix = "sk-gw-"
 
 type Config struct {
-	MaxBodyBytes  int64
-	Concurrency   int // per provider
-	Buffer        int // per provider queue
-	CacheMB       int // response cache
-	PollInterval  time.Duration
-	MCPAllowStdio bool
+	MaxBodyBytes int64
+	Concurrency  int // per provider
+	Buffer       int // per provider queue
+	CacheMB      int // response cache
+	PollInterval time.Duration
+	// AllowPrivateURLs lets tenant providers reach private networks (else re-checked per request).
+	AllowPrivateURLs bool
 }
 
 type Gateway struct {
@@ -122,7 +124,7 @@ func (g *Gateway) Reload(ctx context.Context) error {
 	g.auth.Clear() // key revocations and org changes take effect now
 	for id, p := range next.Providers {
 		old, ok := prev.Providers[id]
-		if ok && old.BaseURL == p.BaseURL && old.TimeoutSeconds == p.TimeoutSeconds && fmt.Sprint(old.ExtraHeaders) == fmt.Sprint(p.ExtraHeaders) {
+		if ok && old.BaseURL == p.BaseURL && old.TimeoutSeconds == p.TimeoutSeconds {
 			continue // keys are read per request; only network config needs a provider restart
 		}
 		if ok {
@@ -155,17 +157,31 @@ func writeError(w http.ResponseWriter, e *apiError) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": e.msg, "type": e.typ, "code": e.code}})
 }
 
-func fromBifrost(be *schemas.BifrostError) *apiError {
+var reSecretish = regexp.MustCompile(`(sk|key|tok)[-_][A-Za-z0-9*_\-.]{6,}`)
+
+// fromBifrost maps a provider error. Upstream text is passed through for public models (useful
+// errors like context-length) with key-like strings redacted; for org-private models it is
+// replaced, so a tenant cannot read responses of hosts it points a provider at (SSRF).
+func fromBifrost(be *schemas.BifrostError, private bool) *apiError {
 	status := http.StatusBadGateway
-	if be.StatusCode != nil && *be.StatusCode >= 400 {
+	if be.StatusCode != nil && *be.StatusCode >= 400 && *be.StatusCode < 600 {
 		status = *be.StatusCode
 	}
 	msg := "upstream error"
 	if be.Error != nil && be.Error.Message != "" {
-		msg = be.Error.Message
+		msg = reSecretish.ReplaceAllString(be.Error.Message, "[redacted]")
+	}
+	if private {
+		msg = fmt.Sprintf("upstream provider returned an error (status %d)", status)
+	}
+	if len(msg) > 500 {
+		msg = msg[:500]
 	}
 	return &apiError{status, "upstream_error", "provider_error", msg}
 }
+
+// InvalidateAuth drops cached API key principals so key and org changes apply on this node now.
+func (g *Gateway) InvalidateAuth() { g.auth.Clear() }
 
 // ---- auth, limits, budget ----
 
@@ -255,6 +271,12 @@ func (g *Gateway) resolve(p *principal, id, kind string) (store.Model, []store.T
 		return m, nil, errf(400, "invalid_request_error", "wrong_model_kind", "model %q is a %s model", id, m.Kind)
 	}
 	ts := plan(m, snap, g.br)
+	if !g.cfg.AllowPrivateURLs {
+		ts = slices.DeleteFunc(ts, func(t store.Target) bool {
+			p := snap.Providers[t.ProviderID]
+			return p.OrgID != "" && !publicURLCached(p.BaseURL)
+		})
+	}
 	if len(ts) == 0 {
 		return m, nil, errf(503, "api_error", "no_provider", "no provider available for model %q", id)
 	}
@@ -297,10 +319,14 @@ func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start 
 		_, _ = g.Lim.Incr(context.Background(), "t:"+p.Key.ID, int64(l.InTokens+l.OutTokens))
 	}
 	g.Usage.Record(l)
-	mRequests.WithLabelValues(m.ID, l.Provider, strconv.Itoa(l.Status)).Inc()
-	mLatency.WithLabelValues(m.ID).Observe(time.Since(start).Seconds())
-	mTokens.WithLabelValues(m.ID, "in").Add(float64(l.InTokens))
-	mTokens.WithLabelValues(m.ID, "out").Add(float64(l.OutTokens))
+	label, prov := m.ID, l.Provider
+	if m.OrgID != "" { // private model ids and provider names stay out of the shared metrics
+		label, prov = "private", "private"
+	}
+	mRequests.WithLabelValues(label, prov, strconv.Itoa(l.Status)).Inc()
+	mLatency.WithLabelValues(label).Observe(time.Since(start).Seconds())
+	mTokens.WithLabelValues(label, "in").Add(float64(l.InTokens))
+	mTokens.WithLabelValues(label, "out").Add(float64(l.OutTokens))
 }
 
 func (g *Gateway) readBody(w http.ResponseWriter, r *http.Request) ([]byte, *apiError) {
@@ -368,7 +394,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := g.snap.Load()
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
-	bctx := g.withMCP(ctx, r)
+	bctx, usesMCP := g.withMCP(ctx, r, p.Org)
 	w.Header().Set("x-gateway-request-id", store.NewID())
 
 	if req.Stream != nil && *req.Stream {
@@ -377,7 +403,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cacheKey, ttl := "", cacheTTL(r)
-	if ttl > 0 {
+	if ttl > 0 && !usesMCP && g.cfg.CacheMB > 0 {
 		h := sha256.Sum256(append([]byte(p.Org.ID+"\x00"), body...))
 		cacheKey = hex.EncodeToString(h[:])
 		if out, ok := g.resp.Get(cacheKey); ok {
@@ -392,7 +418,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	resp, berr := g.BF.ChatCompletionRequest(bctx, breq)
 	if berr != nil {
-		ae := fromBifrost(berr)
+		ae := fromBifrost(berr, m.OrgID != "")
 		g.settle(snap, ts, "", ae.status >= 500 || ae.status == 429)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)
@@ -430,13 +456,13 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principa
 	snap := g.snap.Load()
 	ch, berr := g.BF.ChatCompletionStreamRequest(ctx, breq)
 	if berr != nil {
-		ae := fromBifrost(berr)
+		ae := fromBifrost(berr, m.OrgID != "")
 		g.settle(snap, ts, "", ae.status >= 500 || ae.status == 429)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg, Stream: true}, start)
 		writeError(w, ae)
 		return
 	}
-	flusher, _ := w.(http.Flusher)
+	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -450,7 +476,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principa
 		}
 		var data []byte
 		if chunk.BifrostError != nil {
-			ae := fromBifrost(chunk.BifrostError)
+			ae := fromBifrost(chunk.BifrostError, m.OrgID != "")
 			l.Status, l.Error = ae.status, ae.msg
 			data, _ = json.Marshal(map[string]any{"error": map[string]any{"message": ae.msg, "type": ae.typ, "code": ae.code}})
 		} else if c := chunk.BifrostChatResponse; c != nil {
@@ -468,20 +494,16 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principa
 		} else {
 			continue
 		}
-		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+		_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second)) // a stalled reader cannot pin the stream
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil || rc.Flush() != nil {
 			clientGone = true
 			l.Status, l.Error = 499, "client closed connection"
 			continue
 		}
-		if flusher != nil {
-			flusher.Flush()
-		}
 	}
 	if !clientGone {
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
-		if flusher != nil {
-			flusher.Flush()
-		}
+		_ = rc.Flush()
 	}
 	if l.OutTokens == 0 && chars > 0 {
 		l.OutTokens = (chars + 3) / 4 // shortcut: estimate when the provider sends no usage
@@ -519,10 +541,27 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := g.snap.Load()
 	breq := req.ToBifrostEmbeddingRequest()
+	var segs []*string
+	if in := breq.Input; in != nil {
+		if in.Text != nil {
+			segs = append(segs, in.Text)
+		}
+		for i := range in.Texts {
+			segs = append(segs, &in.Texts[i])
+		}
+	}
+	if reason, err := applyGuardrails(p.Org, segs); err != nil {
+		writeError(w, errf(500, "api_error", "guardrail_config", "%v", err))
+		return
+	} else if reason != "" {
+		g.record(p, m, store.RequestLog{Status: 400, Error: "guardrail: " + reason}, start)
+		writeError(w, errf(400, "invalid_request_error", "guardrail_blocked", "%s", reason))
+		return
+	}
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.EmbeddingRequest(ctx, breq)
 	if berr != nil {
-		ae := fromBifrost(berr)
+		ae := fromBifrost(berr, m.OrgID != "")
 		g.settle(snap, ts, "", ae.status >= 500 || ae.status == 429)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)

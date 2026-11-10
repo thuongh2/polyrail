@@ -69,9 +69,9 @@ func user(r *http.Request) *store.User { return r.Context().Value(userCtx{}).(*s
 func role(r *http.Request) store.Role  { return r.Context().Value(roleCtx{}).(store.Role) }
 
 func (a *API) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/auth/login", a.login)
-	mux.HandleFunc("POST /api/auth/logout", a.logout)
-	mux.HandleFunc("POST /api/auth/signup", a.signup)
+	mux.HandleFunc("POST /api/auth/login", csrf(a.login))
+	mux.HandleFunc("POST /api/auth/logout", csrf(a.logout))
+	mux.HandleFunc("POST /api/auth/signup", csrf(a.signup))
 	mux.HandleFunc("GET /api/auth/config", a.authConfig)
 	mux.HandleFunc("GET /api/auth/oidc/login", a.oidcLogin)
 	mux.HandleFunc("GET /api/auth/oidc/callback", a.oidcCallback)
@@ -124,6 +124,17 @@ func (a *API) Register(mux *http.ServeMux) {
 }
 
 // ---- middleware ----
+
+// csrf requires the X-GW-CSRF header on non-GET requests; a cross-site form cannot set it.
+func csrf(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Header.Get("X-GW-CSRF") != "1" {
+			writeErr(w, http.StatusForbidden, "missing X-GW-CSRF header")
+			return
+		}
+		h(w, r)
+	}
+}
 
 // authed requires a session. Mutations also require the X-GW-CSRF header, which a cross-site
 // form cannot set.
@@ -367,11 +378,12 @@ func (a *API) patchOrg(w http.ResponseWriter, r *http.Request) {
 		Guardrails   *store.Guardrails `json:"guardrails"`
 		MaxTokensCap *int              `json:"max_tokens_cap"`
 		Prepaid      *bool             `json:"prepaid"`
+		MCPServers   *[]string         `json:"mcp_servers"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	if in.Prepaid != nil && !user(r).Operator {
+	if (in.Prepaid != nil || in.MCPServers != nil) && !user(r).Operator {
 		fail(w, errForbidden)
 		return
 	}
@@ -396,12 +408,16 @@ func (a *API) patchOrg(w http.ResponseWriter, r *http.Request) {
 		if in.Prepaid != nil {
 			o.Prepaid = *in.Prepaid
 		}
+		if in.MCPServers != nil {
+			o.MCPServers = *in.MCPServers
+		}
 		return nil
 	})
 	if err != nil {
 		fail(w, err)
 		return
 	}
+	a.G.InvalidateAuth() // cached principals carry the org's guardrails and billing mode
 	a.audit(r, o.ID, "org.update", o.ID, "")
 	writeJSON(w, 200, o)
 }
@@ -412,7 +428,8 @@ func (a *API) deleteOrg(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	a.audit(r, id, "org.delete", id, "")
+	a.G.InvalidateAuth()
+	a.audit(r, "_", "org.delete", id, "") // the org's own audit log is gone with it
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -436,6 +453,7 @@ func (a *API) addCredits(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	a.G.InvalidateAuth()
 	a.audit(r, o.ID, "org.credits", o.ID, fmt.Sprintf("%+.2f USD %s", in.USD, in.Note))
 	v, _ := a.view(r.Context(), o)
 	writeJSON(w, 200, v)
@@ -659,15 +677,19 @@ func (a *API) patchKey(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if role(r).Rank() < store.RoleAdmin.Rank() && cur.CreatedBy != user(r).ID {
-		fail(w, errForbidden) // members manage only their own keys
-		return
+	if role(r).Rank() < store.RoleAdmin.Rank() {
+		// members may rename or revoke their own keys, not lift limits an admin set
+		if cur.CreatedBy != user(r).ID || in.RPM != nil || in.TPM != nil || in.MonthlyBudgetUSD != nil || in.Models != nil || in.ExpiresInDays != nil {
+			fail(w, errForbidden)
+			return
+		}
 	}
 	k, err := a.S.UpdateKey(r.Context(), org, id, func(k *store.APIKey) error { in.apply(k); return nil })
 	if err != nil {
 		fail(w, err)
 		return
 	}
+	a.G.InvalidateAuth() // revocation and new limits apply on this node immediately
 	a.audit(r, org, "key.update", id, fmt.Sprintf("revoked=%v rpm=%d tpm=%d", k.Revoked, k.RPM, k.TPM))
 	writeJSON(w, 200, k)
 }
@@ -679,7 +701,8 @@ var supportedTypes = map[string]bool{"openai": true, "anthropic": true, "gemini"
 	"mistral": true, "groq": true, "ollama": true, "cerebras": true, "perplexity": true, "openrouter": true,
 	"nebius": true, "parasail": true, "sgl": true}
 
-// checkBaseURL blocks tenants from pointing providers at internal networks (SSRF).
+// checkBaseURL blocks tenants from pointing providers at internal networks (SSRF). The gateway
+// re-checks at request time as well.
 func checkBaseURL(raw string, allowPrivate bool) error {
 	if raw == "" {
 		return nil
@@ -691,14 +714,8 @@ func checkBaseURL(raw string, allowPrivate bool) error {
 	if allowPrivate {
 		return nil
 	}
-	ips, err := net.LookupIP(u.Hostname())
-	if err != nil {
-		return fmt.Errorf("%w: cannot resolve %s", store.ErrInvalid, u.Hostname())
-	}
-	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsLinkLocalMulticast() {
-			return fmt.Errorf("%w: base_url resolves to a private address", store.ErrInvalid)
-		}
+	if err := gateway.CheckPublicURL(raw); err != nil {
+		return fmt.Errorf("%w: base_url must resolve to a public address", store.ErrInvalid)
 	}
 	return nil
 }
@@ -733,8 +750,9 @@ func (a *API) putProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.OrgID, p.ID = owner(r), r.PathValue("id")
-	if !supportedTypes[p.Type] {
-		fail(w, fmt.Errorf("%w: unsupported provider type %q (OpenAI-compatible APIs use type openai + base_url)", store.ErrInvalid, p.Type))
+	if !supportedTypes[p.Type] || (p.OrgID != "" && !gateway.MultiInstance(p.Type)) {
+		// tenants get the multi-instance types only, so they never take a platform provider's slot
+		fail(w, fmt.Errorf("%w: unsupported provider type %q here (OpenAI-compatible APIs use type openai + base_url)", store.ErrInvalid, p.Type))
 		return
 	}
 	if err := checkBaseURL(p.BaseURL, p.OrgID == "" || a.cfg.AllowPrivateURLs); err != nil {
@@ -825,8 +843,8 @@ func (a *API) putModel(w http.ResponseWriter, r *http.Request) {
 		m.ID = id
 	}
 	m.OrgID = owner(r)
-	if strings.Count(m.ID, "/") < 1 || strings.ContainsAny(m.ID, " \t\n?#") {
-		fail(w, fmt.Errorf("%w: model id must look like vendor/name", store.ErrInvalid))
+	if !reModelID.MatchString(m.ID) || strings.Contains(m.ID, "..") {
+		fail(w, fmt.Errorf("%w: model id must look like vendor/name (letters, digits, . _ : - /)", store.ErrInvalid))
 		return
 	}
 	if err := a.S.PutModel(r.Context(), &m); err != nil {
@@ -836,6 +854,8 @@ func (a *API) putModel(w http.ResponseWriter, r *http.Request) {
 	a.audit(r, r.PathValue("org"), "model.put", m.ID, fmt.Sprintf("in=%d out=%d micros/1M", m.InputPrice, m.OutputPrice))
 	writeJSON(w, 200, m)
 }
+
+var reModelID = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._:/-]+$`)
 
 func (a *API) deleteModel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -1027,7 +1047,7 @@ func (a *API) putMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.ID = r.PathValue("id")
-	if err := checkBaseURL(m.URL, true); err != nil {
+	if err := checkBaseURL(m.URL, true); err != nil { // operators may use internal MCP servers
 		fail(w, err)
 		return
 	}

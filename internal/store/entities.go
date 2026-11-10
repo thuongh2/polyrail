@@ -54,6 +54,7 @@ type Org struct {
 	CreditsMicros int64      `json:"credits_micros"` // total credits granted, micro-USD
 	MaxTokensCap  int        `json:"max_tokens_cap,omitempty"`
 	Guardrails    Guardrails `json:"guardrails"`
+	MCPServers    []string   `json:"mcp_servers,omitempty"` // MCP server names this org may use ("*" = all); set by operators
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
@@ -63,6 +64,8 @@ type User struct {
 	Name         string    `json:"name"`
 	PasswordHash string    `json:"-"` // persisted via storedUser only, never in API output
 	Operator     bool      `json:"operator"`
+	SSOSubject   string    `json:"sso_subject,omitempty"` // OIDC issuer|subject this account is linked to
+	SessionGen   int       `json:"session_gen,omitempty"` // bumped on sign-out to end every session
 	Disabled     bool      `json:"disabled,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -117,16 +120,15 @@ type ProviderKey struct {
 }
 
 type Provider struct {
-	ID             string            `json:"id"`
-	OrgID          string            `json:"org_id,omitempty"` // empty = public (platform) provider
-	Name           string            `json:"name"`
-	Type           string            `json:"type"` // Bifrost provider type: openai, anthropic, gemini, ...
-	BaseURL        string            `json:"base_url,omitempty"`
-	ExtraHeaders   map[string]string `json:"extra_headers,omitempty"`
-	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
-	Keys           []ProviderKey     `json:"keys"`
-	Enabled        bool              `json:"enabled"`
-	CreatedAt      time.Time         `json:"created_at"`
+	ID             string        `json:"id"`
+	OrgID          string        `json:"org_id,omitempty"` // empty = public (platform) provider
+	Name           string        `json:"name"`
+	Type           string        `json:"type"` // Bifrost provider type: openai, anthropic, gemini, ...
+	BaseURL        string        `json:"base_url,omitempty"`
+	TimeoutSeconds int           `json:"timeout_seconds,omitempty"`
+	Keys           []ProviderKey `json:"keys"`
+	Enabled        bool          `json:"enabled"`
+	CreatedAt      time.Time     `json:"created_at"`
 }
 
 type Target struct {
@@ -545,6 +547,13 @@ func (s *Store) PutProvider(ctx context.Context, p *Provider) error {
 				return ErrNotFound // never move a provider across tenants
 			}
 			p.CreatedAt = old.CreatedAt
+			if old.BaseURL != p.BaseURL || old.Type != p.Type {
+				for _, k := range p.Keys { // stored keys must not follow the provider to a new host
+					if k.Value == "" {
+						return fmt.Errorf("%w: re-enter the API keys when changing base_url or type", ErrInvalid)
+					}
+				}
+			}
 		}
 		for i := range p.Keys {
 			k := &p.Keys[i]
@@ -633,11 +642,13 @@ func (s *Store) PutModel(ctx context.Context, m *Model) error {
 		}
 		for _, t := range m.Targets {
 			p, err := getJSON[Provider](tx.Get, "prov/"+t.ProviderID)
-			if err != nil {
-				return fmt.Errorf("%w: target provider %q: %v", ErrInvalid, t.ProviderID, err)
+			if errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("%w: target provider %q not found", ErrInvalid, t.ProviderID)
+			} else if err != nil {
+				return err
 			}
-			if p.OrgID != "" && p.OrgID != m.OrgID {
-				return fmt.Errorf("%w: provider %q belongs to another org", ErrInvalid, t.ProviderID)
+			if p.OrgID != m.OrgID { // public models use public providers; org models use the org's own
+				return fmt.Errorf("%w: target provider %q not found", ErrInvalid, t.ProviderID)
 			}
 		}
 		return putJSON(tx, modelKey(m.OrgID, m.ID), m)

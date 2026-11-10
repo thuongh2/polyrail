@@ -56,3 +56,33 @@ Severity: critical/high must be fixed before release. Line numbers refer to the 
 ## Release gate
 
 H1–H4 block release. M-items should be fixed in the same cycle; M2, M3, M4 are small changes.
+
+## Resolution (developer pass, 2026-11-10)
+
+Verified by `go test -race ./...` (admin, gateway, e2e suites). New regression tests named in brackets.
+
+| ID | Status | What changed |
+|---|---|---|
+| H1 | Mitigated | Full deny list (`gateway/netguard.go`: 0/8, 100.64/10, 198.18/15, 64:ff9b::/96, multicast, ULA, …); tenant provider URLs re-checked at request time (30 s cache); upstream error text is never returned for org-private models; key-like strings redacted for public ones. Residual: DNS-rebinding window ≤ 30 s because Bifrost's HTTP client resolves on its own — deployment docs require an egress firewall for internal ranges. [TestBlockedIPRanges, TestUpstreamErrorsSanitized] |
+| H2 | Fixed | Operators grant MCP servers per org (`mcp_servers`); `withMCP` and `/v1/mcp/tool/execute` enforce it; tool calls are admitted (limits, budget) and logged as `mcp/<server>`. [TestMCPOrgAllowlist, TestMCPGrantOperatorOnly] |
+| H3 | Mitigated | SSO links only to an account with the same issuer+subject, or an invited account with no password; otherwise 409. Residual: with password login, email is an unverified label; self sign-up is off by default (`ALLOW_SIGNUP`). |
+| H4 | Fixed | A model may only target providers of its own owner (public↔public, org↔same org). [TestCrossTenantProvidersAndModels] |
+| M1 | Fixed | `email_verified` must be true (opt-out `OIDC_TRUST_UNVERIFIED_EMAIL`); `OIDC_DEFAULT_ORG` without `OIDC_ALLOWED_DOMAINS` refuses to start; default role cannot be owner. |
+| M2 | Fixed | `extra_headers` removed (nobody needed it). |
+| M3 | Fixed | Members may only rename/revoke their own keys. [TestMemberCannotLiftAdminLimits] |
+| M4 | Fixed | Strict model id pattern, no `..`; UI encodes path segments. [TestModelIDTraversalRejected] |
+| M5 | Fixed | `METRICS_TOKEN` protects `/metrics`; private models are labelled `private`. |
+| M6 | Fixed | `ReadTimeout` 60 s; each stream write has a 30 s deadline. |
+| M7 | Fixed | Guardrails apply to `/v1/embeddings`. |
+| M8 | Fixed | Session lifetime 3 days; sign-out bumps a per-user generation, ending every session (SSO users too). |
+| L1 | Accepted | Negative auth results are cached; per-IP throttle of failed key auth is future work. |
+| L2 | Fixed | `RESPONSE_CACHE_MB=0` disables the cache. |
+| L3 | Fixed | `X-GW-CSRF` required on login, signup and logout. [TestLogin] |
+| L4 | Partial | Per-email login throttle added (10/min); trusted-proxy client IP not implemented. |
+| L5 | Fixed | Tokens carry a purpose (`sess`, `oidc`). |
+| L6 | Fixed | Changing `base_url` or `type` requires re-entering keys. |
+| L7 | Fixed | Unresolvable and private hosts give the same error; missing/foreign providers give the same error. |
+| L8 | Fixed | No response caching when MCP tools are requested. |
+| L9 | Accepted | Bounded by real orgs/keys; spend cache entries are regenerated per flush generation. |
+
+Also fixed from QA: a tenant can no longer shadow a platform provider (tenants get multi-instance types only), org deletion is audited at platform level, key revocation and org changes clear the auth cache on the same node immediately.

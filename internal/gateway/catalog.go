@@ -24,6 +24,9 @@ type Snapshot struct {
 // customBase lists the provider types Bifrost can instantiate many times under custom names.
 var customBase = map[string]bool{"openai": true, "anthropic": true, "gemini": true, "cohere": true}
 
+// MultiInstance reports whether many providers of this type can coexist (public and per-org).
+func MultiInstance(t string) bool { return customBase[t] }
+
 // BifrostKey is the Bifrost provider key a provider is registered under.
 func BifrostKey(p store.Provider) schemas.ModelProvider {
 	if customBase[p.Type] {
@@ -148,7 +151,6 @@ func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.Provid
 	cfg := &schemas.ProviderConfig{
 		NetworkConfig: schemas.NetworkConfig{
 			BaseURL:                        p.BaseURL,
-			ExtraHeaders:                   p.ExtraHeaders,
 			DefaultRequestTimeoutInSeconds: timeout,
 			MaxRetries:                     1,
 			RetryBackoffInitial:            200 * time.Millisecond,

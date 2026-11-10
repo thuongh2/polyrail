@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/bytedance/sonic"
@@ -90,24 +92,34 @@ func (g *Gateway) syncMCP(ctx context.Context) error {
 	return nil
 }
 
-// withMCP sets which MCP servers' tools are injected into the request. Opt-in per request:
-// header x-gateway-mcp-clients: name1,name2 (or *). Without it no tools are injected.
-func (g *Gateway) withMCP(ctx context.Context, r *http.Request) context.Context {
+func mcpAllowed(org store.Org, name string) bool {
+	return slices.Contains(org.MCPServers, "*") || slices.Contains(org.MCPServers, name)
+}
+
+// withMCP sets which MCP servers' tools are injected into the request. Opt-in per request with
+// header x-gateway-mcp-clients: name1,name2 (or *), limited to the servers the operator granted
+// the org. Without it no tools are injected. Reports whether any server was included.
+func (g *Gateway) withMCP(ctx context.Context, r *http.Request, org store.Org) (context.Context, bool) {
 	include := []string{}
 	for _, name := range strings.Split(r.Header.Get("x-gateway-mcp-clients"), ",") {
 		name = strings.TrimSpace(name)
-		if name == "*" {
-			include = append(include, "*")
-		} else if id, ok := g.mcp.byName.Load(name); ok {
-			include = append(include, id.(string))
-		}
+		g.mcp.byName.Range(func(n, id any) bool {
+			if (name == "*" || name == n.(string)) && mcpAllowed(org, n.(string)) && !slices.Contains(include, id.(string)) {
+				include = append(include, id.(string))
+			}
+			return true
+		})
 	}
-	return context.WithValue(ctx, bifrost.MCPContextKeyIncludeClients, include)
+	return context.WithValue(ctx, bifrost.MCPContextKeyIncludeClients, include), len(include) > 0
 }
 
 // MCPExecute runs one tool call returned by the model: POST /v1/mcp/tool/execute.
+// The tool must belong to an MCP server granted to the caller's org; calls are rate limited,
+// budget-checked and logged like model requests.
 func (g *Gateway) MCPExecute(w http.ResponseWriter, r *http.Request) {
-	if _, e := g.authenticate(r.Context(), r); e != nil {
+	start := time.Now()
+	p, e := g.authenticate(r.Context(), r)
+	if e != nil {
 		writeError(w, e)
 		return
 	}
@@ -121,13 +133,31 @@ func (g *Gateway) MCPExecute(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errf(400, "invalid_request_error", "bad_request", "body must be a tool call"))
 		return
 	}
-	msg, berr := g.BF.ExecuteMCPTool(r.Context(), call)
-	if berr != nil {
-		ae := fromBifrost(berr)
-		ae.status = 502
-		writeError(w, ae)
+	server := ""
+	clients, _ := g.MCPTools(r.Context())
+	for _, c := range clients {
+		for _, t := range c.Tools {
+			if t.Name == *call.Function.Name {
+				server = c.Config.Name
+			}
+		}
+	}
+	if server == "" || !mcpAllowed(p.Org, server) {
+		writeError(w, errf(403, "permission_error", "mcp_tool_not_allowed", "tool %q is not available to this organization", *call.Function.Name))
 		return
 	}
+	if e := g.admit(r.Context(), p); e != nil {
+		writeError(w, e)
+		return
+	}
+	m := store.Model{ID: "mcp/" + server}
+	msg, berr := g.BF.ExecuteMCPTool(r.Context(), call)
+	if berr != nil {
+		g.record(p, m, store.RequestLog{Status: 502, Provider: server, Error: "mcp tool failed"}, start)
+		writeError(w, errf(502, "upstream_error", "mcp_tool_failed", "MCP tool %q failed", *call.Function.Name))
+		return
+	}
+	g.record(p, m, store.RequestLog{Status: 200, Provider: server, Upstream: *call.Function.Name}, start)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(msg)
 }

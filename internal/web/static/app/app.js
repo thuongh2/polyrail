@@ -83,6 +83,7 @@ function dialog(title, bodyHTML, onSubmit, submitLabel = "Save") {
 }
 
 const confirmAction = (msg) => window.confirm(msg);
+const pathID = (id) => id.split("/").map(encodeURIComponent).join("/");
 const num = (v) => (v === "" || v == null ? 0 : Number(v));
 const list = (v) => String(v || "").split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
 const rank = { viewer: 1, member: 2, admin: 3, owner: 4 };
@@ -358,9 +359,9 @@ function providersView(main, base) {
     <div class="row"><button class="primary shrink" id="new">Add provider</button></div><div id="p"></div>`;
   const form = (p = {}) => `
     <div class="row"><label>Name<input name="name" value="${esc(p.name)}" required></label>
-    <label>Type<select name="type">${PROVIDER_TYPES.map((t) => `<option ${t === p.type ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
+    <label>Type<select name="type">${(platform ? PROVIDER_TYPES : PROVIDER_TYPES.slice(0, 3).concat("cohere")).map((t) => `<option ${t === p.type ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
     <label>Base URL (optional for hosted APIs)<input name="base_url" value="${esc(p.base_url)}" placeholder="https://api.example.com"></label>
-    <label>API keys, one per line ${p.id ? "(leave empty to keep the stored keys)" : ""}<textarea name="keys" autocomplete="off" spellcheck="false"></textarea></label>
+    <label>API keys, one per line ${p.id ? "(leave empty to keep the stored keys; required when the URL or type changes)" : ""}<textarea name="keys" autocomplete="off" spellcheck="false"></textarea></label>
     <div class="row"><label>Timeout seconds<input name="timeout" type="number" min="1" value="${esc(p.timeout_seconds || 120)}"></label>
     <label class="inline shrink"><input type="checkbox" name="enabled" ${p.enabled !== false ? "checked" : ""}> Enabled</label></div>`;
   const save = (p) => async (f) => {
@@ -431,7 +432,7 @@ function modelsView(main, base, manage) {
     const save = (m) => async (f) => {
       const targets = [0, 1, 2].filter((i) => f.get("p" + i) && f.get("u" + i)).map((i) => ({ provider_id: f.get("p" + i), model: f.get("u" + i), weight: num(f.get("w" + i)) || 1 }));
       const id = m.id || f.get("id");
-      await api(m.id ? "PUT" : "POST", m.id ? `${base}/models/${id}` : `${base}/models`, {
+      await api(m.id ? "PUT" : "POST", m.id ? `${base}/models/${pathID(id)}` : `${base}/models`, {
         id, name: f.get("name"), description: f.get("description"), kind: f.get("kind"), context_length: num(f.get("ctx")),
         input_price_micros: Math.round(num(f.get("in")) * 1e6), output_price_micros: Math.round(num(f.get("out")) * 1e6), targets, enabled: f.get("enabled") === "on",
       });
@@ -442,7 +443,7 @@ function modelsView(main, base, manage) {
     $$("[data-edit]").forEach((b) => (b.onclick = () => { const m = ms.find((x) => x.id === b.dataset.edit && x.targets); dialog("Edit model", form(m), save(m)); }));
     $$("[data-del]").forEach((b) => (b.onclick = async () => {
       if (!confirmAction(`Delete model ${b.dataset.del}? Requests for it will fail.`)) return;
-      await api("DELETE", `${base}/models/${b.dataset.del}`).catch((e) => toast(e.message));
+      await api("DELETE", `${base}/models/${pathID(b.dataset.del)}`).catch((e) => toast(e.message));
       load();
     }));
   });
@@ -623,8 +624,14 @@ function orgsView(main) {
       { label: "Billing", cell: (o) => (o.prepaid ? "prepaid" : "unlimited") },
       { label: "Credits granted", num: 1, cell: (o) => usd(o.credits_micros) },
       { label: "Created", cell: (o) => when(o.created_at) },
-      { label: "", cell: (o) => `<button data-credit="${esc(o.id)}">Add credits</button> <button data-bill="${esc(o.id)}" data-prepaid="${o.prepaid}">${o.prepaid ? "Make unlimited" : "Make prepaid"}</button>` },
+      { label: "MCP access", cell: (o) => esc((o.mcp_servers || []).join(", ") || "none") },
+      { label: "", cell: (o) => `<button data-credit="${esc(o.id)}">Add credits</button> <button data-bill="${esc(o.id)}" data-prepaid="${o.prepaid}">${o.prepaid ? "Make unlimited" : "Make prepaid"}</button> <button data-mcp="${esc(o.id)}">MCP access</button>` },
     ], os);
+    $$("[data-mcp]").forEach((b) => (b.onclick = () => {
+      const o = os.find((x) => x.id === b.dataset.mcp);
+      dialog("MCP access", `<label>MCP server names this organization may use (comma separated, * for all, empty for none)<input name="names" value="${esc((o.mcp_servers || []).join(", "))}"></label>`,
+        async (f) => { await api("PATCH", `/api/orgs/${o.id}`, { mcp_servers: list(f.get("names")) }); toast("MCP access updated"); load(); });
+    }));
     $$("[data-credit]").forEach((b) => (b.onclick = () => dialog("Add credits", `<label>Amount in USD (negative to deduct)<input name="usd" type="number" step="0.01" required></label><label>Note<input name="note" placeholder="invoice 2026-11"></label>`,
       async (f) => { await api("POST", `/api/orgs/${b.dataset.credit}/credits`, { usd: num(f.get("usd")), note: f.get("note") }); toast("Credits updated"); load(); })));
     $$("[data-bill]").forEach((b) => (b.onclick = async () => {

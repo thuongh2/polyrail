@@ -67,6 +67,13 @@ func (c *ttlCache[V]) del(k string) {
 	}
 }
 
+// Clear drops every entry.
+func (c *ttlCache[V]) Clear() {
+	c.mu.Lock()
+	c.m, c.bytes = make(map[string]ttlEntry[V]), 0
+	c.mu.Unlock()
+}
+
 func (c *ttlCache[V]) Len() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()

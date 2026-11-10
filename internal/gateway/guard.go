@@ -3,6 +3,7 @@ package gateway
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sync"
 
 	"github.com/agent-gateway/agent-gateway/internal/store"
@@ -23,7 +24,7 @@ type compiledGuard struct {
 }
 
 func compiled(orgID string, g store.Guardrails) ([]*regexp.Regexp, error) {
-	if c, ok := guardCache.Load(orgID); ok && equal(c.(compiledGuard).src, g.BlockedPatterns) {
+	if c, ok := guardCache.Load(orgID); ok && slices.Equal(c.(compiledGuard).src, g.BlockedPatterns) {
 		return c.(compiledGuard).res, nil
 	}
 	res := make([]*regexp.Regexp, 0, len(g.BlockedPatterns))
@@ -36,18 +37,6 @@ func compiled(orgID string, g store.Guardrails) ([]*regexp.Regexp, error) {
 	}
 	guardCache.Store(orgID, compiledGuard{src: g.BlockedPatterns, res: res})
 	return res, nil
-}
-
-func equal(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // texts returns pointers to every text segment of the messages, so guards can read and rewrite them.

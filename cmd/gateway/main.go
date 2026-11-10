@@ -117,6 +117,7 @@ func run() error {
 		Name: "gateway_usage_logs_dropped_total", Help: "Request log rows dropped (billing counters are never dropped).",
 	}, func() float64 { return float64(up.DroppedLogs.Load()) }))
 
+	allowPrivate := envBool("ALLOW_PRIVATE_PROVIDER_URLS")
 	g, err := gateway.New(ctx, s, lim, up, gateway.Config{
 		MaxBodyBytes: int64(envInt("MAX_BODY_MB", 8)) << 20,
 		Concurrency:  envInt("PROVIDER_CONCURRENCY", 64),
@@ -124,7 +125,7 @@ func run() error {
 		CacheMB:      envInt("RESPONSE_CACHE_MB", 64),
 		PollInterval: 2 * time.Second,
 
-		AllowPrivateURLs: envBool("ALLOW_PRIVATE_PROVIDER_URLS"),
+		AllowPrivateURLs: allowPrivate,
 	})
 	if err != nil {
 		return err
@@ -136,7 +137,7 @@ func run() error {
 		SecureCookies:    strings.HasPrefix(publicURL, "https://"),
 		AllowSignup:      envBool("ALLOW_SIGNUP"),
 		SignupPrepaid:    envBool("SIGNUP_PREPAID"),
-		AllowPrivateURLs: envBool("ALLOW_PRIVATE_PROVIDER_URLS"),
+		AllowPrivateURLs: allowPrivate,
 		LogRetentionDays: envInt("LOG_RETENTION_DAYS", 14),
 	}
 	if iss := os.Getenv("OIDC_ISSUER"); iss != "" {

@@ -26,13 +26,14 @@ type Tx interface {
 // KV is the storage seam (see docs/ARCHITECTURE.md). Implementations: Pebble, Postgres.
 type KV interface {
 	Get(ctx context.Context, key string) ([]byte, error)
-	// Scan returns up to limit items whose key has prefix, starting after `after` (exclusive, "" = from start).
-	Scan(ctx context.Context, prefix, after string, limit int, reverse bool) ([]Item, error)
+	// Scan returns up to limit (0 = all) items whose key has prefix, in key order, starting after
+	// `after` (exclusive, "" = from the start).
+	Scan(ctx context.Context, prefix, after string, limit int) ([]Item, error)
 	Update(ctx context.Context, fn func(Tx) error) error
 	// AddAgg atomically adds each Agg to the counter stored at its key.
 	AddAgg(ctx context.Context, adds map[string]Agg) error
 	GetAgg(ctx context.Context, key string) (Agg, error)
-	ScanAgg(ctx context.Context, prefix string, limit int) (map[string]Agg, error)
+	ScanAgg(ctx context.Context, prefix string) (map[string]Agg, error)
 	// DeleteRange removes keys in [start, end) from both KV and counters.
 	DeleteRange(ctx context.Context, start, end string) error
 	Ping(ctx context.Context) error

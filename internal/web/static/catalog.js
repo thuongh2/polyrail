@@ -5,14 +5,18 @@ const price = (p) => (Number(p) === 0 ? "free" : "$" + Number(p).toFixed(Number(
 let models = [];
 let sort = { key: "id", dir: 1 };
 
+function sortValue(m) {
+  if (sort.key === "input" || sort.key === "output") return Number(m.pricing[sort.key]);
+  return sort.key === "context" ? m.context_length || 0 : m[sort.key];
+}
+
 function render() {
   const q = $("#q").value.trim().toLowerCase();
   const kind = $("#kind").value;
   const rows = models
     .filter((m) => (!kind || m.kind === kind) && (!q || (m.id + " " + m.name + " " + (m.description || "")).toLowerCase().includes(q)))
     .sort((a, b) => {
-      const va = sort.key === "input" || sort.key === "output" ? Number(a.pricing[sort.key]) : sort.key === "context" ? a.context_length || 0 : a[sort.key];
-      const vb = sort.key === "input" || sort.key === "output" ? Number(b.pricing[sort.key]) : sort.key === "context" ? b.context_length || 0 : b[sort.key];
+      const va = sortValue(a), vb = sortValue(b);
       return (va > vb ? 1 : va < vb ? -1 : 0) * sort.dir;
     });
   const params = new URLSearchParams();

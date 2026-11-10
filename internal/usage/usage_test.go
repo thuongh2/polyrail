@@ -46,7 +46,7 @@ func TestPipelineCountsSpendAndRetriesFailedFlush(t *testing.T) {
 	fkv.fail.Store(false)
 	p.Close()
 
-	a, _ := kv.GetAgg(ctx, "agg/o/"+Day(now)+"/m/m")
+	a, _ := kv.GetAgg(ctx, "agg/o/"+store.Day(now)+"/m/m")
 	if a[store.AggRequests] != 2 || a[store.AggErrors] != 1 || a[store.AggInTokens] != 10 || a[store.AggCostMicros] != 700 {
 		t.Fatalf("rollup: %v", a)
 	}

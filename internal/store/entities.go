@@ -221,8 +221,8 @@ func putJSON(tx Tx, key string, v any) error {
 	return tx.Put(key, raw)
 }
 
-func listJSON[T any](ctx context.Context, kv KV, prefix, after string, limit int, reverse bool) ([]T, error) {
-	items, err := kv.Scan(ctx, prefix, after, limit, reverse)
+func listJSON[T any](ctx context.Context, kv KV, prefix, after string, limit int) ([]T, error) {
+	items, err := kv.Scan(ctx, prefix, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +302,7 @@ func (s *Store) ListOrgs(ctx context.Context, after string, limit int) ([]Org, e
 	if after != "" {
 		after = "org/" + after
 	}
-	return listJSON[Org](ctx, s.KV, "org/", after, limit, false)
+	return listJSON[Org](ctx, s.KV, "org/", after, limit)
 }
 
 // DeleteOrg removes the org, its memberships, API keys, private providers and models.
@@ -315,11 +315,11 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	provs, err := listJSON[Provider](ctx, s.KV, "prov/", "", 0, false)
+	provs, err := listJSON[Provider](ctx, s.KV, "prov/", "", 0)
 	if err != nil {
 		return err
 	}
-	models, err := listJSON[Model](ctx, s.KV, "model/"+id+"/", "", 0, false)
+	models, err := listJSON[Model](ctx, s.KV, "model/"+id+"/", "", 0)
 	if err != nil {
 		return err
 	}
@@ -412,7 +412,7 @@ func (s *Store) ListUsers(ctx context.Context, after string, limit int) ([]User,
 	if after != "" {
 		after = "user/" + after
 	}
-	return listJSON[User](ctx, s.KV, "user/", after, limit, false)
+	return listJSON[User](ctx, s.KV, "user/", after, limit)
 }
 
 // ---- members ----
@@ -453,12 +453,12 @@ func (s *Store) GetMember(ctx context.Context, orgID, userID string) (*Member, e
 }
 
 func (s *Store) ListMembers(ctx context.Context, orgID string) ([]Member, error) {
-	return listJSON[Member](ctx, s.KV, "mem/"+orgID+"/", "", 0, false)
+	return listJSON[Member](ctx, s.KV, "mem/"+orgID+"/", "", 0)
 }
 
 // UserOrgs returns orgID → role for a user.
 func (s *Store) UserOrgs(ctx context.Context, userID string) (map[string]Role, error) {
-	items, err := s.KV.Scan(ctx, "umem/"+userID+"/", "", 0, false)
+	items, err := s.KV.Scan(ctx, "umem/"+userID+"/", "", 0)
 	out := make(map[string]Role, len(items))
 	for _, it := range items {
 		out[strings.TrimPrefix(it.Key, "umem/"+userID+"/")] = Role(it.Value)
@@ -523,7 +523,7 @@ func (s *Store) UpdateKey(ctx context.Context, orgID, id string, fn func(*APIKey
 }
 
 func (s *Store) ListKeys(ctx context.Context, orgID string) ([]APIKey, error) {
-	return listJSON[APIKey](ctx, s.KV, "key/"+orgID+"/", "", 0, false)
+	return listJSON[APIKey](ctx, s.KV, "key/"+orgID+"/", "", 0)
 }
 
 // ---- providers ----
@@ -534,13 +534,19 @@ func (s *Store) PutProvider(ctx context.Context, p *Provider) error {
 	if p.Name == "" || p.Type == "" {
 		return fmt.Errorf("%w: provider name and type required", ErrInvalid)
 	}
-	if p.ID == "" {
+	create := p.ID == ""
+	if create {
 		p.ID, p.CreatedAt = NewID(), time.Now().UTC()
 	}
 	return s.update(ctx, func(tx Tx) error {
 		old, err := getJSON[Provider](tx.Get, "prov/"+p.ID)
-		if err != nil && !errors.Is(err, ErrNotFound) {
+		switch {
+		case err != nil && !errors.Is(err, ErrNotFound):
 			return err
+		case create && old != nil:
+			return ErrExists
+		case !create && old == nil:
+			return ErrNotFound // updates need an existing provider
 		}
 		if old != nil {
 			if old.OrgID != p.OrgID {
@@ -590,7 +596,7 @@ func (s *Store) DeleteProvider(ctx context.Context, id string) error {
 
 // ListProviders returns all providers. With decrypt, key values are filled in (gateway use only).
 func (s *Store) ListProviders(ctx context.Context, decrypt bool) ([]Provider, error) {
-	ps, err := listJSON[Provider](ctx, s.KV, "prov/", "", 0, false)
+	ps, err := listJSON[Provider](ctx, s.KV, "prov/", "", 0)
 	if err != nil || !decrypt {
 		return ps, err
 	}
@@ -669,7 +675,7 @@ func (s *Store) ListModels(ctx context.Context, orgID string) ([]Model, error) {
 	if orgID != "*" {
 		prefix = modelKey(orgID, "")
 	}
-	return listJSON[Model](ctx, s.KV, prefix, "", 0, false)
+	return listJSON[Model](ctx, s.KV, prefix, "", 0)
 }
 
 // ---- MCP servers ----
@@ -689,7 +695,7 @@ func (s *Store) DeleteMCP(ctx context.Context, id string) error {
 }
 
 func (s *Store) ListMCP(ctx context.Context) ([]MCPServer, error) {
-	return listJSON[MCPServer](ctx, s.KV, "mcp/", "", 0, false)
+	return listJSON[MCPServer](ctx, s.KV, "mcp/", "", 0)
 }
 
 // ---- audit ----
@@ -711,18 +717,19 @@ func (s *Store) ListAudit(ctx context.Context, orgID string, limit int) ([]Audit
 	if orgID == "" {
 		orgID = "_"
 	}
-	return listJSON[AuditEntry](ctx, s.KV, "audit/"+orgID+"/", "", limit, false)
+	return listJSON[AuditEntry](ctx, s.KV, "audit/"+orgID+"/", "", limit)
 }
 
 // ---- request logs (day-partitioned for cheap retention) ----
 
-func day(t time.Time) string { return t.UTC().Format("20060102") }
+// Day is the UTC day partition used by logs and usage rollups.
+func Day(t time.Time) string { return t.UTC().Format("20060102") }
 
 func (s *Store) PutLogs(ctx context.Context, logs []RequestLog) error {
 	return s.KV.Update(ctx, func(tx Tx) error {
 		for i := range logs {
 			l := &logs[i]
-			if err := putJSON(tx, "log/"+day(l.At)+"/"+l.OrgID+"/"+invTS(l.At)+l.ID, l); err != nil {
+			if err := putJSON(tx, "log/"+Day(l.At)+"/"+l.OrgID+"/"+invTS(l.At)+l.ID, l); err != nil {
 				return err
 			}
 		}
@@ -735,7 +742,7 @@ func (s *Store) ListLogs(ctx context.Context, orgID string, days, limit int) ([]
 	var out []RequestLog
 	now := time.Now()
 	for d := 0; d < days && len(out) < limit; d++ {
-		ls, err := listJSON[RequestLog](ctx, s.KV, "log/"+day(now.AddDate(0, 0, -d))+"/"+orgID+"/", "", limit-len(out), false)
+		ls, err := listJSON[RequestLog](ctx, s.KV, "log/"+Day(now.AddDate(0, 0, -d))+"/"+orgID+"/", "", limit-len(out))
 		if err != nil {
 			return nil, err
 		}
@@ -746,6 +753,6 @@ func (s *Store) ListLogs(ctx context.Context, orgID string, days, limit int) ([]
 
 // PruneLogs deletes request logs older than keepDays. Usage rollups (agg/) are kept.
 func (s *Store) PruneLogs(ctx context.Context, keepDays int) error {
-	cutoff := day(time.Now().AddDate(0, 0, -keepDays))
+	cutoff := Day(time.Now().AddDate(0, 0, -keepDays))
 	return s.KV.DeleteRange(ctx, "log/", "log/"+cutoff)
 }

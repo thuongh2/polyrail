@@ -77,7 +77,7 @@ func (g *Gateway) syncMCP(ctx context.Context) error {
 		switch {
 		case !ok:
 			err = g.BF.AddMCPClient(toClientConfig(m))
-		case strings.Join(old.Tools, ",") != strings.Join(m.Tools, ",") || old.Name != m.Name:
+		case !slices.Equal(old.Tools, m.Tools) || old.Name != m.Name:
 			err = g.BF.EditMCPClient(id, toClientConfig(m))
 		default:
 			continue
@@ -134,7 +134,11 @@ func (g *Gateway) MCPExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	server := ""
-	clients, _ := g.MCPTools(r.Context())
+	clients, err := g.MCPTools(r.Context())
+	if err != nil {
+		writeError(w, errf(503, "api_error", "mcp_unavailable", "MCP servers are unavailable"))
+		return
+	}
 	for _, c := range clients {
 		for _, t := range c.Tools {
 			if t.Name == *call.Function.Name {

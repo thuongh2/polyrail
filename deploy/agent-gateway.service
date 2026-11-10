@@ -1,0 +1,21 @@
+# systemd unit for a plain-binary install (no Docker). See docs/DEPLOY.md.
+[Unit]
+Description=agent-gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gateway
+EnvironmentFile=/etc/agent-gateway.env
+Environment=DATA_DIR=/var/lib/agent-gateway
+ExecStart=/usr/local/bin/agent-gateway
+Restart=on-failure
+StateDirectory=agent-gateway
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=768M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+# Small mode: one container, embedded Pebble store. Fits a 1 vCPU / 2 GB VPS.
+#   cp deploy/.env.example deploy/.env  # then edit it
+#   docker compose -f deploy/docker-compose.yml up -d
+services:
+  gateway:
+    build: ..
+    image: agent-gateway:latest
+    restart: unless-stopped
+    env_file: .env
+    ports: ["8080:8080"]
+    volumes: ["gateway-data:/data"]
+    mem_limit: 512m
+volumes:
+  gateway-data:

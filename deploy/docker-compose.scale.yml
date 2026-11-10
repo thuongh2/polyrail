@@ -1,0 +1,32 @@
+# Scale mode: stateless gateway replicas + Postgres (control plane, counters) + Valkey (shared
+# rate limits) + ClickHouse (raw request logs). Put any load balancer in front of the replicas.
+#   docker compose -f deploy/docker-compose.scale.yml up -d --scale gateway=3
+services:
+  gateway:
+    build: ..
+    image: agent-gateway:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      STORE: postgres
+      POSTGRES_URL: postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable
+      REDIS_URL: redis://valkey:6379/0
+      CLICKHOUSE_URL: http://default:gateway@clickhouse:8123/?database=default
+    ports: ["8080"]
+    depends_on: [postgres, valkey, clickhouse]
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment: { POSTGRES_USER: gateway, POSTGRES_PASSWORD: gateway, POSTGRES_DB: gateway }
+    volumes: ["pg-data:/var/lib/postgresql/data"]
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    restart: unless-stopped
+    environment: { CLICKHOUSE_PASSWORD: gateway }
+    volumes: ["ch-data:/var/lib/clickhouse"]
+volumes:
+  pg-data:
+  ch-data:

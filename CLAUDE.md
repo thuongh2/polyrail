@@ -60,11 +60,21 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
 - D3 Storage split by access pattern (owner rejected plain SQL-only):
   - Small mode: **Pebble** (pure-Go LSM, RocksDB design, no CGO) for config + usage + rollups.
   - Scale mode: Postgres (config), Valkey/Redis (shared counters), ClickHouse (usage analytics).
-  - Behind 3 interfaces: `ConfigStore`, `Counters`, `UsageSink`. Hot path never waits on a DB.
-  - Usage writes async + batched; rollups via counters; raw events partitioned by day for cheap TTL.
-  - Credits use local debits with periodic flush (small mode) / leases (scale mode).
+  - Seams: `store.KV` (Pebble | Postgres, all entities written once on it), `limits.Limiter`
+    (local | Redis), `usage.LogSink` (store | ClickHouse). Hot path never waits on a DB.
+  - Usage writes async + batched; rollups via counters; logs partitioned by day for cheap TTL.
+  - Credits/budgets: stored spend + this node's unflushed spend, refreshed each 1 s flush (D7).
 - D4 HTTP: stdlib `net/http` (Go 1.22 patterns). UI: plain HTML/CSS/JS embedded via `go:embed`, no build step.
 - D5 Provider secrets encrypted at rest with AES-GCM using `MASTER_KEY`. API keys stored as SHA-256 hash only.
+- D6–D11 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding).
+
+## Lessons (do not repeat)
+
+- Never return persisted secrets from JSON: hide with `json:"-"` and persist through a stored* wrapper.
+- Every admin mutation that affects keys/orgs must call `G.InvalidateAuth()`.
+- Tenant-controlled URLs: validate at save time AND at request time; never echo upstream bodies to tenants.
+- Docs must describe what the code does; the slop reviewer checks this.
+- No docker daemon in the sandbox: Dockerfile/compose are written but not built here.
 
 ## Environment notes (sandbox)
 
@@ -75,4 +85,6 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
 
 ## Status
 
-See `docs/PROGRESS.md` for the live task board and verification evidence.
+v1 functional: gateway, admin API, console, catalog, Pebble + Postgres stores, Redis limiter,
+ClickHouse sink, SSO, MCP, metrics. Security review fixed (docs/SECURITY.md), slop review fixed.
+Live board and evidence: `docs/PROGRESS.md`. Next candidates: docs/PROGRESS.md "Next".

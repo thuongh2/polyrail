@@ -48,7 +48,7 @@ func (p *pebbleKV) get(key string) ([]byte, error) {
 
 func (p *pebbleKV) Get(_ context.Context, key string) ([]byte, error) { return p.get(nsKV + key) }
 
-func (p *pebbleKV) scan(prefix, after string, limit int, reverse bool) ([]Item, error) {
+func (p *pebbleKV) scan(prefix, after string, limit int) ([]Item, error) {
 	opts := &pebble.IterOptions{LowerBound: []byte(prefix)}
 	if end := prefixEnd(prefix); end != "" {
 		opts.UpperBound = []byte(end)
@@ -58,39 +58,25 @@ func (p *pebbleKV) scan(prefix, after string, limit int, reverse bool) ([]Item, 
 		return nil, err
 	}
 	defer it.Close()
-	var ok bool
-	switch {
-	case after != "" && !reverse:
+	ok := it.First()
+	if after != "" {
 		ok = it.SeekGE([]byte(after))
 		if ok && string(it.Key()) == after {
 			ok = it.Next()
 		}
-	case after != "" && reverse:
-		ok = it.SeekLT([]byte(after))
-	case reverse:
-		ok = it.Last()
-	default:
-		ok = it.First()
 	}
 	var out []Item
-	for ; ok && (limit <= 0 || len(out) < limit); ok = step(it, reverse) {
+	for ; ok && (limit <= 0 || len(out) < limit); ok = it.Next() {
 		out = append(out, Item{Key: string(it.Key()), Value: append([]byte(nil), it.Value()...)})
 	}
 	return out, it.Error()
 }
 
-func step(it *pebble.Iterator, reverse bool) bool {
-	if reverse {
-		return it.Prev()
-	}
-	return it.Next()
-}
-
-func (p *pebbleKV) Scan(_ context.Context, prefix, after string, limit int, reverse bool) ([]Item, error) {
+func (p *pebbleKV) Scan(_ context.Context, prefix, after string, limit int) ([]Item, error) {
 	if after != "" {
 		after = nsKV + after
 	}
-	items, err := p.scan(nsKV+prefix, after, limit, reverse)
+	items, err := p.scan(nsKV+prefix, after, limit)
 	for i := range items {
 		items[i].Key = items[i].Key[len(nsKV):]
 	}
@@ -151,8 +137,8 @@ func (p *pebbleKV) GetAgg(_ context.Context, key string) (Agg, error) {
 	return decodeAgg(v), err
 }
 
-func (p *pebbleKV) ScanAgg(_ context.Context, prefix string, limit int) (map[string]Agg, error) {
-	items, err := p.scan(nsAgg+prefix, "", limit, false)
+func (p *pebbleKV) ScanAgg(_ context.Context, prefix string) (map[string]Agg, error) {
+	items, err := p.scan(nsAgg+prefix, "", 0)
 	out := make(map[string]Agg, len(items))
 	for _, it := range items {
 		out[it.Key[len(nsAgg):]] = decodeAgg(it.Value)

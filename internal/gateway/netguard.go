@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
-	"sync"
 	"time"
 )
 
@@ -59,32 +58,16 @@ func CheckPublicURL(raw string) error {
 // hostCheck re-validates tenant provider URLs at request time, cached briefly.
 // shortcut: Bifrost's HTTP client does its own DNS lookup, so a rebinding window of the cache TTL
 // remains; operators should also block internal egress at the network layer (docs/DEPLOY.md).
-var hostCheck = struct {
-	sync.Mutex
-	m map[string]hostResult
-}{m: map[string]hostResult{}}
-
-type hostResult struct {
-	ok  bool
-	exp time.Time
-}
+var hostCheck = newTTLCache[bool](10_000, 0)
 
 func publicURLCached(raw string) bool {
 	if raw == "" {
 		return true // hosted API default base URL
 	}
-	hostCheck.Lock()
-	r, hit := hostCheck.m[raw]
-	hostCheck.Unlock()
-	if hit && time.Now().Before(r.exp) {
-		return r.ok
+	if ok, hit := hostCheck.Get(raw); hit {
+		return ok
 	}
 	ok := CheckPublicURL(raw) == nil
-	hostCheck.Lock()
-	if len(hostCheck.m) > 10_000 {
-		hostCheck.m = map[string]hostResult{}
-	}
-	hostCheck.m[raw] = hostResult{ok, time.Now().Add(30 * time.Second)}
-	hostCheck.Unlock()
+	hostCheck.Set(raw, ok, 0, 30*time.Second)
 	return ok
 }

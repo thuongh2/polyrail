@@ -30,21 +30,13 @@ func testKV(t *testing.T, kv KV) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := kv.Scan(ctx, "a/", "", 0, false)
+	items, err := kv.Scan(ctx, "a/", "", 0)
 	if err != nil || len(items) != 5 || items[0].Key != "a/0" {
 		t.Fatalf("scan: %v %v", items, err)
 	}
-	items, _ = kv.Scan(ctx, "a/", "a/1", 2, false)
+	items, _ = kv.Scan(ctx, "a/", "a/1", 2)
 	if len(items) != 2 || items[0].Key != "a/2" {
 		t.Fatalf("scan after: %v", items)
-	}
-	items, _ = kv.Scan(ctx, "a/", "", 2, true)
-	if len(items) != 2 || items[0].Key != "a/4" {
-		t.Fatalf("reverse scan: %v", items)
-	}
-	items, _ = kv.Scan(ctx, "a/", "a/3", 0, true)
-	if len(items) != 3 || items[0].Key != "a/2" {
-		t.Fatalf("reverse scan after: %v", items)
 	}
 
 	// failed Update must not apply anything
@@ -71,7 +63,7 @@ func testKV(t *testing.T, kv KV) {
 	if a, _ := kv.GetAgg(ctx, "agg/x"); a[AggRequests] != 20 || a[AggInTokens] != 200 {
 		t.Fatalf("agg x: %v", a)
 	}
-	m, err := kv.ScanAgg(ctx, "agg/", 0)
+	m, err := kv.ScanAgg(ctx, "agg/")
 	if err != nil || len(m) != 2 || m["agg/y"][0] != 40 {
 		t.Fatalf("scan agg: %v %v", m, err)
 	}
@@ -79,7 +71,7 @@ func testKV(t *testing.T, kv KV) {
 	if err := kv.DeleteRange(ctx, "a/", "a0"); err != nil {
 		t.Fatal(err)
 	}
-	if items, _ := kv.Scan(ctx, "a/", "", 0, false); len(items) != 0 {
+	if items, _ := kv.Scan(ctx, "a/", "", 0); len(items) != 0 {
 		t.Fatalf("delete range left %v", items)
 	}
 	if _, err := kv.Get(ctx, "b/x"); err != nil {

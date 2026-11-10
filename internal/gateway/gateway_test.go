@@ -309,6 +309,16 @@ func TestPolicies(t *testing.T) {
 		t.Fatalf("rpm: %d %s", r.StatusCode, code)
 	}
 
+	// key monthly budget: one priced request spends $2, budget is $1
+	_, _ = f.g.S.UpdateKey(ctx, f.org.ID, f.keyRec.ID, func(k *store.APIKey) error { k.RPM, k.MonthlyBudget = 0, 1_000_000; return nil })
+	_ = f.g.Reload(ctx)
+	f.post(t, "/v1/chat/completions", f.key, `{"model":"test/chat","messages":[{"role":"user","content":"spend"}]}`).Body.Close()
+	r = f.post(t, "/v1/chat/completions", f.key, chatBody)
+	if code := errCode(readJSON(t, r)); r.StatusCode != 402 || code != "key_budget_exceeded" {
+		t.Fatalf("key budget: %d %s", r.StatusCode, code)
+	}
+	_, _ = f.g.S.UpdateKey(ctx, f.org.ID, f.keyRec.ID, func(k *store.APIKey) error { k.MonthlyBudget = 0; return nil })
+
 	// prepaid org without credits
 	_, _ = f.g.S.UpdateKey(ctx, f.org.ID, f.keyRec.ID, func(k *store.APIKey) error { k.RPM = 0; return nil })
 	_, _ = f.g.S.UpdateOrg(ctx, f.org.ID, func(o *store.Org) error { o.Prepaid = true; return nil })

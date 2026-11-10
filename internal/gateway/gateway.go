@@ -180,6 +180,9 @@ func fromBifrost(be *schemas.BifrostError, private bool) *apiError {
 	return &apiError{status, "upstream_error", "provider_error", msg}
 }
 
+// targetFault reports whether a status counts against the provider's circuit breaker.
+func targetFault(status int) bool { return status >= 500 || status == 429 }
+
 // InvalidateAuth drops cached API key principals so key and org changes apply on this node now.
 func (g *Gateway) InvalidateAuth() { g.auth.Clear() }
 
@@ -306,7 +309,7 @@ func (g *Gateway) settle(snap *Snapshot, ts []store.Target, served schemas.Model
 }
 
 func cost(m store.Model, in, out int) int64 {
-	return (int64(in)*m.InputPrice + int64(out)*m.OutputPrice + 999_999) / 1_000_000 // round up
+	return (int64(in)*m.InputPrice + int64(out)*m.OutputPrice + 500_000) / 1_000_000 // nearest micro-USD: unbiased over many requests
 }
 
 func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start time.Time) {
@@ -419,7 +422,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	resp, berr := g.BF.ChatCompletionRequest(bctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settle(snap, ts, "", ae.status >= 500 || ae.status == 429)
+		g.settle(snap, ts, "", targetFault(ae.status))
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)
 		return
@@ -457,7 +460,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principa
 	ch, berr := g.BF.ChatCompletionStreamRequest(ctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settle(snap, ts, "", ae.status >= 500 || ae.status == 429)
+		g.settle(snap, ts, "", targetFault(ae.status))
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg, Stream: true}, start)
 		writeError(w, ae)
 		return
@@ -508,7 +511,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principa
 	if l.OutTokens == 0 && chars > 0 {
 		l.OutTokens = (chars + 3) / 4 // shortcut: estimate when the provider sends no usage
 	}
-	l.Provider = g.settle(snap, ts, served, l.Status >= 500)
+	l.Provider = g.settle(snap, ts, served, targetFault(l.Status))
 	g.record(p, m, l, start)
 }
 
@@ -562,7 +565,7 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 	resp, berr := g.BF.EmbeddingRequest(ctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settle(snap, ts, "", ae.status >= 500 || ae.status == 429)
+		g.settle(snap, ts, "", targetFault(ae.status))
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)
 		return

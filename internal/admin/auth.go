@@ -3,12 +3,12 @@ package admin
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -144,7 +144,10 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 // logout ends every session of the user (a stolen cookie stops working too).
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	if u, err := a.currentUser(r); err == nil {
-		_, _ = a.S.UpdateUser(r.Context(), u.ID, func(x *store.User) error { x.SessionGen++; return nil })
+		if _, err := a.S.UpdateUser(r.Context(), u.ID, func(x *store.User) error { x.SessionGen++; return nil }); err != nil {
+			fail(w, err) // the other sessions are still valid: say so instead of a silent 204
+			return
+		}
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 	w.WriteHeader(http.StatusNoContent)
@@ -240,18 +243,12 @@ func newOIDC(ctx context.Context, cfg OIDCConfig) (*oidcClient, error) {
 	}, nil
 }
 
-func randHex(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
 func (a *API) oidcLogin(w http.ResponseWriter, r *http.Request) {
 	if a.oidc == nil {
 		writeErr(w, http.StatusNotFound, "SSO is not configured")
 		return
 	}
-	state, nonce := randHex(16), randHex(16)
+	state, nonce := store.NewID()+store.NewID(), store.NewID()+store.NewID()
 	http.SetCookie(w, &http.Cookie{Name: "gw_oidc", Value: a.sign.sign("oidc", 10*time.Minute, state, nonce),
 		Path: "/api/auth/oidc", HttpOnly: true, Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: 600})
 	http.Redirect(w, r, a.oidc.oauth.AuthCodeURL(state, oidc.Nonce(nonce)), http.StatusFound)
@@ -325,7 +322,9 @@ func (a *API) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if org := a.oidc.cfg.DefaultOrg; org != "" {
 		if _, err := a.S.GetMember(ctx, org, u.ID); errors.Is(err, store.ErrNotFound) {
-			_ = a.S.SetMember(ctx, store.Member{OrgID: org, UserID: u.ID, Role: a.oidc.cfg.DefaultRole})
+			if err := a.S.SetMember(ctx, store.Member{OrgID: org, UserID: u.ID, Role: a.oidc.cfg.DefaultRole}); err != nil {
+				slog.Error("sso auto-join failed", "org", org, "err", err)
+			}
 		}
 	}
 	a.setSession(w, u)

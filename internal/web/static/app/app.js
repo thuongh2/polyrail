@@ -82,7 +82,6 @@ function dialog(title, bodyHTML, onSubmit, submitLabel = "Save") {
   $("input, select, textarea", f)?.focus();
 }
 
-const confirmAction = (msg) => window.confirm(msg);
 const pathID = (id) => id.split("/").map(encodeURIComponent).join("/");
 const num = (v) => (v === "" || v == null ? 0 : Number(v));
 const list = (v) => String(v || "").split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
@@ -90,6 +89,19 @@ const rank = { viewer: 1, member: 2, admin: 3, owner: 4 };
 const can = (r) => rank[S.role] >= rank[r];
 
 // ---------- auth ----------
+
+// authSubmit posts the auth form's fields and starts the console, or shows the error inline.
+const authSubmit = (path) => async (ev) => {
+  ev.preventDefault();
+  try {
+    await api("POST", path, Object.fromEntries(new FormData(ev.target)));
+    boot();
+  } catch (e) {
+    const el = $("[data-err]");
+    el.hidden = false;
+    el.textContent = e.message;
+  }
+};
 
 function showLogin(msg) {
   document.title = "Sign in · agent-gateway";
@@ -102,18 +114,7 @@ function showLogin(msg) {
     ${S.cfg.sso ? '<a class="btn" href="/api/auth/oidc/login">Sign in with SSO</a>' : ""}
     ${S.cfg.signup ? '<button type="button" class="link" id="to-signup">Create an account</button>' : ""}
     <a href="/" class="muted">Browse models</a></form>`;
-  $("#login").onsubmit = async (ev) => {
-    ev.preventDefault();
-    const f = new FormData(ev.target);
-    try {
-      await api("POST", "/api/auth/login", { email: f.get("email"), password: f.get("password") });
-      boot();
-    } catch (e) {
-      const el = $("[data-err]");
-      el.hidden = false;
-      el.textContent = e.message;
-    }
-  };
+  $("#login").onsubmit = authSubmit("/api/auth/login");
   if ($("#to-signup")) $("#to-signup").onclick = showSignup;
 }
 
@@ -126,18 +127,7 @@ function showSignup() {
     <button class="primary" type="submit">Create account</button>
     <button type="button" class="link" id="to-login">I have an account</button></form>`;
   $("#to-login").onclick = () => showLogin();
-  $("#signup").onsubmit = async (ev) => {
-    ev.preventDefault();
-    const f = new FormData(ev.target);
-    try {
-      await api("POST", "/api/auth/signup", Object.fromEntries(f));
-      boot();
-    } catch (e) {
-      const el = $("[data-err]");
-      el.hidden = false;
-      el.textContent = e.message;
-    }
-  };
+  $("#signup").onsubmit = authSubmit("/api/auth/signup");
 }
 
 // ---------- shell ----------
@@ -256,11 +246,11 @@ function usageView(main, base, isOrg) {
     const keyName = Object.fromEntries(keys.map((k) => [k.id, k.name]));
     const draw = () => {
       const m = $("#metric").value;
-      $("#chart").innerHTML = barChart(u.daily, m, m === "cost_usd" ? (v) => "$" + v.toFixed(2) : fmt);
+      $("#chart").innerHTML = barChart(u.daily, m, m === "cost_usd" ? (v) => usd(Math.round(v * 1e6)) : fmt);
     };
     el.innerHTML = `<div class="stats">
         <div class="stat"><b>${fmt(t.requests)}</b><span>requests</span></div>
-        <div class="stat"><b>$${t.cost_usd.toFixed(2)}</b><span>cost</span></div>
+        <div class="stat"><b>${usd(Math.round(t.cost_usd * 1e6))}</b><span>cost</span></div>
         <div class="stat"><b>${fmt(t.in_tokens)} / ${fmt(t.out_tokens)}</b><span>tokens in / out</span></div>
         <div class="stat"><b>${t.requests ? ((100 * t.errors) / t.requests).toFixed(1) : "0"}%</b><span>errors</span></div>
         <div class="stat"><b>${fmt(t.avg_latency_ms)} ms</b><span>average latency</span></div>
@@ -323,7 +313,7 @@ function keysView(main, base) {
       { label: "", cell: (k) => (!k.revoked && (can("admin") || k.created_by === S.me.id) ? `<button class="danger" data-revoke="${esc(k.id)}">Revoke</button>` : "") },
     ], keys);
     $$("[data-revoke]").forEach((b) => (b.onclick = async () => {
-      if (!confirmAction("Revoke this key? Apps using it stop working within seconds. This cannot be undone.")) return;
+      if (!confirm("Revoke this key? Apps using it stop working within seconds. This cannot be undone.")) return;
       await api("PATCH", `${base}/keys/${b.dataset.revoke}`, { revoked: true }).catch((e) => toast(e.message));
       load();
     }));
@@ -349,8 +339,6 @@ function keysView(main, base) {
 
 // ---------- providers ----------
 
-const PROVIDER_TYPES = ["openai", "anthropic", "gemini", "mistral", "groq", "cohere", "ollama", "cerebras", "perplexity", "openrouter", "nebius", "parasail", "sgl"];
-
 function providersView(main, base) {
   const platform = base === "/api/admin";
   main.innerHTML = `<h1>${platform ? "Public providers" : "Private providers"}</h1>
@@ -359,7 +347,7 @@ function providersView(main, base) {
     <div class="row"><button class="primary shrink" id="new">Add provider</button></div><div id="p"></div>`;
   const form = (p = {}) => `
     <div class="row"><label>Name<input name="name" value="${esc(p.name)}" required></label>
-    <label>Type<select name="type">${(platform ? PROVIDER_TYPES : PROVIDER_TYPES.slice(0, 3).concat("cohere")).map((t) => `<option ${t === p.type ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
+    <label>Type<select name="type">${S.cfg.provider_types[platform ? "platform" : "org"].map((t) => `<option ${t === p.type ? "selected" : ""}>${t}</option>`).join("")}</select></label></div>
     <label>Base URL (optional for hosted APIs)<input name="base_url" value="${esc(p.base_url)}" placeholder="https://api.example.com"></label>
     <label>API keys, one per line ${p.id ? "(leave empty to keep the stored keys; required when the URL or type changes)" : ""}<textarea name="keys" autocomplete="off" spellcheck="false"></textarea></label>
     <div class="row"><label>Timeout seconds<input name="timeout" type="number" min="1" value="${esc(p.timeout_seconds || 120)}"></label>
@@ -383,7 +371,7 @@ function providersView(main, base) {
     ], ps);
     $$("[data-edit]").forEach((b) => (b.onclick = () => { const p = ps.find((x) => x.id === b.dataset.edit); dialog("Edit provider", form(p), save(p)); }));
     $$("[data-del]").forEach((b) => (b.onclick = async () => {
-      if (!confirmAction("Delete this provider? Models routed only to it stop working.")) return;
+      if (!confirm("Delete this provider? Models routed only to it stop working.")) return;
       await api("DELETE", `${base}/providers/${b.dataset.del}`).catch((e) => toast(e.message));
       load();
     }));
@@ -442,7 +430,7 @@ function modelsView(main, base, manage) {
     if ($("#new")) $("#new").onclick = () => (ps.length ? dialog("Add model", form(), save({})) : toast("Add a provider first"));
     $$("[data-edit]").forEach((b) => (b.onclick = () => { const m = ms.find((x) => x.id === b.dataset.edit && x.targets); dialog("Edit model", form(m), save(m)); }));
     $$("[data-del]").forEach((b) => (b.onclick = async () => {
-      if (!confirmAction(`Delete model ${b.dataset.del}? Requests for it will fail.`)) return;
+      if (!confirm(`Delete model ${b.dataset.del}? Requests for it will fail.`)) return;
       await api("DELETE", `${base}/models/${pathID(b.dataset.del)}`).catch((e) => toast(e.message));
       load();
     }));
@@ -467,11 +455,11 @@ function membersView(main, base) {
       load();
     }));
     $$("[data-rm]").forEach((b) => (b.onclick = async () => {
-      if (!confirmAction("Remove this member from the organization?")) return;
+      if (!confirm("Remove this member from the organization?")) return;
       await api("DELETE", `${base}/members/${b.dataset.rm}`).catch((e) => toast(e.message));
       load();
     }));
-  });
+   }, "No members yet.");
   if ($("#new")) $("#new").onclick = () => dialog("Add member", `
       <label>Email<input name="email" type="email" required></label>
       <label>Role<select name="role">${roles.slice(0, S.role === "owner" ? 4 : 3).map((r) => `<option ${r === "member" ? "selected" : ""}>${r}</option>`).join("")}</select></label>
@@ -543,10 +531,11 @@ function playgroundView(main, base) {
       <label class="inline"><input type="checkbox" name="stream" checked> Stream the answer</label>
       <div class="actions"><button class="primary" type="submit">Send</button></div>
     </form><h2>Response</h2><pre id="out" aria-live="polite">–</pre>`;
+  $("#pgm").innerHTML = "<option value=''>Loading models…</option>";
   api("GET", `${base}/models`).then((ms) => {
     const chat = ms.filter((m) => m.kind === "chat" && m.enabled);
-    $("#pgm").innerHTML = chat.length ? chat.map((m) => `<option>${esc(m.id)}</option>`).join("") : "<option value=''>No chat models</option>";
-  }).catch((e) => toast(e.message));
+    $("#pgm").innerHTML = chat.length ? chat.map((m) => `<option>${esc(m.id)}</option>`).join("") : "<option value=''>No chat models: add one under Models</option>";
+  }).catch((e) => ($("#pgm").innerHTML = `<option value=''>Could not load models: ${esc(e.message)}</option>`));
   $("#pg").onsubmit = async (ev) => {
     ev.preventDefault();
     const f = new FormData(ev.target);
@@ -658,7 +647,7 @@ function usersView(main) {
     ], us);
     $$("[data-op]").forEach((b) => (b.onclick = async () => { await api("PATCH", `/api/admin/users/${b.dataset.op}`, { operator: b.dataset.v === "true" }).catch((e) => toast(e.message)); load(); }));
     $$("[data-dis]").forEach((b) => (b.onclick = async () => { await api("PATCH", `/api/admin/users/${b.dataset.dis}`, { disabled: b.dataset.v === "true" }).catch((e) => toast(e.message)); load(); }));
-  });
+   }, "No users yet.");
   load();
 }
 
@@ -680,7 +669,7 @@ function mcpView(main) {
       { label: "Allowed", cell: (m) => esc((m.tools || []).join(", ") || "none") },
       { label: "", cell: (m) => `<button class="danger" data-del="${esc(m.id)}">Delete</button>` },
     ], servers);
-    $$("[data-del]").forEach((b) => (b.onclick = async () => { if (confirmAction("Delete this MCP server?")) { await api("DELETE", `/api/admin/mcp/${b.dataset.del}`).catch((e) => toast(e.message)); load(); } }));
+    $$("[data-del]").forEach((b) => (b.onclick = async () => { if (confirm("Delete this MCP server?")) { await api("DELETE", `/api/admin/mcp/${b.dataset.del}`).catch((e) => toast(e.message)); load(); } }));
   });
   $("#new").onclick = () => dialog("Add MCP server", `<div class="row"><label>Name<input name="name" required pattern="[A-Za-z0-9_-]+"></label>
       <label>Transport<select name="type"><option>http</option><option>sse</option></select></label></div>

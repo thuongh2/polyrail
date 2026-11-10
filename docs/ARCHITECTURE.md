@@ -33,7 +33,7 @@ once against `store.KV`; backends only implement the KV primitives:
 | primitive | Pebble | Postgres |
 |---|---|---|
 | Get / Put / Delete | point ops | `kv(k text pk, v bytea)` |
-| Scan(prefix, from, limit, reverse) | iterator | `k >= $1 AND k < $2 ORDER BY k LIMIT` (B-tree) |
+| Scan(prefix, after, limit) | iterator | `k >= $1 AND k < $2 ORDER BY k LIMIT` (B-tree) |
 | Update(fn) atomic | mutex + indexed batch | SERIALIZABLE tx + retry |
 | AddAgg(map[key]Agg) | single writer read-modify-write | `INSERT … ON CONFLICT DO UPDATE SET n = n + excluded.n` |
 | DeleteRange | `DeleteRange` (cheap, LSM tombstone) | range `DELETE` |
@@ -59,15 +59,17 @@ retention is a `DeleteRange`.
 
 Never waits on a synchronous DB write; reads are cached.
 
-1. **Auth** — `sha256(key)` → LRU(TTL 30 s) → `khash/*` + `key/*` + `org/*` on miss.
-2. **Limits** — RPM: token bucket. TPM: tokens counted per minute window, checked before the call,
+1. **Auth** — `sha256(key)` → bounded TTL cache (30 s, random eviction, negative results too) →
+   `khash/*` + `key/*` + `org/*` on miss. Cleared on this node by key/org changes and on every config
+   version change (other nodes ≤ 2 s).
+2. **Limits** — RPM: fixed one-minute window counter. TPM: tokens counted per minute window, checked before the call,
    added after. Local in-process; Redis `INCRBY`+`EXPIRE` fixed windows in scale mode.
 3. **Budget** — org balance = `credits` (org record) − `spend/org` counter. A node keeps a local
    spend cache, adds its own unflushed deltas, and refreshes from the store every flush (1 s).
    Max overspend ≈ one second of one node's traffic per org. Same rule for key monthly budgets.
 4. **Guardrails** — max input chars, blocked regexes (compiled once per config version), PII mask.
-5. **Cache** — exact match, opt-in by header, bounded LRU (entries + bytes), key =
-   sha256(org + model + normalized body).
+5. **Cache** — exact match, opt-in by header, bounded TTL cache (entries + bytes, random eviction),
+   key = sha256(org + raw request body). Skipped for streams and MCP requests.
 6. **Router** — resolve model (org-private first, then public) from the in-memory catalog snapshot
    (rebuilt when `meta/version` changes; polled every 2 s across nodes). Pick primary target by
    weight among targets whose circuit is closed; remaining targets become Bifrost fallbacks.
@@ -78,8 +80,11 @@ Never waits on a synchronous DB write; reads are cached.
 
 ## Providers and Bifrost mapping
 
-- Provider types: every Bifrost standard provider. Providers of base type openai/anthropic/gemini/
-  cohere/bedrock are registered as Bifrost *custom providers* keyed by provider id, so any number of
+- Provider types: those configured by key + base URL alone (openai, anthropic, gemini, cohere,
+  mistral, groq, ollama, cerebras, perplexity, openrouter, nebius, parasail, sgl). Azure, Vertex and
+  Bedrock need cloud credentials Bifrost reads from extra key config and are not exposed in v1; use
+  their OpenAI-compatible endpoints. Tenants may only create the multi-instance types below. Providers of base type openai/anthropic/gemini/
+  cohere are registered as Bifrost *custom providers* keyed by provider id, so any number of
   instances (public or per-org private) can coexist. Other types (azure, vertex, groq, mistral, …)
   use the Bifrost standard key and may exist once (platform-wide) — or be added as `openai` type
   with a base URL, since they are OpenAI-compatible.
@@ -100,7 +105,7 @@ Never waits on a synchronous DB write; reads are cached.
 
 ## Resource budget (small mode, 1 vCPU / 2 GB)
 
-Pebble block cache 32 MB + memtable 16 MB; auth LRU 50k entries; response cache 64 MB; usage
+Pebble block cache 32 MB + memtable 16 MB; auth cache 50k entries; response cache 64 MB; usage
 channel 10k events; Bifrost per-provider concurrency 64 / buffer 256 (configurable).
 
 ## Scale mode

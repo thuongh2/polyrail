@@ -139,18 +139,14 @@ func csrf(h http.HandlerFunc) http.HandlerFunc {
 // authed requires a session. Mutations also require the X-GW-CSRF header, which a cross-site
 // form cannot set.
 func (a *API) authed(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Header.Get("X-GW-CSRF") != "1" {
-			writeErr(w, http.StatusForbidden, "missing X-GW-CSRF header")
-			return
-		}
+	return csrf(func(w http.ResponseWriter, r *http.Request) {
 		u, err := a.currentUser(r)
 		if err != nil {
 			fail(w, err)
 			return
 		}
 		h(w, r.WithContext(context.WithValue(r.Context(), userCtx{}, u)))
-	}
+	})
 }
 
 func (a *API) operator(h http.HandlerFunc) http.HandlerFunc {
@@ -247,6 +243,14 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+// orInvalid returns err if set, else an ErrInvalid with msg.
+func orInvalid(err error, msg string) error {
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: %s", store.ErrInvalid, msg)
+}
+
 func orDefault(s, d string) string {
 	if strings.TrimSpace(s) == "" {
 		return d
@@ -275,7 +279,17 @@ func usdToMicros(usd float64) int64 { return int64(math.Round(usd * 1e6)) }
 // ---- auth info ----
 
 func (a *API) authConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]bool{"signup": a.cfg.AllowSignup, "sso": a.oidc != nil})
+	var platform, org []string
+	for t := range supportedTypes {
+		platform = append(platform, t)
+		if gateway.MultiInstance(t) {
+			org = append(org, t)
+		}
+	}
+	sort.Strings(platform)
+	sort.Strings(org)
+	writeJSON(w, 200, map[string]any{"signup": a.cfg.AllowSignup, "sso": a.oidc != nil,
+		"provider_types": map[string][]string{"platform": platform, "org": org}})
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
@@ -532,15 +546,16 @@ func (a *API) addMember(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, memberView{store.Member{OrgID: org, UserID: u.ID, Role: in.Role}, u.Email, u.Name})
 }
 
-func (a *API) ownerCount(ctx context.Context, org string) int {
-	ms, _ := a.S.ListMembers(ctx, org)
+// lastOwner reports whether the org has exactly one owner left.
+func (a *API) lastOwner(ctx context.Context, org string) (bool, error) {
+	ms, err := a.S.ListMembers(ctx, org)
 	n := 0
 	for _, m := range ms {
 		if m.Role == store.RoleOwner {
 			n++
 		}
 	}
-	return n
+	return n == 1, err
 }
 
 func (a *API) setMemberRole(w http.ResponseWriter, r *http.Request) {
@@ -560,9 +575,11 @@ func (a *API) setMemberRole(w http.ResponseWriter, r *http.Request) {
 		fail(w, errForbidden)
 		return
 	}
-	if old.Role == store.RoleOwner && in.Role != store.RoleOwner && a.ownerCount(r.Context(), org) == 1 {
-		fail(w, fmt.Errorf("%w: an organization needs at least one owner", store.ErrInvalid))
-		return
+	if old.Role == store.RoleOwner && in.Role != store.RoleOwner {
+		if last, err := a.lastOwner(r.Context(), org); err != nil || last {
+			fail(w, orInvalid(err, "an organization needs at least one owner"))
+			return
+		}
 	}
 	if err := a.S.SetMember(r.Context(), store.Member{OrgID: org, UserID: uid, Role: in.Role}); err != nil {
 		fail(w, err)
@@ -583,9 +600,11 @@ func (a *API) removeMember(w http.ResponseWriter, r *http.Request) {
 		fail(w, errForbidden)
 		return
 	}
-	if old.Role == store.RoleOwner && a.ownerCount(r.Context(), org) == 1 {
-		fail(w, fmt.Errorf("%w: an organization needs at least one owner", store.ErrInvalid))
-		return
+	if old.Role == store.RoleOwner {
+		if last, err := a.lastOwner(r.Context(), org); err != nil || last {
+			fail(w, orInvalid(err, "an organization needs at least one owner"))
+			return
+		}
 	}
 	if err := a.S.RemoveMember(r.Context(), org, uid); err != nil {
 		fail(w, err)
@@ -707,15 +726,14 @@ func checkBaseURL(raw string, allowPrivate bool) error {
 	if raw == "" {
 		return nil
 	}
-	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("%w: base_url must be an http(s) URL", store.ErrInvalid)
-	}
 	if allowPrivate {
+		if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%w: base_url must be an http(s) URL", store.ErrInvalid)
+		}
 		return nil
 	}
 	if err := gateway.CheckPublicURL(raw); err != nil {
-		return fmt.Errorf("%w: base_url must resolve to a public address", store.ErrInvalid)
+		return fmt.Errorf("%w: base_url must be a public http(s) URL", store.ErrInvalid)
 	}
 	return nil
 }
@@ -758,13 +776,6 @@ func (a *API) putProvider(w http.ResponseWriter, r *http.Request) {
 	if err := checkBaseURL(p.BaseURL, p.OrgID == "" || a.cfg.AllowPrivateURLs); err != nil {
 		fail(w, err)
 		return
-	}
-	if p.ID != "" {
-		old, err := a.S.GetProvider(r.Context(), p.ID)
-		if err != nil || old.OrgID != p.OrgID {
-			fail(w, store.ErrNotFound)
-			return
-		}
 	}
 	if err := a.S.PutProvider(r.Context(), &p); err != nil {
 		fail(w, err)
@@ -926,9 +937,9 @@ func (a *API) usageReport(w http.ResponseWriter, r *http.Request) {
 	var total store.Agg
 	now := time.Now()
 	for d := days - 1; d >= 0; d-- {
-		day := usage.Day(now.AddDate(0, 0, -d))
+		day := store.Day(now.AddDate(0, 0, -d))
 		prefix := "agg/" + org + "/" + day + "/"
-		m, err := a.S.KV.ScanAgg(r.Context(), prefix, 0)
+		m, err := a.S.KV.ScanAgg(r.Context(), prefix)
 		if err != nil {
 			fail(w, err)
 			return
@@ -991,9 +1002,6 @@ func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	for i := range us {
-		us[i].PasswordHash = ""
-	}
 	writeJSON(w, 200, us)
 }
 
@@ -1024,7 +1032,6 @@ func (a *API) patchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.audit(r, "_", "user.update", u.Email, fmt.Sprintf("operator=%v disabled=%v", u.Operator, u.Disabled))
-	u.PasswordHash = ""
 	writeJSON(w, 200, u)
 }
 

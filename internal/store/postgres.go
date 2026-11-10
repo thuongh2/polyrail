@@ -44,7 +44,7 @@ func (p *pgKV) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 // rangeQuery builds the WHERE clause for a prefix scan with an exclusive cursor.
-func rangeQuery(table, cols, prefix, after string, limit int, reverse bool) (string, []any) {
+func rangeQuery(table, cols, prefix, after string, limit int) (string, []any) {
 	var sb strings.Builder
 	args := []any{prefix}
 	fmt.Fprintf(&sb, "SELECT k, %s FROM %s WHERE k >= $1", cols, table)
@@ -54,25 +54,17 @@ func rangeQuery(table, cols, prefix, after string, limit int, reverse bool) (str
 	}
 	if after != "" {
 		args = append(args, after)
-		op := ">"
-		if reverse {
-			op = "<"
-		}
-		fmt.Fprintf(&sb, " AND k %s $%d", op, len(args))
+		fmt.Fprintf(&sb, " AND k > $%d", len(args))
 	}
-	if reverse {
-		sb.WriteString(" ORDER BY k DESC")
-	} else {
-		sb.WriteString(" ORDER BY k")
-	}
+	sb.WriteString(" ORDER BY k")
 	if limit > 0 {
 		fmt.Fprintf(&sb, " LIMIT %d", limit)
 	}
 	return sb.String(), args
 }
 
-func (p *pgKV) Scan(ctx context.Context, prefix, after string, limit int, reverse bool) ([]Item, error) {
-	q, args := rangeQuery("kv", "v", prefix, after, limit, reverse)
+func (p *pgKV) Scan(ctx context.Context, prefix, after string, limit int) ([]Item, error) {
+	q, args := rangeQuery("kv", "v", prefix, after, limit)
 	rows, err := p.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -163,8 +155,8 @@ func (p *pgKV) GetAgg(ctx context.Context, key string) (Agg, error) {
 	return a, err
 }
 
-func (p *pgKV) ScanAgg(ctx context.Context, prefix string, limit int) (map[string]Agg, error) {
-	q, args := rangeQuery("agg", aggCols, prefix, "", limit, false)
+func (p *pgKV) ScanAgg(ctx context.Context, prefix string) (map[string]Agg, error) {
+	q, args := rangeQuery("agg", aggCols, prefix, "", 0)
 	rows, err := p.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err

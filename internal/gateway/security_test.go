@@ -63,3 +63,38 @@ func TestMCPOrgAllowlist(t *testing.T) {
 		t.Fatalf("no header must inject nothing: %v", got)
 	}
 }
+
+func TestCostMicros(t *testing.T) {
+	m := store.Model{InputPrice: 150_000, OutputPrice: 600_000} // $0.15 / $0.60 per 1M
+	for _, c := range []struct {
+		in, out int
+		want    int64
+	}{{0, 0, 0}, {12, 3, 4}, {10, 0, 2}, {1_000_000, 1_000_000, 750_000}, {3, 0, 0}} {
+		if got := cost(m, c.in, c.out); got != c.want {
+			t.Errorf("cost(%d,%d) = %d, want %d", c.in, c.out, got, c.want)
+		}
+	}
+}
+
+func TestPlanWeightedSplitAndBreakerOrder(t *testing.T) {
+	snap := &Snapshot{Providers: map[string]store.Provider{"a": {ID: "a"}, "b": {ID: "b"}}}
+	m := store.Model{Targets: []store.Target{{ProviderID: "a", Model: "x", Weight: 3}, {ProviderID: "b", Model: "x", Weight: 1}}}
+	br := newBreaker()
+	first := map[string]int{}
+	for i := 0; i < 4000; i++ {
+		ts := plan(m, snap, br)
+		if len(ts) != 2 {
+			t.Fatalf("plan dropped a target: %v", ts)
+		}
+		first[ts[0].ProviderID]++
+	}
+	if share := float64(first["a"]) / 4000; share < 0.70 || share > 0.80 { // expect 0.75
+		t.Fatalf("weighted split: a served first %.2f of the time", share)
+	}
+	for i := 0; i < br.threshold; i++ {
+		br.result(targetID(m.Targets[0]), false)
+	}
+	if ts := plan(m, snap, br); ts[0].ProviderID != "b" || ts[1].ProviderID != "a" {
+		t.Fatalf("open circuit must move a to the end: %v", ts)
+	}
+}

@@ -30,5 +30,11 @@ node. Simpler than leases, same write rate.
 
 **D8 Prometheus via client_golang.** Already a transitive dependency (Pebble); reuse it.
 
-**D9 MCP via Bifrost core MCP manager.** HTTP/SSE servers only; STDIO disabled unless
-`MCP_ALLOW_STDIO=true` (it executes local commands).
+**D9 MCP via Bifrost core MCP manager.** HTTP/SSE servers only; STDIO is not supported (it would
+execute local commands). Operators grant servers per org; tools are injected only on request.
+
+**D10 Models route only to providers of the same owner.** Public models → public providers, org
+models → that org's providers. Prevents tenants re-pricing platform capacity (SECURITY H4).
+
+**D11 Cost rounding.** Per-request cost is rounded to the nearest micro-USD (unbiased over many
+requests); stored as int64 micro-USD.

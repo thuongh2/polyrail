@@ -51,7 +51,6 @@ func New(kv store.KV, queue int, interval time.Duration, sinks ...LogSink) *Pipe
 
 // Keys of the counters touched by one request.
 func Month(t time.Time) string { return t.UTC().Format("200601") }
-func Day(t time.Time) string   { return t.UTC().Format("20060102") }
 
 func OrgSpendKey(org string) string              { return "spend/org/" + org }
 func KeySpendKey(key string, t time.Time) string { return "spend/key/" + key + "/" + Month(t) }
@@ -70,7 +69,7 @@ func (p *Pipeline) Record(l store.RequestLog) {
 	if l.Cached {
 		a[store.AggCacheHits] = 1
 	}
-	d := Day(l.At)
+	d := store.Day(l.At)
 	p.mu.Lock()
 	for _, k := range []string{
 		"agg/" + l.OrgID + "/" + d + "/t",

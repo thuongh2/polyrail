@@ -269,17 +269,18 @@ func bifrostTargets(snap *Snapshot, ts []store.Target) (schemas.ModelProvider, s
 	return BifrostKey(snap.Providers[ts[0].ProviderID]), ts[0].Model, fb
 }
 
-// settle updates circuit breakers from which provider ended up serving the request.
+// settle updates circuit breakers from which provider ended up serving the request and returns
+// that provider's name.
 func (g *Gateway) settle(snap *Snapshot, ts []store.Target, served schemas.ModelProvider, failed bool) string {
 	servedID := snap.byBifrost[served]
 	for _, t := range ts {
 		if !failed && t.ProviderID == servedID {
 			g.br.result(targetID(t), true)
-			return servedID
+			break
 		}
 		g.br.result(targetID(t), false)
 	}
-	return servedID
+	return snap.Providers[servedID].Name
 }
 
 func cost(m store.Model, in, out int) int64 {
@@ -397,13 +398,13 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, ae)
 		return
 	}
-	provID := g.settle(snap, ts, resp.ExtraFields.Provider, false)
-	l := store.RequestLog{Status: 200, Provider: provID, Upstream: resp.ExtraFields.ModelRequested}
+	provName := g.settle(snap, ts, resp.ExtraFields.Provider, false)
+	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.ModelRequested}
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	}
 	resp.Model = m.ID
-	out, err := sonic.Marshal(chatOut{BifrostChatResponse: resp, Provider: provID})
+	out, err := sonic.Marshal(chatOut{BifrostChatResponse: resp, Provider: provName})
 	if err != nil {
 		writeError(w, errf(500, "api_error", "encode", "cannot encode response"))
 		return
@@ -413,7 +414,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	g.record(p, m, l, start)
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("x-gateway-provider", provID)
+	w.Header().Set("x-gateway-provider", provName)
 	_, _ = w.Write(out)
 }
 
@@ -527,8 +528,8 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, ae)
 		return
 	}
-	provID := g.settle(snap, ts, resp.ExtraFields.Provider, false)
-	l := store.RequestLog{Status: 200, Provider: provID}
+	provName := g.settle(snap, ts, resp.ExtraFields.Provider, false)
+	l := store.RequestLog{Status: 200, Provider: provName}
 	if resp.Usage != nil {
 		l.InTokens = resp.Usage.PromptTokens
 	}
@@ -539,7 +540,7 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 		ExtraFields *struct{} `json:"extra_fields,omitempty"`
 	}{BifrostEmbeddingResponse: resp})
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("x-gateway-provider", provID)
+	w.Header().Set("x-gateway-provider", provName)
 	_, _ = w.Write(out)
 }
 

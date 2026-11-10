@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -25,9 +26,18 @@ func newTestStore(t *testing.T) *Store {
 func TestUsersOrgsMembersKeys(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	u := &User{Email: " Alice@Example.com "}
+	u := &User{Email: " Alice@Example.com ", PasswordHash: "h1"}
 	if err := s.CreateUser(ctx, u); err != nil {
 		t.Fatal(err)
+	}
+	if got, _ := s.GetUser(ctx, u.ID); got.PasswordHash != "h1" {
+		t.Fatalf("password hash not persisted: %+v", got)
+	}
+	if raw, _ := json.Marshal(u); strings.Contains(string(raw), "h1") {
+		t.Fatalf("password hash leaks into JSON: %s", raw)
+	}
+	if got, _ := s.UpdateUser(ctx, u.ID, func(x *User) error { x.Name = "A"; return nil }); got.PasswordHash != "h1" {
+		t.Fatal("update dropped password hash")
 	}
 	if err := s.CreateUser(ctx, &User{Email: "alice@example.com"}); !errors.Is(err, ErrExists) {
 		t.Fatalf("duplicate email: %v", err)

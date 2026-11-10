@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Models · agent-gateway</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">agent-gateway</a>
+  <span class="spacer"></span>
+  <a class="btn" href="/app/">Console</a>
+</header>
+<main class="page">
+  <h1>Models</h1>
+  <p class="lede">Every model on this gateway, behind one OpenAI-compatible API. Prices are in US dollars per million tokens.</p>
+  <div class="filters" role="search">
+    <label class="inline grow">
+      <span class="sr">Search</span>
+      <input id="q" type="search" placeholder="Search models or vendors" autocomplete="off">
+    </label>
+    <label class="inline">Kind
+      <select id="kind"><option value="">All</option><option value="chat">Chat</option><option value="embedding">Embedding</option></select>
+    </label>
+  </div>
+  <div id="models" aria-live="polite"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+  <h2>Use it</h2>
+  <pre id="snippet"></pre>
+</main>
+<script src="/catalog.js"></script>
+</body>
+</html>

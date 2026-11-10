@@ -61,7 +61,7 @@ type User struct {
 	ID           string    `json:"id"`
 	Email        string    `json:"email"`
 	Name         string    `json:"name"`
-	PasswordHash string    `json:"password_hash,omitempty"`
+	PasswordHash string    `json:"-"` // persisted via storedUser only, never in API output
 	Operator     bool      `json:"operator"`
 	Disabled     bool      `json:"disabled,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -87,6 +87,18 @@ type APIKey struct {
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	Revoked       bool       `json:"revoked"`
 	CreatedAt     time.Time  `json:"created_at"`
+}
+
+// storedUser keeps the password hash in the persisted form while hiding it from API JSON.
+type storedUser struct {
+	User
+	PasswordHash string `json:"password_hash,omitempty"`
+}
+
+func (s storedUser) user() *User {
+	u := s.User
+	u.PasswordHash = s.PasswordHash
+	return &u
 }
 
 // storedKey keeps the hash in the persisted form while hiding it from API JSON.
@@ -357,12 +369,16 @@ func (s *Store) CreateUser(ctx context.Context, u *User) error {
 		if err := tx.Put("idx/email/"+u.Email, []byte(u.ID)); err != nil {
 			return err
 		}
-		return putJSON(tx, "user/"+u.ID, u)
+		return putJSON(tx, "user/"+u.ID, storedUser{*u, u.PasswordHash})
 	})
 }
 
 func (s *Store) GetUser(ctx context.Context, id string) (*User, error) {
-	return getJSON[User](s.get(ctx), "user/"+id)
+	su, err := getJSON[storedUser](s.get(ctx), "user/"+id)
+	if err != nil {
+		return nil, err
+	}
+	return su.user(), nil
 }
 
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error) {
@@ -376,16 +392,16 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error)
 func (s *Store) UpdateUser(ctx context.Context, id string, fn func(*User) error) (*User, error) {
 	var out *User
 	err := s.update(ctx, func(tx Tx) error {
-		u, err := getJSON[User](tx.Get, "user/"+id)
+		su, err := getJSON[storedUser](tx.Get, "user/"+id)
 		if err != nil {
 			return err
 		}
-		email := u.Email
+		u := su.user()
 		if err := fn(u); err != nil {
 			return err
 		}
-		u.ID, u.Email, out = id, email, u // email changes are not supported (index stays consistent)
-		return putJSON(tx, "user/"+id, u)
+		u.ID, u.Email, out = id, su.Email, u // email changes are not supported (index stays consistent)
+		return putJSON(tx, "user/"+id, storedUser{*u, u.PasswordHash})
 	})
 	return out, err
 }

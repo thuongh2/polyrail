@@ -22,7 +22,7 @@ type Snapshot struct {
 }
 
 // customBase lists the provider types Bifrost can instantiate many times under custom names.
-var customBase = map[string]bool{"openai": true, "anthropic": true, "gemini": true, "cohere": true, "bedrock": true}
+var customBase = map[string]bool{"openai": true, "anthropic": true, "gemini": true, "cohere": true}
 
 // BifrostKey is the Bifrost provider key a provider is registered under.
 func BifrostKey(p store.Provider) schemas.ModelProvider {
@@ -30,16 +30,6 @@ func BifrostKey(p store.Provider) schemas.ModelProvider {
 		return schemas.ModelProvider("p-" + p.ID)
 	}
 	return schemas.ModelProvider(p.Type)
-}
-
-// ValidProviderType reports whether Bifrost core supports the type.
-func ValidProviderType(t string) bool {
-	for _, p := range schemas.StandardProviders {
-		if string(p) == t {
-			return true
-		}
-	}
-	return false
 }
 
 func loadSnapshot(ctx context.Context, s *store.Store) (*Snapshot, error) {
@@ -169,7 +159,7 @@ func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.Provid
 	if customBase[p.Type] {
 		cfg.CustomProviderConfig = &schemas.CustomProviderConfig{
 			BaseProviderType: schemas.ModelProvider(p.Type),
-			IsKeyLess:        len(p.Keys) == 0 && p.Type != "bedrock",
+			IsKeyLess:        len(p.Keys) == 0,
 		}
 	}
 	return cfg, nil

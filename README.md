@@ -9,6 +9,17 @@ the provider adapters.
 It is one Go binary with an embedded database. It runs on a 1 vCPU / 2 GB VPS, and scales out to
 stateless replicas on Postgres + Valkey + ClickHouse when you need it.
 
+## Run it in one command (demo)
+
+```sh
+./scripts/run-local.sh
+```
+
+It starts the gateway plus a local mock provider, adds two demo models and an API key, sends a few
+requests so the dashboards have data, and prints the console URL and the sign-in it generated
+(kept in `.env.local`). Prebuilt binaries for macOS and Linux are in `bin/` in the release package;
+without them the script builds with Go. `DEMO=0` skips the demo data, `PORT=9090` changes the port.
+
 ## Quick start
 
 ```sh

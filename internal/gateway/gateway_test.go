@@ -168,9 +168,8 @@ func TestChatFailoverPricingAndBreaker(t *testing.T) {
 	if f.badHits.Load() == 0 || f.okHits.Load() != 1 {
 		t.Fatalf("failover: bad=%d ok=%d", f.badHits.Load(), f.okHits.Load())
 	}
-	okProvider := resp.Header.Get("x-gateway-provider")
-	if okProvider == "" {
-		t.Fatal("missing x-gateway-provider")
+	if got := resp.Header.Get("x-gateway-provider"); got != "ok" || m["provider"] != "ok" {
+		t.Fatalf("serving provider: header %q body %v", got, m["provider"])
 	}
 	// after 3 failures the bad target's circuit opens and it is no longer tried first
 	f.post(t, "/v1/chat/completions", f.key, chatBody).Body.Close()

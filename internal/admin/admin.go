@@ -418,8 +418,8 @@ func (a *API) deleteOrg(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) addCredits(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		USD float64 `json:"usd"`
-		Note string `json:"note"`
+		USD  float64 `json:"usd"`
+		Note string  `json:"note"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -889,7 +889,9 @@ func rows(m map[string]store.Agg) []usageRow {
 	for k, a := range m {
 		out = append(out, row(k, a))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CostUSD > out[j].CostUSD || (out[i].CostUSD == out[j].CostUSD && out[i].Key < out[j].Key) })
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CostUSD > out[j].CostUSD || (out[i].CostUSD == out[j].CostUSD && out[i].Key < out[j].Key)
+	})
 	return out
 }
 

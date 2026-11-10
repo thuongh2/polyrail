@@ -50,7 +50,7 @@ func New(kv store.KV, queue int, interval time.Duration, sinks ...LogSink) *Pipe
 func Month(t time.Time) string { return t.UTC().Format("200601") }
 func Day(t time.Time) string   { return t.UTC().Format("20060102") }
 
-func OrgSpendKey(org string) string             { return "spend/org/" + org }
+func OrgSpendKey(org string) string              { return "spend/org/" + org }
 func KeySpendKey(key string, t time.Time) string { return "spend/key/" + key + "/" + Month(t) }
 
 // Record accounts one finished request. Never blocks.

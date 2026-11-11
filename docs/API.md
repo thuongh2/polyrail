@@ -1000,3 +1000,11 @@ prices are used only by the `cost` strategy.
 reachable), `GET /metrics` (Prometheus; `METRICS_TOKEN` if set), `GET /api/version`
 (`{"name": "polyrail", "version": "<build version>", "bifrost_core": "v1.15.2"}`; the version is set at build time with
 `-ldflags "-X main.version=…"`, which `make build` does from `git describe`, else `dev`).
+
+### OpenCode providers
+
+Requests routed to an `opencode-go` or `opencode-zen` provider carry `x-opencode-session` and
+`User-Agent: Polyrail/<version>`, which OpenCode requires. Send your own `x-opencode-session`
+(letters, digits, `. _ : -`, ≤128 chars) to choose the session id; otherwise the gateway derives one
+from the API key and the conversation's first two messages, so all turns of a conversation share it
+(D35).

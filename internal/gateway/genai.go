@@ -113,6 +113,7 @@ func (g *Gateway) genaiGenerate(w http.ResponseWriter, r *http.Request, p *princ
 	if p = g.prepareResponses(w, r, p, m, ts, snap, breq, start); p == nil {
 		return
 	}
+	opencodeHeaders(bctx, r, p, snap, ts, func() string { return conversationSeed(breq.Input) })
 	if stream {
 		ch, berr := g.BF.ResponsesStreamRequest(bctx, breq)
 		if berr != nil {

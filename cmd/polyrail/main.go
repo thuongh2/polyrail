@@ -171,6 +171,7 @@ func run() error {
 		}
 		slog.Info("region lock: requests only reach providers of this data region", "region", regionLock)
 	}
+	gateway.Version = version
 	g, err := gateway.New(ctx, s, lim, up, gateway.Config{
 		MaxBodyBytes: int64(envInt("MAX_BODY_MB", 8)) << 20,
 		Concurrency:  envInt("PROVIDER_CONCURRENCY", 64),

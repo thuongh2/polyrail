@@ -462,3 +462,13 @@ false, OpenRouter's default), and on a self-hosted gateway most traffic goes thr
 omitted `include_byok` means true (API and UI); an explicit `false` still excludes BYOK spend and
 the Policies list flags it. Existing policies keep their stored value. Spend that went to BYOK models
 before a budget included them was never counted for that budget, so it starts counting from the change.
+
+**D35 OpenCode session header.** OpenCode Go/Zen refuse requests without `x-opencode-session`
+("Request is missing x-opencode-session and cannot be routed efficiently") and ask clients for a
+stable id per conversation plus their own User-Agent (opencode.ai/docs/console/go). When a request's
+targets include an `opencode-go`/`opencode-zen` provider, the gateway forwards the caller's
+`x-opencode-session` if it is a plain id (`[A-Za-z0-9._:-]{1,128}`), else sends
+`polyrail-<sha256(org, key, first two messages)[:16]>` — the same on every turn of a conversation,
+different across conversations and keys — and `User-Agent: Polyrail/<version>`. Set only on OpenCode
+requests (chat, Responses, Anthropic, GenAI). Note: OpenCode Go is a single-member subscription for
+coding agents; serving many users through it may break its terms — use OpenCode Zen or Go Teams.

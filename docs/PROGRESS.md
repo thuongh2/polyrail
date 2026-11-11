@@ -71,6 +71,12 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
   `proxy_pool` and global `UPSTREAM_PROXY_POOL`, loopback CONNECT forwarder with round-robin /
   random / sticky / latency, set-aside 60→600 s, down after 3 failures, TCP probes, fail-closed,
   tenant target pinning, Platform → Proxies page; provider 429 never rotates.
+- [x] W1-C keys and data (D28): members/viewers see own keys only, key rotate with grace, management
+  tokens (`pr-mgmt-`, org-scoped), usage + log CSV export (formula-safe, streamed), opt-in sealed
+  content logging with per-org TTL purge. Backend only; UI pending. Tests: TestKeyVisibilityByRole,
+  TestKeyRotateGraceAndSettings, TestMgmtTokens, TestUsageAndLogExport,
+  TestContentLoggingSettingAndRead, TestContentLoggingOptIn, TestContentLoggingStream, store tests in
+  content_test.go.
 
 ## Next (not started)
 - OIDC test against a mock IdP; live MCP server test.

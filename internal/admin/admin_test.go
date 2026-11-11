@@ -511,7 +511,7 @@ func TestKeySecretShownOnceAndAudited(t *testing.T) {
 	if strings.Contains(r.body, gateway.HashKey(out.Secret)) || strings.Contains(r.body, `"hash"`) {
 		t.Fatalf("create response leaks hash: %s", r.body)
 	}
-	list := f.do(t, "viewer", "GET", A+"/keys", "")
+	list := f.do(t, "admin", "GET", A+"/keys", "") // members and viewers see only their own keys
 	expect(t, list, 200, "list keys")
 	if strings.Contains(list.body, out.Secret) || strings.Contains(list.body, gateway.HashKey(out.Secret)) || !strings.Contains(list.body, out.Key.ID) {
 		t.Fatalf("key list leaks secret/hash: %s", list.body)

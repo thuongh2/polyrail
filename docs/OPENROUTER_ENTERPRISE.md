@@ -13,13 +13,13 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 |---|---|---|
 | Organizations, shared credit pool | have | orgs + prepaid credits |
 | Roles admin / member | have | owner / admin / member / viewer |
-| Members see only their own keys; admins see all | gap · W1 | today any member lists every org key |
+| Members see only their own keys; admins see all | have | D28; members and viewers list only keys they created |
 | Workspaces (keys, guardrails, BYOK, routing, presets, budgets, members scoped per workspace) | gap · W3 | largest item; an org would hold workspaces; today org ≈ one workspace |
 | SSO (OIDC) | have | |
 | SSO via SAML, domain verification (DNS TXT), enforce SSO | gap · W2 | SAML via `crewjam/saml`; domain claim + "SSO required" |
 | SCIM provisioning, IdP groups → workspace + role, deprovision disables keys | gap · W2 | SCIM 2.0 Users/Groups endpoints |
-| Management API keys (programmatic key create / rotate / delete) | gap · W1 | service tokens for the admin API, scoped to an org |
-| Key rotation | partial | revoke + create; add `rotate` that keeps settings |
+| Management API keys (programmatic key create / rotate / delete) | have | D28; `pr-mgmt-` org-scoped bearer tokens, role ≤ admin, docs/API.md "Management tokens" |
+| Key rotation | have | D28; `POST …/keys/{id}/rotate` keeps settings, optional `grace_seconds` |
 
 ## Spend controls
 
@@ -51,7 +51,7 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 | ZDR enforcement (account / guardrail / request `provider.zdr`, OR-ed) | gap · W1 | provider metadata `zdr`, `retention`, `trains_on_data`; routing filters |
 | `data_collection: deny` | gap · W1 | same metadata |
 | Data regions (`allowed_data_regions`: global / europe / us), regional endpoints | gap · W2 | provider `region` tag + policy; regional hostnames are a deploy concern |
-| Prompt / response logging off by default, opt-in per workspace | partial · W1 | we store metadata only; add opt-in content logging with TTL + encryption |
+| Prompt / response logging off by default, opt-in per workspace | have | D28; per org (no workspaces yet), AES-GCM sealed, 1–90 day TTL, chat completions only |
 | BYOK with declared ZDR | partial | org providers = BYOK; add the declaration |
 
 ## Routing (request level)
@@ -70,7 +70,7 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 
 | OpenRouter | Polyrail | Notes |
 |---|---|---|
-| Activity export CSV, group by model / key / creator | partial · W1 | have usage UI; add CSV export + creator grouping |
+| Activity export CSV, group by model / key / creator | have | D28; `usage/export.csv` (model / key / creator / day), `logs/export.csv` |
 | Broadcast to OTel, Langfuse, Datadog, S3, … with sampling and key filters | gap · W2 | OTel GenAI spans first (covers most backends), S3/NDJSON second |
 | Prometheus | have | OpenRouter has none |
 

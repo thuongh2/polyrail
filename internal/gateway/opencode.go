@@ -14,6 +14,11 @@ import (
 // OpenCode Go and Zen route and prompt-cache by conversation: they ask every client to send a
 // stable `x-opencode-session` per conversation and to name itself in User-Agent, and refuse
 // requests without the session header (https://opencode.ai/docs/console/go/).
+//
+// shortcut: Bifrost core already does this upstream (maximhq/bifrost#7052, merged to main on
+// 2026-11-07: providers/opencode ResolveOpencodeSession) but no tagged core release includes it
+// yet (v1.15.2 does not). Delete this file and its call sites when go.mod moves to a core release
+// that contains #7052, and pass the conversation id as schemas.BifrostContextKeySessionID instead.
 var opencodeTypes = map[string]bool{"opencode-go": true, "opencode-zen": true}
 
 const opencodeSessionHeader = "x-opencode-session"

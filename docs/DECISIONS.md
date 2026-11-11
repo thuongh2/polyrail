@@ -472,3 +472,5 @@ targets include an `opencode-go`/`opencode-zen` provider, the gateway forwards t
 different across conversations and keys — and `User-Agent: Polyrail/<version>`. Set only on OpenCode
 requests (chat, Responses, Anthropic, GenAI). Note: OpenCode Go is a single-member subscription for
 coding agents; serving many users through it may break its terms — use OpenCode Zen or Go Teams.
+Temporary: Bifrost core fixed this itself in maximhq/bifrost#7052 (main, 2026-11-07), not yet in a
+tagged release; remove `internal/gateway/opencode.go` on the first core release that contains it.

@@ -23,6 +23,7 @@ const sections = [
   ["models", "List and query models"],
   ["mcp", "MCP tools"],
   ["kb", "Knowledge bases"],
+  ["keys", "Provider keys and alerts"],
   ["headers", "Gateway headers"],
   ["errors", "Errors"],
 ] as const;
@@ -347,6 +348,38 @@ curl ${base}/chat/completions \
   -H "X-GW-KB: vs_…" \
   -d '{"model": "vendor/model", "messages": [{"role": "user", "content": "How do refunds work?"}]}'`}
             />
+          </Section>
+
+          <Section id="keys" title="Provider keys and alerts">
+            <p>
+              Admins manage a provider's upstream keys in the console: open a provider under Providers. Paste many keys at
+              once (one per line or comma separated, up to 1,000 per call); keys already stored are skipped as duplicates.
+              Requests spread across a provider's keys by weight, and each key shows its status, when it was last used and
+              its successes and errors over 24 hours, with an hourly chart for the last 72 hours.
+            </p>
+            <HeaderTable
+              rows={[
+                ["Available", "Enabled and serving requests."],
+                ["Cooldown", "Rested after a 429, 5xx or timeout: until Retry-After (at most 5 minutes), else 30 seconds doubling to 5 minutes. A success clears it."],
+                ["Quarantined", "Left out after 3 auth failures (401/403) in a row, or by an admin, until a successful Test or a re-enable."],
+                ["Disabled", "Turned off by an admin."],
+              ]}
+            />
+            <p>
+              Test sends a small request with one key and reports latency or the error; a passing test clears cooldown and
+              quarantine. If every key of a provider is out, all of them are tried so the request still fails over through
+              normal routing.
+            </p>
+            <p>
+              Alerts (Organization → Alerts, Platform → Alerts) send <C>key.quarantined</C>, <C>key.recovered</C>,{" "}
+              <C>provider.unavailable</C>, <C>budget.exceeded</C> and <C>request.failed</C> to Telegram, Discord, Slack,
+              Microsoft Teams, email, ntfy or any service{" "}
+              <a href="https://github.com/nicholas-fedor/shoutrrr#readme" target="_blank" rel="noreferrer">shoutrrr</a>{" "}
+              supports, one URL per channel. The same alert is sent at most once per channel and subject every 10 minutes;
+              a channel is disabled after 10 failed deliveries in a row. Organizations can use services with fixed vendor
+              hosts; services on a custom host (SMTP, self-hosted ntfy, Gotify, generic webhooks) are for operators unless
+              private URLs are allowed.
+            </p>
           </Section>
 
           <Section id="headers" title="Gateway headers">

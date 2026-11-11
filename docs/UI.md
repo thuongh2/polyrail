@@ -50,5 +50,6 @@ the frame is `h-dvh overflow-hidden` on the muted `--frame` surface (token on `:
 ## Routes
 
 Public: `/`, `/models`, `/models/<vendor>/<name>`, `/status`, `/docs`, `/login`, `/signup`.
-Console: `/app/activity|logs|playground|keys|credits|models|providers|members|settings|webhooks|audit|account`,
-operators: `/app/platform/activity|orgs|providers|proxies|models|users|mcp|audit`.
+Console: `/app/activity|logs|playground|keys|credits|models|kbs|providers|members|settings|webhooks|alerts|audit|account`,
+`/app/kbs/<id>`, `/app/providers/<id>` (provider detail: keys, docs/KEYS.md),
+operators: `/app/platform/activity|orgs|providers|proxies|models|users|mcp|alerts|audit`, `/app/platform/providers/<id>`.

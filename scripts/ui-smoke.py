@@ -9,8 +9,8 @@ from playwright.sync_api import sync_playwright
 base, email, password = sys.argv[1].rstrip("/"), sys.argv[2], sys.argv[3]
 public = ["/", "/models", "/status", "/docs"]
 console = ["activity", "logs", "playground", "keys", "credits", "models", "kbs", "providers", "members",
-           "settings", "webhooks", "audit", "account", "platform/activity", "platform/orgs", "platform/providers",
-           "platform/models", "platform/users", "platform/mcp", "platform/proxies", "platform/audit"]
+           "settings", "webhooks", "alerts", "audit", "account", "platform/activity", "platform/orgs", "platform/providers",
+           "platform/models", "platform/users", "platform/mcp", "platform/alerts", "platform/proxies", "platform/audit"]
 failures, errors = [], []
 
 def check(pg, what):
@@ -44,6 +44,16 @@ with sync_playwright() as p:
     if not pg.get_by_role("dialog").get_by_text("request.failed").count():
         failures.append("webhooks: create dialog has no event choices")
     pg.keyboard.press("Escape")
+    pg.goto(base + "/app/platform/providers"); pg.wait_for_load_state("networkidle")
+    row = pg.locator('main a[href*="/platform/providers/"]').first  # the first provider row's name link
+    if row.count():
+        row.click(); pg.wait_for_timeout(500); check(pg, "open provider detail")
+        if "/app/platform/providers/" not in pg.url:
+            failures.append(f"open provider detail: url is {pg.url[len(base):]}")
+        elif not pg.get_by_role("button", name="Edit provider").count():
+            failures.append("provider detail: no Edit provider button")
+    else:
+        failures.append("platform/providers: no provider row to open")
     for scope in ["models", "platform/models"]:  # model name links open the public model page
         pg.goto(f"{base}/app/{scope}"); pg.wait_for_load_state("networkidle")
         link = pg.locator('main a[href*="/models/"]').first

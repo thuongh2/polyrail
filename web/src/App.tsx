@@ -28,6 +28,8 @@ const KnowledgeBase = lazy(() => import("@/pages/console/KnowledgeBase"));
 const Account = lazy(() => import("@/pages/console/Account"));
 const ModelsAdmin = lazy(() => import("@/pages/platform/ModelsAdmin"));
 const ProvidersAdmin = lazy(() => import("@/pages/platform/ProvidersAdmin"));
+const ProviderDetail = lazy(() => import("@/pages/platform/ProviderDetail"));
+const Alerts = lazy(() => import("@/pages/console/Alerts"));
 const Orgs = lazy(() => import("@/pages/platform/Orgs"));
 const Users = lazy(() => import("@/pages/platform/Users"));
 const MCP = lazy(() => import("@/pages/platform/MCP"));
@@ -68,6 +70,8 @@ export function App() {
                       <Route path="/credits" component={page(Credits)} />
                       <Route path="/models" component={page(ModelsAdmin, "org")} />
                       <Route path="/providers" component={page(ProvidersAdmin, "org")} />
+                      <Route path="/providers/:id">{(p) => <ProviderDetail scope="org" id={decodeURIComponent(p.id)} />}</Route>
+                      <Route path="/alerts" component={page(Alerts, "org")} />
                       <Route path="/members" component={page(Members)} />
                       <Route path="/settings" component={page(Settings)} />
                       <Route path="/webhooks" component={page(Webhooks)} />
@@ -78,6 +82,8 @@ export function App() {
                       <Route path="/platform/activity" component={page(Activity, "platform")} />
                       <Route path="/platform/orgs" component={page(Orgs)} />
                       <Route path="/platform/providers" component={page(ProvidersAdmin, "platform")} />
+                      <Route path="/platform/providers/:id">{(p) => <ProviderDetail scope="platform" id={decodeURIComponent(p.id)} />}</Route>
+                      <Route path="/platform/alerts" component={page(Alerts, "platform")} />
                       <Route path="/platform/models" component={page(ModelsAdmin, "platform")} />
                       <Route path="/platform/users" component={page(Users)} />
                       <Route path="/platform/mcp" component={page(MCP)} />

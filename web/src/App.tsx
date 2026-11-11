@@ -31,6 +31,7 @@ const ProvidersAdmin = lazy(() => import("@/pages/platform/ProvidersAdmin"));
 const Orgs = lazy(() => import("@/pages/platform/Orgs"));
 const Users = lazy(() => import("@/pages/platform/Users"));
 const MCP = lazy(() => import("@/pages/platform/MCP"));
+const Proxies = lazy(() => import("@/pages/platform/Proxies"));
 
 /** scope: "org" pages act on the current org; "platform" pages on public resources (operators). */
 export type Scope = "org" | "platform";
@@ -80,6 +81,7 @@ export function App() {
                       <Route path="/platform/models" component={page(ModelsAdmin, "platform")} />
                       <Route path="/platform/users" component={page(Users)} />
                       <Route path="/platform/mcp" component={page(MCP)} />
+                      <Route path="/platform/proxies" component={page(Proxies)} />
                       <Route path="/platform/audit" component={page(Audit, "platform")} />
                       <Route>{() => <NotFound />}</Route>
                     </Switch>

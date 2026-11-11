@@ -62,3 +62,22 @@ Status: **have** = already in agent-gateway, **wave 1** = in progress / shipped 
 | pricing sync (models.dev / LiteLLM) | later | |
 | Electron app, 67-language i18n, Cloudflare tunnel | skip | not part of a server gateway |
 | subscription OAuth providers, web-cookie providers, TLS/CLI fingerprinting, MITM, free-account pools | skip | provider-terms risk |
+
+## Proxies (D23)
+
+| OmniRoute | Status | Notes |
+|---|---|---|
+| proxy registry, pools with ordered members (http/https/socks5, auth, CA) | have | `/api/admin/proxy-pools`, Platform → Proxies; passwords sealed, write-only |
+| pool at global / provider scope | have | `UPSTREAM_PROXY_POOL`; provider `proxy_pool` (platform providers); tenants only get the global default |
+| strategies round-robin, random, sticky (window, default 30 min), latency | have | per new upstream connection; round-robin cursor in memory per node (OmniRoute persists it) |
+| only alive members are candidates | have | enabled, not down, not set aside |
+| set aside with exponential cooldown 60 s → 600 s | have | on proxy dial/handshake failure (unreachable, refused, timeout) |
+| auto-disable after 3 consecutive failures, a good probe re-activates | have | in memory per node ("down"), not persisted |
+| background health probe (10 min), TCP fast-fail 2 s | have | `PROXY_HEALTH_INTERVAL`; probe connects only; per-dial bound 5 s, ≤ 3 members per tunnel |
+| fail closed when the pool is exhausted, configurable | have | `fail_closed` (default true); open = direct dial (tenants still public-only) |
+| test a pool | have | `POST /api/admin/proxy-pools/{id}/test`: CONNECT handshake per member, latency |
+| webhooks `proxy.set_aside`, `proxy.pool.exhausted` | partial | logs (`proxy member set aside`, `proxy pool exhausted` at most every 300 s) + metrics `gw_proxy_dials_total`, `gw_proxy_member_up`; our webhooks are per org, these are platform events |
+| rotate exit on provider 429, per-IP quota set-aside | skip | provider rate-limit evasion; a 429 never changes the selection |
+| spread accounts across egress IPs, observe accounts per exit | skip | same (multi-account evasion) |
+| free public proxy lists, proxy subscriptions / sing-box, throwaway edge relays | skip | untrusted egress for API keys and prompts; terms risk |
+| stealth fingerprinting | skip | provider-terms risk |

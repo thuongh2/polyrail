@@ -21,6 +21,8 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `UPSTREAM_PROXY_URL` | – | Global outbound proxy for every upstream model call: `http://`, `https://` or `socks5://`, credentials allowed (`http://user:pass@proxy:3128`). Providers with their own `proxy` or `no_proxy` skip it. A malformed value stops startup. |
 | `UPSTREAM_NO_PROXY` | – | Comma-separated hosts that bypass the global proxy (`.corp.example` = domain and subdomains, `*` = all). Bypassed hosts keep the normal private-network dial checks. |
 | `UPSTREAM_PROXY_CA_FILE` | – | PEM file of CA certificates to trust for the global proxy and for upstream TLS through it (TLS-inspecting proxies). Needs `UPSTREAM_PROXY_URL`. |
+| `UPSTREAM_PROXY_POOL` | – | Default proxy pool (id or name, Platform → Proxies) for every provider without its own proxy or pool; wins over `UPSTREAM_PROXY_URL`. `UPSTREAM_NO_PROXY` applies to it. A name that matches no pool fails closed (calls refused) until the pool exists. |
+| `PROXY_HEALTH_INTERVAL` | `10m` | How often each enabled pool member gets a TCP probe (2 s timeout). `0` turns probes off; a down member then comes back only via a pool test. |
 | `ALLOW_TENANT_PROXY` | `false` | Let org admins set a proxy on their own providers. The proxy host must be public unless `ALLOW_PRIVATE_PROVIDER_URLS`. |
 | `LOG_RETENTION_DAYS` | `14` | Request logs older than this are deleted (usage rollups are kept). Public provider health counters are kept 30 days (fixed). |
 | `RESPONSE_CACHE_MB` | `64` | Memory for the opt-in response cache. `0` disables it. |

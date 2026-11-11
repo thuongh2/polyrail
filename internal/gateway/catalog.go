@@ -18,6 +18,7 @@ type Snapshot struct {
 	Version   string
 	Providers map[string]store.Provider // by provider id (keys decrypted)
 	Models    map[string]store.Model    // by owner + "|" + model id ("_" = public)
+	Pools     []store.ProxyPool         // operator proxy pools (member passwords decrypted)
 	byBifrost map[schemas.ModelProvider]string
 }
 
@@ -84,8 +85,12 @@ func loadSnapshot(ctx context.Context, s *store.Store) (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	pools, err := s.ListProxyPools(ctx, true)
+	if err != nil {
+		return nil, err
+	}
 	snap := &Snapshot{Version: ver, Providers: map[string]store.Provider{}, Models: map[string]store.Model{},
-		byBifrost: map[schemas.ModelProvider]string{}}
+		Pools: pools, byBifrost: map[schemas.ModelProvider]string{}}
 	sort.Slice(ps, func(i, j int) bool { return ps[i].CreatedAt.Before(ps[j].CreatedAt) })
 	for _, p := range ps {
 		if !p.Enabled {
@@ -156,6 +161,8 @@ type account struct {
 	allowPrivate bool // AllowPrivateURLs: tenant providers may dial private networks too
 	proxy        *GlobalProxy
 	tenantProxy  bool // AllowTenantProxy: org providers' own proxy settings apply
+	pools        *poolForwarder
+	poolNoProxy  string // UPSTREAM_NO_PROXY, for the global pool
 }
 
 func (a *account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {

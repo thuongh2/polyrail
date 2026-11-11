@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import {
   Activity, BarChart3, BookOpen, Boxes, Building2, CreditCard, KeyRound, LogOut, Menu, MessageSquare, Plug,
-  ScrollText, Server, Settings, ShieldCheck, UserRound, Users, Webhook, Wrench,
+  Network, ScrollText, Server, Settings, ShieldCheck, UserRound, Users, Webhook, Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -44,6 +44,7 @@ const groups: { label: string; items: Item[]; operator?: boolean }[] = [
       { href: "/app/platform/activity", label: "Activity", icon: Activity },
       { href: "/app/platform/orgs", label: "Organizations", icon: Building2 },
       { href: "/app/platform/providers", label: "Providers", icon: Server },
+      { href: "/app/platform/proxies", label: "Proxies", icon: Network },
       { href: "/app/platform/models", label: "Models", icon: Boxes },
       { href: "/app/platform/users", label: "Users", icon: UserRound },
       { href: "/app/platform/mcp", label: "MCP servers", icon: Wrench },

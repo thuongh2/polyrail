@@ -223,10 +223,13 @@ type Provider struct {
 	Keys           []ProviderKey `json:"keys"`
 	// Proxy routes this provider's upstream calls through an HTTP(S) or SOCKS5 proxy; nil uses
 	// the gateway's global proxy (UPSTREAM_PROXY_URL) unless NoProxy is set.
-	Proxy     *ProviderProxy `json:"proxy,omitempty"`
-	NoProxy   bool           `json:"no_proxy,omitempty"` // connect directly even when a global proxy is set
-	Enabled   bool           `json:"enabled"`
-	CreatedAt time.Time      `json:"created_at"`
+	Proxy   *ProviderProxy `json:"proxy,omitempty"`
+	NoProxy bool           `json:"no_proxy,omitempty"` // connect directly even when a global proxy is set
+	// ProxyPool names an operator proxy pool (ProxyPool.ID) to rotate through instead of one
+	// proxy; platform providers only, never together with Proxy.
+	ProxyPool string    `json:"proxy_pool,omitempty"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ProviderProxy is an outbound proxy. Password follows the Value/Sealed pattern: plaintext only on

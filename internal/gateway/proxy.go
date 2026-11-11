@@ -101,8 +101,9 @@ func proxyHostURL(raw string) string {
 	return "http://" + u.Host
 }
 
-// proxyConfig is the Bifrost proxy setting for p: its own proxy (tenants only when allowed),
-// else the global proxy unless p opts out, else none. Values are literal SecretVars (secret()).
+// proxyConfig is the Bifrost proxy setting for p: its own proxy (tenants only when allowed) or
+// pool (platform providers), else the global pool, else the global proxy, unless p opts out
+// (no_proxy), else none. A pool is reached through the loopback forwarder (proxypool.go). Values are literal SecretVars (secret()).
 // A tenant's own http/socks5 proxy is pinned to an address vetted as public (pinProxyURL):
 // Bifrost dials the proxy hop with a plain dialer, without the private-network check.
 func (a *account) proxyConfig(p store.Provider) (*schemas.ProxyConfig, error) {
@@ -111,6 +112,12 @@ func (a *account) proxyConfig(p store.Provider) (*schemas.ProxyConfig, error) {
 		x = nil // stored while tenant proxies were allowed: ignored until they are again
 	}
 	if x == nil || x.URL == "" {
+		if ref, own := poolRef(p, a.globalPool()); ref != "" && a.pools != nil {
+			if own {
+				return a.pools.config(p.ID, ""), nil
+			}
+			return a.pools.config(p.ID, a.poolNoProxy), nil
+		}
 		if p.NoProxy || a.proxy == nil {
 			return nil, nil
 		}
@@ -191,4 +198,11 @@ func proxyOf(p store.Provider) store.ProviderProxy {
 		return store.ProviderProxy{}
 	}
 	return *p.Proxy
+}
+
+func (a *account) globalPool() string {
+	if a.pools == nil {
+		return ""
+	}
+	return a.pools.global
 }

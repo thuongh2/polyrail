@@ -259,6 +259,34 @@ Global proxy (`UPSTREAM_PROXY_URL`, operator env) and per-provider `proxy` are p
 - A tenant's `ca_cert_pem` is trusted only by that provider's own client.
 [TestProviderProxy, TestProxyConfigPrecedence, TestCheckProxyAndParseGlobal, TestChatGoesThroughProviderProxy]
 
+## Proxy pools (2026-11-11, D23, developer notes for review)
+
+- **Operator-only.** `/api/admin/proxy-pools` is behind `operator` (session + CSRF header), every
+  mutation and test is audited; org providers cannot name a pool (400) and get only the global
+  default (`UPSTREAM_PROXY_POOL`). Member passwords are sealed at rest, never returned (list, create,
+  update), and must be re-entered when a member's URL or username changes. Pool tests return only
+  connect success, latency and the dial error text (no bytes from the target are read).
+- **Loopback forwarder.** Providers on a pool get `http://127.0.0.1:<random port>` as their proxy,
+  with the provider id as username and a 192-bit per-process random token as password (constant-time
+  compare; anything else gets 407; non-CONNECT gets 405). Other local processes can reach the port
+  but not use it without the token, which lives only in this process's memory.
+- **SSRF through a pool is closed.** This answers the D22 caveat that the dial-time private-address
+  block cannot see through a proxy: for an org provider (unless `ALLOW_PRIVATE_PROVIDER_URLS`) the
+  forwarder resolves the CONNECT target, refuses it (403) when any address is not public
+  (`blockedIP`, same list as the SSRF guard; an unresolvable name is refused the same way, no DNS
+  oracle), and tunnels to the checked IP, so neither the member proxy nor a rebinding DNS answer can
+  move it; a fail-open direct dial uses `PublicDialer`. Operator providers may reach private targets,
+  as without a proxy. The single global `UPSTREAM_PROXY_URL` keeps the documented caveat.
+- **No rate-limit evasion.** The forwarder handles CONNECT tunnels only and never sees HTTP
+  responses: provider 429s and 5xx cannot set a member aside or move a sticky pick. Only failures to
+  reach or handshake with a member do. Rotating exits on 429, per-IP quota tracking and similar
+  OmniRoute features are not ported (D23).
+- M12 (pinning) applies to pool tunnels as above; L21 (re-enter keys on a tenant proxy change) does
+  not arise because tenants cannot choose pools; L25 (pinned address lifetime) does not apply to
+  pools: targets are resolved per tunnel.
+[TestProxyPoolsAdmin, TestProxyPoolSealedDefaultsAndInUse, TestForwarderAuthAndTenantTargets,
+TestProvider429DoesNotRotate, TestPoolFailsOverToWorkingMember, TestPoolFailClosedAndOpen]
+
 ## Review: knowledge bases (D21) and upstream proxy (D22) (2026-11-11)
 
 Scope: `git diff 2ca205e..HEAD -- internal cmd tools` (`internal/kb`, `internal/store/kb.go`,

@@ -422,6 +422,12 @@ func TestProviderSSRF(t *testing.T) {
 	expect(t, f.do(t, "op", "POST", "/api/admin/providers", `{"name":"local","type":"openai","base_url":"http://127.0.0.1:11434","enabled":true}`), 200, "operator loopback provider")
 	expect(t, f.do(t, "admin", "POST", A, `{"name":"x","type":"azure"}`), 400, "platform-only type")
 
+	// replicate/huggingface adapters fetch URLs from upstream replies: tenants get the vendor host only
+	for _, typ := range []string{"replicate", "huggingface"} {
+		expect(t, f.do(t, "admin", "POST", A, `{"name":"u-`+typ+`","type":"`+typ+`","base_url":"https://8.8.8.8","enabled":true,"keys":[{"value":"k"}]}`), 400, "tenant "+typ+" with custom base_url")
+		expect(t, f.do(t, "admin", "POST", A, `{"name":"v-`+typ+`","type":"`+typ+`","enabled":true,"keys":[{"value":"k"}]}`), 200, "tenant "+typ+" on the vendor host")
+	}
+
 	g := setup(t, Config{AllowPrivateURLs: true})
 	expect(t, g.do(t, "admin", "POST", "/api/orgs/"+g.orgA.ID+"/providers", `{"name":"x","type":"openai","base_url":"http://127.0.0.1:11434","enabled":true}`), 200, "ALLOW_PRIVATE_PROVIDER_URLS")
 }

@@ -86,3 +86,32 @@ Verified by `go test -race ./...` (admin, gateway, e2e suites). New regression t
 | L9 | Accepted | Bounded by real orgs/keys; spend cache entries are regenerated per flush generation. |
 
 Also fixed from QA: a tenant can no longer shadow a platform provider (tenants get multi-instance types only), org deletion is audited at platform level, key revocation and org changes clear the auth cache on the same node immediately.
+
+## Review: Bifrost core v1.15.2 upgrade and new endpoints (2026-11-11)
+
+Scope: `git diff 7d830e9` without `web/` — catalog secret handling, images/rerank/OCR/token
+counting, files/batches/videos, Google GenAI drop-in, Anthropic, model discovery/import, new
+provider types, MCP changes. Verified by `go vet` and `go test -race -count=1` (admin, gateway,
+store, limits, usage, e2e; Postgres + Redis); `internal/web` and `cmd/gateway` were skipped because
+the UI build in `internal/web/dist` was being regenerated concurrently.
+
+| ID | Severity | Finding | Resolution |
+|---|---|---|---|
+| H5 | high | **Full-read SSRF through upstream-supplied URLs.** Replicate, Hugging Face and Typesafe became tenant-creatable (Bifrost `SupportedBaseProviders`). The Replicate adapter polls `urls.get`/`urls.stream` and downloads output URLs taken from the upstream reply; Hugging Face speech downloads `audio.url`; Gemini video download fetches the operation's video URI (following 5 redirects). These use the provider HTTP client, whose v1.15 dialer always allows **loopback**. A tenant pointing `base_url` at its own public server could make the gateway GET e.g. `http://127.0.0.1:8123/?query=…` (ClickHouse with every org's logs) and receive the body as a chat result, audio or video. | Fixed. Org providers of types that follow upstream URLs (`replicate`, `huggingface`) must use the vendor host (`base_url` empty) — refused at save, at discovery and at request time (`tenantReachable`); org Gemini providers with a custom `base_url` are refused for files/batches/videos. `ALLOW_PRIVATE_PROVIDER_URLS` lifts both. [TestTenantProvidersThatFollowUpstreamURLs, TestProviderSSRF] |
+| M9 | medium | **Batch input bypassed guardrails and the org output cap.** Every line of a `purpose=batch` file ran upstream without blocked patterns, `max_input_chars`, PII masking or `max_tokens_cap`. | Fixed. `rewriteBatchFile` applies the org's guardrails per request to the text fields (`content`, `text`, `prompt`, `input`, `instructions`, `system`; not image/audio data) and clamps or sets `max_completion_tokens`/`max_tokens`/`max_output_tokens`. A blocked file is `guardrail_blocked` and logged. [TestBatchFileGuardrailsAndTokenCap] |
+| M10 | medium | **Private-network policy not passed to Bifrost.** v1.15's dialer refuses RFC 1918 unless `NetworkConfig.AllowPrivateNetwork`; the gateway never set it, so operator providers on a LAN (Ollama/vLLM/SGLang at `10.x`, Docker networks) failed, inviting operators to work around the guard. | Fixed. `AllowPrivateNetwork` is true for operator providers, and for org providers only with `ALLOW_PRIVATE_PROVIDER_URLS`; tenants keep Bifrost's dial-time block of private and link-local addresses on top of our checks (narrows the H1 DNS-rebinding residual to loopback). [TestTenantProvidersThatFollowUpstreamURLs] |
+| L10 | low | GenAI `:countTokens` charged the model's `request_price` although documented as not billed. | Fixed (priced at 0 like the other count-tokens endpoints). |
+| L11 | low | `GET /v1/files/{id}/content`, `/v1/videos/{id}/content` and batch billing (`BatchResultsRequest`) hold the whole upstream object in memory (Bifrost core returns `[]byte`); a large batch output on a 2 GB node is a memory risk. | Accepted; needs a streaming download in Bifrost core. Uploads are bounded by `MAX_BODY_BYTES`. |
+| L12 | low | `?key=` (GenAI SDK auth) puts the API key in the URL, so reverse-proxy access logs can capture it. | Accepted for SDK compatibility; SDKs send `x-goog-api-key` by default. Deployment docs should keep query strings out of proxy logs. |
+| L13 | low | A video is billed on its upstream `seconds`; if the provider omits it the charge is 0, and a video deleted before it was ever retrieved is never billed. Upstream `usage.cost` and asset ids are passed through in video objects. | Open. Fall back to the requested seconds; strip `usage`. |
+| L14 | low | `GET /v1/batches` refreshes up to 100 unbilled batches upstream per call (amplification). Batch spend is only admitted at creation, so one batch can exceed the remaining budget. | Accepted (rate limits apply per call; usage is billed exactly once). |
+| L15 | low | Non-batch file uploads (`user_data`, `vision`, …) are not guardrailed; MCP execute with a bare tool name present on several servers picks the last one (then denies if not granted). Responses/Anthropic `instructions`/`system` text is not guardrail-checked (pre-existing). | Open. |
+
+Checked and fine: stored secrets go to Bifrost as literal `SecretVar`s (no `env.`/`vault.` resolution);
+job ids are validated and scoped `<kind>/<org>/<id>` (another org's id is a 404), upstream ids never
+leave the gateway, `ClaimBilling` is exactly-once and batch output stays hidden until billed; batch
+lines are pinned to the file's model and endpoint kind; new endpoints all authenticate, resolve +
+admit, guard text and record; upstream errors are hidden for org-private providers; multipart
+bodies are bounded by `MAX_BODY_BYTES`; OCR `document_url`/`image_url` and chat image URLs are
+fetched by the provider or by Bifrost's SSRF-hardened fetcher; discovery/import are scoped to the
+route's owner; Databricks/vLLM/Ollama/SGLang URLs come only from the checked `base_url`.

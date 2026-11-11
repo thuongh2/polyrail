@@ -100,9 +100,10 @@ func (s *Snapshot) Visible(orgID string) []store.Model {
 // ---- Bifrost Account backed by the current snapshot ----
 
 type account struct {
-	snap        func() *Snapshot
-	concurrency int
-	buffer      int
+	snap         func() *Snapshot
+	concurrency  int
+	buffer       int
+	allowPrivate bool // AllowPrivateURLs: tenant providers may dial private networks too
 }
 
 func (a *account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
@@ -231,6 +232,9 @@ func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.Provid
 			MaxRetries:                     1,
 			RetryBackoffInitial:            200 * time.Millisecond,
 			RetryBackoffMax:                2 * time.Second,
+			// Bifrost's dialer refuses RFC 1918 targets unless allowed: operators may use private
+			// hosts (Ollama on the LAN); tenant providers only when AllowPrivateURLs is set.
+			AllowPrivateNetwork: p.OrgID == "" || a.allowPrivate,
 		},
 		ConcurrencyAndBufferSize: schemas.ConcurrencyAndBufferSize{Concurrency: a.concurrency, BufferSize: a.buffer},
 	}

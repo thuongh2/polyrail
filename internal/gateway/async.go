@@ -35,7 +35,6 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
-	"github.com/tidwall/sjson"
 )
 
 const (
@@ -97,7 +96,7 @@ type jobConn struct {
 func (g *Gateway) connect(r *http.Request, providerID, keyID, upstream string) (*jobConn, *apiError) {
 	unavailable := errf(503, "api_error", "no_provider", "the provider holding this object is not available")
 	prov, ok := g.snap.Load().Providers[providerID]
-	if !ok || (prov.OrgID != "" && !g.cfg.AllowPrivateURLs && !publicURLCached(prov.BaseURL)) {
+	if !ok || !tenantReachable(prov, g.cfg.AllowPrivateURLs, true) {
 		return nil, unavailable
 	}
 	bp := BifrostKey(prov)
@@ -214,39 +213,106 @@ func fileOut(j *store.Job, status string) map[string]any {
 // rewriteBatchFile checks every JSONL line of a batch input file: its url must be an endpoint of
 // the model's kind and body.model the catalog model id, which is replaced by the upstream model
 // name. This pins what a batch may run (and how it is priced) to the model the file was made for.
-func rewriteBatchFile(data []byte, m store.Model, upstream string) ([]byte, error) {
+// Each request also gets what a synchronous call would: the org's guardrails on its text and the
+// org's output token cap.
+func rewriteBatchFile(data []byte, m store.Model, upstream string, org store.Org) ([]byte, error) {
 	var out bytes.Buffer
 	for i, line := range bytes.Split(data, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		var item struct {
-			CustomID string `json:"custom_id"`
-			URL      string `json:"url"`
-			Body     struct {
-				Model string `json:"model"`
-			} `json:"body"`
+		var item map[string]any
+		dec := json.NewDecoder(bytes.NewReader(line))
+		dec.UseNumber() // keep numbers (token arrays, sampling params) exactly as sent
+		err := dec.Decode(&item)
+		id, _ := item["custom_id"].(string)
+		body, _ := item["body"].(map[string]any)
+		if err != nil || id == "" || body == nil {
+			return nil, fmt.Errorf("line %d: not a batch request object with custom_id and body", i+1)
 		}
-		if err := json.Unmarshal(line, &item); err != nil || item.CustomID == "" {
-			return nil, fmt.Errorf("line %d: not a batch request object with custom_id", i+1)
+		url, _ := item["url"].(string)
+		if batchEndpoints[url] != m.Kind {
+			return nil, fmt.Errorf("line %d: url %q is not a batch endpoint for %s model %q", i+1, url, m.Kind, m.ID)
 		}
-		if batchEndpoints[item.URL] != m.Kind {
-			return nil, fmt.Errorf("line %d: url %q is not a batch endpoint for %s model %q", i+1, item.URL, m.Kind, m.ID)
-		}
-		if item.Body.Model != m.ID {
+		if body["model"] != m.ID {
 			return nil, fmt.Errorf("line %d: body.model must be %q (the file's x-gateway-model)", i+1, m.ID)
 		}
-		line, err := sjson.SetBytes(line, "body.model", upstream)
+		var segs []*string
+		body = batchTexts(body, "", &segs).(map[string]any)
+		reason, err := applyGuardrails(org, segs)
+		if err != nil {
+			return nil, err
+		}
+		if reason != "" {
+			return nil, fmt.Errorf("line %d: %w: %s", i+1, errGuardrail, reason)
+		}
+		capBatchTokens(body, url, org.MaxTokensCap)
+		body["model"] = upstream
+		item["body"] = body
+		enc, err := json.Marshal(item)
 		if err != nil {
 			return nil, fmt.Errorf("line %d: %v", i+1, err)
 		}
-		out.Write(bytes.TrimRight(line, "\r"))
+		out.Write(enc)
 		out.WriteByte('\n')
 	}
 	if out.Len() == 0 {
 		return nil, errors.New("batch file has no requests")
 	}
 	return out.Bytes(), nil
+}
+
+var errGuardrail = errors.New("guardrail")
+
+// batchTextKeys hold request text (chat content and parts, completion prompts, Responses input and
+// instructions, embedding input); other strings (roles, image data, tool schemas) are not text.
+var batchTextKeys = map[string]bool{"content": true, "text": true, "prompt": true, "input": true, "instructions": true, "system": true}
+
+// batchTexts returns v with every text string replaced by a *string appended to segs, so the
+// guardrails can check and mask them in place (json.Marshal writes *string as a string).
+func batchTexts(v any, key string, segs *[]*string) any {
+	switch x := v.(type) {
+	case string:
+		if batchTextKeys[key] {
+			s := x
+			*segs = append(*segs, &s)
+			return &s
+		}
+	case map[string]any:
+		for k, e := range x {
+			x[k] = batchTexts(e, k, segs)
+		}
+	case []any:
+		for i, e := range x {
+			x[i] = batchTexts(e, key, segs) // a string array under a text key is text
+		}
+	}
+	return v
+}
+
+// capBatchTokens applies the org's max_tokens_cap to one batch request body.
+func capBatchTokens(body map[string]any, endpoint string, maxCap int) {
+	fields := map[string][]string{"/v1/chat/completions": {"max_completion_tokens", "max_tokens"},
+		"/v1/completions": {"max_tokens"}, "/v1/responses": {"max_output_tokens"}}[endpoint]
+	if maxCap <= 0 || len(fields) == 0 {
+		return
+	}
+	set := false
+	for _, f := range fields {
+		v, ok := body[f]
+		if !ok || v == nil {
+			continue
+		}
+		set = true
+		if n, ok := v.(json.Number); !ok {
+			body[f] = maxCap
+		} else if i, err := n.Int64(); err != nil || i > int64(maxCap) {
+			body[f] = maxCap
+		}
+	}
+	if !set {
+		body[fields[0]] = maxCap
+	}
 }
 
 // UploadFile: POST /v1/files (multipart purpose, file; model in form field or header x-gateway-model).
@@ -296,8 +362,13 @@ func (g *Gateway) UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	t := ts[0] // the file lives at the primary target; batches using it follow it there
 	if purpose == "batch" {
-		if data, err = rewriteBatchFile(data, m, t.Model); err != nil {
-			writeError(w, errf(400, "invalid_request_error", "bad_batch_file", "%v", err))
+		if data, err = rewriteBatchFile(data, m, t.Model, p.Org); err != nil {
+			code := "bad_batch_file"
+			if errors.Is(err, errGuardrail) {
+				code = "guardrail_blocked"
+				g.record(p, m, store.RequestLog{Status: 400, Error: "guardrail: batch file"}, start)
+			}
+			writeError(w, errf(400, "invalid_request_error", code, "%v", err))
 			return
 		}
 	}

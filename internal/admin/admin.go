@@ -768,6 +768,10 @@ func checkKeyConfig(p, old *store.Provider, tenant bool, allowPrivate bool) erro
 	if needsBaseURL[p.Type] && p.BaseURL == "" {
 		return fmt.Errorf("%w: %s needs base_url (its server or workspace URL)", store.ErrInvalid, p.Type)
 	}
+	if tenant && !allowPrivate && p.BaseURL != "" && gateway.FollowsUpstreamURLs(p.Type) {
+		// the adapter follows URLs from upstream responses: only the vendor's host is trusted
+		return fmt.Errorf("%w: org %s providers use the vendor's API; leave base_url empty", store.ErrInvalid, p.Type)
+	}
 	cloud := p.Type == "azure" || p.Type == "bedrock" || p.Type == "vertex"
 	if cloud && p.BaseURL != "" {
 		return fmt.Errorf("%w: base_url is not used by %s; set the endpoint or region on each key", store.ErrInvalid, p.Type)

@@ -80,7 +80,7 @@ func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipe
 		return nil, err
 	}
 	g.BF, err = bifrost.Init(ctx, schemas.BifrostConfig{
-		Account:   &account{snap: g.snap.Load, concurrency: cfg.Concurrency, buffer: cfg.Buffer},
+		Account:   &account{snap: g.snap.Load, concurrency: cfg.Concurrency, buffer: cfg.Buffer, allowPrivate: cfg.AllowPrivateURLs},
 		Logger:    bifrost.NewDefaultLogger(schemas.LogLevelWarn),
 		MCPConfig: mcpCfg,
 	})
@@ -293,8 +293,7 @@ func (g *Gateway) resolve(p *principal, id, kind string) (store.Model, []store.T
 	ts := plan(m, snap, g.br)
 	if !g.cfg.AllowPrivateURLs {
 		ts = slices.DeleteFunc(ts, func(t store.Target) bool {
-			p := snap.Providers[t.ProviderID]
-			return p.OrgID != "" && !publicURLCached(p.BaseURL)
+			return !tenantReachable(snap.Providers[t.ProviderID], false, false)
 		})
 	}
 	if len(ts) == 0 {

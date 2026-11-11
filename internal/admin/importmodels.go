@@ -63,6 +63,10 @@ func (a *API) discoverModels(w http.ResponseWriter, r *http.Request) {
 			fail(w, err)
 			return
 		}
+		if !a.cfg.AllowPrivateURLs && p.BaseURL != "" && gateway.FollowsUpstreamURLs(p.Type) { // saved before the rule existed
+			fail(w, fmt.Errorf("%w: org %s providers use the vendor's API; leave base_url empty", store.ErrInvalid, p.Type))
+			return
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()

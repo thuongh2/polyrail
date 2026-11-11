@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
-	"github.com/agent-gateway/agent-gateway/internal/webhook"
+	"github.com/polyrail/polyrail/internal/store"
+	"github.com/polyrail/polyrail/internal/webhook"
 )
 
 type delivery struct {

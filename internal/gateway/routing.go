@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // breaker skips targets that failed repeatedly, for a cool-down period.

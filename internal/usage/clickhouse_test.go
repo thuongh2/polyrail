@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 func TestClickHouseSink(t *testing.T) {

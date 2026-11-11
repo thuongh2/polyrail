@@ -1,4 +1,4 @@
-# Product Requirements — agent-gateway
+# Product Requirements — Polyrail
 
 Owner: PO agent. Status: v1 scope. Every criterion below must map to an automated test (see docs/TESTING.md).
 

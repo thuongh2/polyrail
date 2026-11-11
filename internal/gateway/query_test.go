@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 func TestModelsQuery(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
-	"github.com/agent-gateway/agent-gateway/internal/usage"
+	"github.com/polyrail/polyrail/internal/store"
+	"github.com/polyrail/polyrail/internal/usage"
 )
 
 // Public provider health (no auth): built from the hourly health/<hour>/<model>|<provider>

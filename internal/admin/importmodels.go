@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/gateway"
-	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/polyrail/polyrail/internal/gateway"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 type discoveredModel struct {

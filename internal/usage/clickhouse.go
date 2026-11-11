@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // ClickHouse ships raw request logs over the ClickHouse HTTP interface (no driver needed).

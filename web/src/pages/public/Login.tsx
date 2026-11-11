@@ -34,7 +34,7 @@ export default function Login({ mode }: { mode: "login" | "signup" }) {
   }, [loading, user, navigate]);
 
   useEffect(() => {
-    document.title = signup ? "Create account – agent-gateway" : "Sign in – agent-gateway";
+    document.title = signup ? "Create account – Polyrail" : "Sign in – Polyrail";
   }, [signup]);
 
   async function submit(e: FormEvent) {
@@ -65,7 +65,7 @@ export default function Login({ mode }: { mode: "login" | "signup" }) {
         <div className="w-full max-w-sm rounded-xl border bg-background p-6 shadow-sm sm:p-8">
           <h1 className="text-xl font-semibold tracking-tight">{signup ? "Create your account" : "Sign in"}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {signup ? "You get your own organization and can create API keys right away." : "Use your agent-gateway account."}
+            {signup ? "You get your own organization and can create API keys right away." : "Use your Polyrail account."}
           </p>
 
           {signupClosed ? (

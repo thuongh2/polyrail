@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 const (
@@ -61,7 +61,7 @@ func (s *Service) fetchURL(ctx context.Context, raw string) (*fetched, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: url", store.ErrInvalid)
 	}
-	req.Header.Set("User-Agent", "agent-gateway")
+	req.Header.Set("User-Agent", "Polyrail")
 	req.Header.Set("Accept", "text/html, text/markdown, text/plain, text/csv, application/json")
 	resp, err := client.Do(req)
 	if err != nil {

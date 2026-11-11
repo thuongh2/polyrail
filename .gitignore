@@ -3,6 +3,8 @@ bin/
 data/
 .env.local
 .demo-key
+polyrail.log
+# pre-rename names (D24)
 gateway.log
 web/node_modules/
 dump.rdb

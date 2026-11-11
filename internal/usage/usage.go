@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // LogSink receives batches of request logs (the store, ClickHouse, ...).

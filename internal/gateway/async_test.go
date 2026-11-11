@@ -12,9 +12,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
-	"github.com/agent-gateway/agent-gateway/internal/usage"
-	"github.com/agent-gateway/agent-gateway/tools/mockprovider/asyncmock"
+	"github.com/polyrail/polyrail/internal/store"
+	"github.com/polyrail/polyrail/internal/usage"
+	"github.com/polyrail/polyrail/tools/mockprovider/asyncmock"
 )
 
 type asyncFixture struct {

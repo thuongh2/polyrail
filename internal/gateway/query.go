@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // modelQuery is the body of POST /v1/models/query; every filter is optional.

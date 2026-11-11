@@ -228,3 +228,22 @@ The forwarder sees only TLS tunnels, so a provider 429 cannot move the selection
 `gw_proxy_member_up`; no platform webhook system was invented (org webhooks are per org). If wrong:
 shared cursors/health need Redis; per-request rotation would need Bifrost to open a connection per
 request.
+
+**D24 Rename to Polyrail.** Owner ruling (2026-11-11): the open-source name is **Polyrail**
+("One API for every model. Self-hosted, light, open."), replacing agent-gateway. Renamed: Go module
+`github.com/polyrail/polyrail`, `cmd/polyrail` (binary `polyrail`, still with the `healthcheck`
+subcommand; `make dist` builds `bin/polyrail-<os>-<arch>`), Docker image and entrypoint `/polyrail`,
+compose service `polyrail`, systemd unit `deploy/polyrail.service`, `scripts/run-local.sh` (log in
+`polyrail.log`), UI name and logo (`web/src/components/Logo.tsx`, `web/public/favicon.svg`,
+`docs/assets/polyrail.svg`), startup log `polyrail listening`, `GET /api/version` gains
+`"name":"polyrail"`, outbound User-Agents `Polyrail` (knowledge-base URL fetch) and
+`Polyrail-Webhook/1` (webhooks). Kept unchanged for compatibility, because clients, dashboards and
+existing data depend on them: HTTP headers `X-GW-*` and `x-gateway-*` (including `X-GW-CSRF`,
+`X-GW-Signature`, `X-GW-Event`), cookies `gw_session` and `gw_oidc`, Prometheus metrics `gw_*` and
+`gateway_*`, the ClickHouse `gateway_requests` table, every env var, KV key prefixes and stored
+formats, API paths, the compose volume names and Postgres credentials, and the key-derivation labels
+`agent-gateway/session/v1` and `agent-gateway/secret/v1` (changing them would sign everyone out and
+make sealed provider keys unreadable). An existing data dir therefore works with no migration
+(docs/DEPLOY.md "Upgrading from agent-gateway"). The workspace folders are still named
+`agent-gateway`; that is a path, not the product name. If wrong: the kept identifiers can move to
+new names only with a dual-read period (accept both, emit the new one) and a release note.

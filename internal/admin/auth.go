@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/polyrail/polyrail/internal/store"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
 )
@@ -30,6 +30,7 @@ const (
 type signer struct{ key []byte }
 
 func newSigner(masterKey string) signer {
+	// The label keeps the pre-rename name on purpose: changing it would sign out every session (D24).
 	k := sha256.Sum256([]byte("agent-gateway/session/v1:" + masterKey))
 	return signer{key: k[:]}
 }

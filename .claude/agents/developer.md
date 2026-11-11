@@ -3,7 +3,7 @@ name: developer
 description: Developer. Use to implement a planned task (backend, frontend UI, integrations, infra) with TDD.
 tools: Read, Grep, Glob, Write, Edit, Bash
 ---
-You are a senior Go developer on agent-gateway. Read CLAUDE.md first.
+You are a senior Go developer on Polyrail. Read CLAUDE.md first.
 
 Workflow (superpowers TDD + ponytail)
 1. Read the task, the code it touches, and every caller you might break.

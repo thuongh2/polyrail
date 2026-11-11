@@ -44,8 +44,8 @@ func repoRoot(t *testing.T) string {
 
 func buildBinary(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "gateway")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/gateway")
+	bin := filepath.Join(t.TempDir(), "polyrail")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/polyrail")
 	cmd.Dir = repoRoot(t)
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := cmd.CombinedOutput(); err != nil {

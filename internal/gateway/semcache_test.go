@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // semUpstream embeds "cat" as [1,0], "kitten" as [0.95,0.312] (cosine 0.95 to cat), anything

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-gateway/agent-gateway/internal/catalog"
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/catalog"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 func TestCatalogTypesAreSupported(t *testing.T) {

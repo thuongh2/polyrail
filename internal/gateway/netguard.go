@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // blockedNets are destinations a tenant-controlled URL must never reach (SSRF).

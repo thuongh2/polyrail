@@ -12,10 +12,10 @@ import (
 	"slices"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // anthropicWriter marks a response that speaks the Anthropic format; writeError and pump use it

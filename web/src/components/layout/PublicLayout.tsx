@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useSession } from "@/lib/session";
 import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
+import { Logo } from "@/components/Logo";
 
 const nav = [
   { href: "/models", label: "Models" },
@@ -13,11 +14,9 @@ const nav = [
 
 export function Wordmark() {
   return (
-    <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-      <span aria-hidden className="grid size-6 place-items-center rounded-md bg-foreground text-[11px] font-bold text-background">
-        ag
-      </span>
-      <span className="hidden sm:inline">agent-gateway</span>
+    <Link href="/" aria-label="Polyrail home" className="flex items-center gap-2 font-semibold tracking-tight">
+      <Logo size={24} className="shrink-0" />
+      <span className="hidden sm:inline">Polyrail</span>
     </Link>
   );
 }
@@ -62,7 +61,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8">{children}</main>
       <footer className="border-t">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-4 px-4 py-6 text-sm text-muted-foreground">
-          <span>agent-gateway, open source under Apache-2.0</span>
+          <span>Polyrail, open source under Apache-2.0</span>
           <Link href="/models" className="hover:text-foreground">Models</Link>
           <Link href="/status" className="hover:text-foreground">Status</Link>
           <Link href="/docs" className="hover:text-foreground">Docs</Link>

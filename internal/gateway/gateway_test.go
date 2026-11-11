@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/limits"
-	"github.com/agent-gateway/agent-gateway/internal/store"
-	"github.com/agent-gateway/agent-gateway/internal/usage"
+	"github.com/polyrail/polyrail/internal/limits"
+	"github.com/polyrail/polyrail/internal/store"
+	"github.com/polyrail/polyrail/internal/usage"
 )
 
 // mockUpstream is a minimal OpenAI-compatible provider. fail=true answers 500.

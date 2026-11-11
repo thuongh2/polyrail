@@ -11,8 +11,8 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/agent-gateway/agent-gateway/internal/kb"
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/kb"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 func (a *API) registerKB(mux *http.ServeMux) {

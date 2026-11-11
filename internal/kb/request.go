@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // ReadDocInput parses an add-document request shared by the admin API and /v1/vector_stores:

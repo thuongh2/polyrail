@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/agent-gateway/agent-gateway/internal/kb"
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/kb"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // errEmbed marks embedding failures; their message is safe to show (no upstream body).

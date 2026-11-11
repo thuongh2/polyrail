@@ -14,10 +14,10 @@ import { useSession } from "@/lib/session";
 const time = (t: string) => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 export default function Logs() {
-  const { org, can } = useSession();
+  const { org, can, wsList } = useSession();
   const base = org ? orgBase(org.id) : "";
-  const logs = useAsync(() => get<RequestLog[]>(`${base}/logs?limit=200`), [base]);
-  const keys = useAsync(() => get<APIKey[]>(`${base}/keys`).catch(() => [] as APIKey[]), [base]);
+  const logs = useAsync(() => get<RequestLog[]>(wsList(`${base}/logs?limit=200`)), [base]);
+  const keys = useAsync(() => get<APIKey[]>(wsList(`${base}/keys`)).catch(() => [] as APIKey[]), [base]);
   const [status, setStatus] = useQueryParam("status", "all");
   const [model, setModel] = useQueryParam("model", "all");
   const [open, setOpen] = useState<RequestLog | null>(null);

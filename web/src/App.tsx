@@ -20,6 +20,7 @@ const Playground = lazy(() => import("@/pages/console/Playground"));
 const Keys = lazy(() => import("@/pages/console/Keys"));
 const Credits = lazy(() => import("@/pages/console/Credits"));
 const Members = lazy(() => import("@/pages/console/Members"));
+const Workspaces = lazy(() => import("@/pages/console/Workspaces"));
 const Settings = lazy(() => import("@/pages/console/Settings"));
 const Audit = lazy(() => import("@/pages/console/Audit"));
 const Webhooks = lazy(() => import("@/pages/console/Webhooks"));
@@ -77,6 +78,7 @@ export function App() {
                       <Route path="/providers/:id">{(p) => <ProviderDetail scope="org" id={decodeURIComponent(p.id)} />}</Route>
                       <Route path="/alerts" component={page(Alerts, "org")} />
                       <Route path="/members" component={page(Members)} />
+                      <Route path="/workspaces" component={page(Workspaces)} />
                       <Route path="/settings" component={page(Settings)} />
                       <Route path="/webhooks" component={page(Webhooks)} />
                       <Route path="/policies" component={page(Policies)} />

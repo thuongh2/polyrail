@@ -7,7 +7,7 @@ import { useAsync } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 
 const intervalLabel = { daily: "day", weekly: "week", monthly: "month", lifetime: "lifetime" } as const;
-const viaLabel = { org_default: "org default", member: "creator", key: "this key" } as const;
+const viaLabel = { org_default: "org default", workspace_default: "workspace default", member: "creator", key: "this key" } as const;
 
 /** The combined policy of one key (GET …/keys/{id}/effective-policy) with budget progress. */
 export function EffectivePolicyView({ base, keyId, admin }: { base: string; keyId: string; admin: boolean }) {
@@ -119,7 +119,7 @@ function Budget({ b }: { b: EffectiveBudget }) {
           <span className="text-muted-foreground"> of {usdLimit(b.limit_micros)} {period}</span>
         </span>
         <span className="text-xs text-muted-foreground">
-          {b.policy}, {b.scope === "member" ? "all keys of the creator" : "this key"}
+          {b.policy}, {b.scope === "member" ? "all keys of the creator" : b.scope === "workspace" ? "all keys of the workspace" : "this key"}
         </span>
       </div>
       <div

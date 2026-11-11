@@ -35,9 +35,9 @@ function keyStatus(k: APIKey) {
 }
 
 export default function Keys() {
-  const { org, user, can } = useSession();
+  const { org, user, can, wsCan, wsList, ws, wsName } = useSession();
   const base = org ? orgBase(org.id) : "";
-  const keys = useAsync(() => get<APIKey[]>(`${base}/keys`), [base]);
+  const keys = useAsync(() => get<APIKey[]>(wsList(`${base}/keys`)), [base]);
   const members = useAsync(() => get<Member[]>(`${base}/members`).catch(() => [] as Member[]), [base]);
   const [show, setShow] = useQueryParam("show", "active");
   const [creating, setCreating] = useState(false);
@@ -47,12 +47,13 @@ export default function Keys() {
   const [rotating, setRotating] = useState<APIKey | null>(null);
   const [revoking, setRevoking] = useState<APIKey | null>(null);
   const [grounding, setGrounding] = useState<APIKey | null>(null);
-  const admin = can("admin");
-  const kbs = useAsync(() => (admin && org ? kbApi(org.id).list() : Promise.resolve([] as KB[])), [org?.id, admin]);
+  const admin = wsCan("admin"); // workspace admin: every key of the workspace, limits, grounding
+  const orgAdmin = can("admin"); // management tokens are org-level
+  const kbs = useAsync(() => (admin && org ? kbApi(org.id, wsList).list() : Promise.resolve([] as KB[])), [org?.id, admin]);
 
   if (!org) return <EmptyState title="You are not in an organization yet" />;
-  const canCreate = can("member");
-  const canRevoke = (k: APIKey) => !k.revoked && (can("admin") || (can("member") && k.created_by === user?.id));
+  const canCreate = wsCan("member");
+  const canRevoke = (k: APIKey) => !k.revoked && (admin || (wsCan("member") && k.created_by === user?.id));
   const kbName = (id: string) => kbs.data?.find((k) => k.id === id)?.name ?? id;
   const who = (id: string) => (id === user?.id ? "You" : members.data?.find((m) => m.user_id === id)?.email ?? "–");
 
@@ -66,7 +67,7 @@ export default function Keys() {
     }
   }
 
-  const showTokens = admin && tab === "tokens";
+  const showTokens = orgAdmin && tab === "tokens";
   const visible = (keys.data ?? []).filter((k) => show === "all" || !k.revoked);
   const revokedCount = (keys.data ?? []).filter((k) => k.revoked).length;
 
@@ -75,9 +76,10 @@ export default function Keys() {
       <PageHeader
         title="API keys"
         description={
-          admin
-            ? "Keys authenticate requests to /v1. Each key can carry its own rate limits, monthly budget, model list and expiry. Admins see every key of the organization."
-            : "Keys authenticate requests to /v1. You see the keys you created; admins see every key of the organization."
+          (admin
+            ? "Keys authenticate requests to /v1. Each key can carry its own rate limits, monthly budget, model list and expiry. Admins see every key of the workspace."
+            : "Keys authenticate requests to /v1. You see the keys you created; admins see every key of the workspace.") +
+          (ws ? ` Showing the ${ws.name} workspace; a key uses that workspace's models, presets and knowledge bases.` : " Showing all workspaces.")
         }
         actions={
           canCreate && !showTokens && (
@@ -88,7 +90,7 @@ export default function Keys() {
           )
         }
       />
-      {admin && (
+      {orgAdmin && (
         <Tabs value={showTokens ? "tokens" : "keys"} onValueChange={setTab} className="mb-4">
           <TabsList aria-label="Credential type">
             <TabsTrigger value="keys">API keys</TabsTrigger>
@@ -126,6 +128,7 @@ export default function Keys() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  {!ws && <TableHead>Workspace</TableHead>}
                   <TableHead>Key</TableHead>
                   <TableHead>Limits</TableHead>
                   <TableHead>Models</TableHead>
@@ -153,6 +156,7 @@ export default function Keys() {
                           {k.name}
                         </button>
                       </TableCell>
+                      {!ws && <TableCell className="whitespace-nowrap">{wsName(k.workspace_id)}</TableCell>}
                       <TableCell className="font-mono text-xs whitespace-nowrap">{k.prefix}…</TableCell>
                       <TableCell className="whitespace-nowrap tabular-nums">{limits.length ? limits.join(", ") : <span className="text-muted-foreground">None</span>}</TableCell>
                       <TableCell className="max-w-56">
@@ -309,7 +313,8 @@ function CreateKeyDialog({
   kbs?: KBList; // admins only: kb_ids is an admin field
   onCreated: (name: string, secret: string) => void;
 }) {
-  const models = useAsync(() => (open ? get<ModelView[]>(`${base}/models`) : Promise.resolve([] as ModelView[])), [base, open]);
+  const { wsList, wsBody } = useSession();
+  const models = useAsync(() => (open ? get<ModelView[]>(wsList(`${base}/models`)) : Promise.resolve([] as ModelView[])), [base, open]);
   const [name, setName] = useState("");
   const [rpm, setRpm] = useState("");
   const [tpm, setTpm] = useState("");
@@ -327,7 +332,7 @@ function CreateKeyDialog({
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const body = { name: name.trim(), rpm: num(rpm), tpm: num(tpm), monthly_budget_usd: num(budget), expires_in_days: num(expires), models: picked.length ? picked : undefined, kb_ids: kbIDs.length ? kbIDs : undefined };
+    const body = { ...wsBody, name: name.trim(), rpm: num(rpm), tpm: num(tpm), monthly_budget_usd: num(budget), expires_in_days: num(expires), models: picked.length ? picked : undefined, kb_ids: kbIDs.length ? kbIDs : undefined };
     if ([body.rpm, body.tpm, body.monthly_budget_usd, body.expires_in_days].some((v) => v !== undefined && (!Number.isFinite(v) || v < 0))) {
       setErr("Limits must be positive numbers, or empty for none.");
       return;

@@ -569,18 +569,21 @@ function SCIMSection({ api, s, onSaved }: { api: IdAPI; s: SSOSettings; onSaved:
 function GroupMappings({ api, s, onSaved }: { api: IdAPI; s: SSOSettings; onSaved: () => void }) {
   const init = (s.group_mappings ?? []).map((m) => ({ ...m, role: (m.role || "member") as Role }));
   const [rows, setRows] = useState<GroupMapping[]>(init);
+  // The default workspace cannot be mapped: every member is in it.
+  const mappable = useSession().workspaces.filter((w) => !w.is_default);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const dirty = JSON.stringify(rows) !== JSON.stringify(init);
   const set = (i: number, p: Partial<GroupMapping>) => setRows((r) => r.map((x, j) => (j === i ? { ...x, ...p } : x)));
 
   async function save() {
-    const clean = rows.map((r) => ({ ...r, group: r.group.trim() }));
+    const clean = rows.map((r) => ({ ...r, group: r.group.trim(), workspace_id: r.workspace_id || undefined }));
     if (clean.some((r) => !r.group)) return setErr("Every mapping needs a group name.");
+    // A group may have one organization mapping and one per workspace.
     const seen = new Set<string>();
     for (const r of clean) {
-      const k = r.group.toLowerCase();
-      if (seen.has(k)) return setErr(`“${r.group}” is listed twice.`);
+      const k = r.group.toLowerCase() + "\n" + (r.workspace_id ?? "");
+      if (seen.has(k)) return setErr(`“${r.group}” is mapped twice to ${r.workspace_id ? "the same workspace" : "the organization"}.`);
       seen.add(k);
     }
     setBusy(true);
@@ -599,7 +602,7 @@ function GroupMappings({ api, s, onSaved }: { api: IdAPI; s: SSOSettings; onSave
   return (
     <Section
       title="Group → role mapping"
-      description="A member in a mapped IdP group (SCIM group or SAML groups attribute) gets the highest mapped role. Owners keep their role."
+      description="A member in a mapped IdP group (SCIM group or SAML groups attribute) gets the highest mapped role. Owners keep their role. A mapping with a workspace sets the role in that workspace only; the organization role comes from mappings without one."
       actions={
         <Button variant="outline" size="sm" onClick={() => setRows((r) => [...r, { group: "", role: "member" }])}>
           <Plus aria-hidden /> Add mapping
@@ -630,8 +633,23 @@ function GroupMappings({ api, s, onSaved }: { api: IdAPI; s: SSOSettings; onSave
                   <TableCell>
                     <RoleSelect label={`Role for ${r.group || `row ${i + 1}`}`} value={(r.role || "member") as Role} onChange={(role) => set(i, { role })} />
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {r.workspace_id ? <span className="font-mono">{r.workspace_id}</span> : "Whole organization"}
+                  <TableCell>
+                    <Select value={r.workspace_id || "org"} onValueChange={(v) => set(i, { workspace_id: v === "org" ? undefined : v, ...(v !== "org" && r.role === "owner" ? { role: "admin" as Role } : {}) })}>
+                      <SelectTrigger aria-label={`Workspace for ${r.group || `row ${i + 1}`}`} className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="org">Whole organization</SelectItem>
+                        {mappable.map((w) => (
+                          <SelectItem key={w.id} value={w.id}>
+                            {w.name}
+                          </SelectItem>
+                        ))}
+                        {r.workspace_id && !mappable.some((w) => w.id === r.workspace_id) && (
+                          <SelectItem value={r.workspace_id}>Deleted workspace ({r.workspace_id.slice(0, 6)})</SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
                   </TableCell>
                   <TableCell>
                     <Button size="icon" variant="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} aria-label={`Remove mapping ${r.group || i + 1}`}>
@@ -644,7 +662,9 @@ function GroupMappings({ api, s, onSaved }: { api: IdAPI; s: SSOSettings; onSave
           </Table>
         </TableFrame>
       )}
-      <p className="mt-2 text-xs text-muted-foreground">Workspace scoping is not available yet; mappings apply to the whole organization.</p>
+      <p className="mt-2 text-xs text-muted-foreground">
+        The default workspace has no mappings: every member is in it with their organization role. Workspace roles are admin, member or viewer.
+      </p>
       <div className="mt-3 grid gap-3">
         <FormError message={err} />
         <div className="flex gap-2">

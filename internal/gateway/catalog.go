@@ -140,7 +140,7 @@ func (a *account) GetKeysForProvider(_ context.Context, k schemas.ModelProvider)
 		if p.OrgID != "" && pk.Bedrock != nil && pk.Value == "" && pk.Bedrock.AccessKey == "" {
 			continue // tenants never borrow the gateway host's AWS identity (admin rejects this too)
 		}
-		keys = append(keys, withServerURL(p, bifrostKey(pk, w)))
+		keys = append(keys, withServerURL(p, bifrostKey(p.Type, pk, w)))
 	}
 	return keys, nil
 }
@@ -186,8 +186,9 @@ func aliases(deployments map[string]string, azure *schemas.AzureAliasCfg) schema
 	return out
 }
 
-// bifrostKey maps a stored provider key (secrets decrypted) to Bifrost's key schema.
-func bifrostKey(pk store.ProviderKey, w float64) schemas.Key {
+// bifrostKey maps a stored provider key (secrets decrypted) of provider type t to Bifrost's key
+// schema. bedrock, bedrock_mantle and sagemaker keys share the stored AWS config.
+func bifrostKey(t string, pk store.ProviderKey, w float64) schemas.Key {
 	models := schemas.WhiteList(pk.Models)
 	if len(models) == 0 {
 		models = schemas.WhiteList{"*"} // empty means every model here; Bifrost reads empty as none
@@ -201,10 +202,21 @@ func bifrostKey(pk store.ProviderKey, w float64) schemas.Key {
 		}
 		k.Aliases = aliases(a.Deployments, cfg)
 	}
-	if b := pk.Bedrock; b != nil {
+	if b := pk.Bedrock; b != nil && t == "bedrock_mantle" {
+		k.BedrockMantleKeyConfig = &schemas.BedrockMantleKeyConfig{AccessKey: secret(b.AccessKey), SecretKey: secret(b.SecretKey),
+			SessionToken: secretPtr(b.SessionToken), Region: secretPtr(b.Region)}
+		k.Aliases = aliases(b.Deployments, nil)
+	} else if b != nil && t == "sagemaker" {
+		k.SageMakerKeyConfig = &schemas.SageMakerKeyConfig{AccessKey: secret(b.AccessKey), SecretKey: secret(b.SecretKey),
+			SessionToken: secretPtr(b.SessionToken), Region: secretPtr(b.Region)}
+		k.Aliases = aliases(b.Deployments, nil)
+	} else if b != nil {
 		k.BedrockKeyConfig = &schemas.BedrockKeyConfig{AccessKey: secret(b.AccessKey), SecretKey: secret(b.SecretKey),
 			SessionToken: secretPtr(b.SessionToken), Region: secretPtr(b.Region), ARN: secretPtr(b.ARN)}
 		k.Aliases = aliases(b.Deployments, nil)
+	}
+	if c := pk.Cloudflare; c != nil {
+		k.CloudflareKeyConfig = &schemas.CloudflareKeyConfig{AccountID: secret(c.AccountID)}
 	}
 	if v := pk.Vertex; v != nil {
 		k.VertexKeyConfig = &schemas.VertexKeyConfig{ProjectID: secret(v.ProjectID), ProjectNumber: secret(v.ProjectNumber),

@@ -808,7 +808,14 @@ var supportedTypes = map[string]bool{"openai": true, "anthropic": true, "gemini"
 	"nebius": true, "parasail": true, "sgl": true, "elevenlabs": true, "azure": true, "bedrock": true, "vertex": true,
 	"deepseek": true, "xai": true, "fireworks": true, "huggingface": true, "replicate": true, "vllm": true,
 	"databricks": true, "minimax": true, "byteplus": true, "sarvam": true, "wafer": true, "typesafe": true,
-	"opencode-go": true, "opencode-zen": true, "runway": true, "runware": true}
+	"opencode-go": true, "opencode-zen": true, "runway": true, "runware": true, "bedrock_mantle": true,
+	"sagemaker": true, "cloudflare": true}
+
+// awsTypes take the AWS key config (the key's "bedrock" block).
+var awsTypes = map[string]bool{"bedrock": true, "bedrock_mantle": true, "sagemaker": true}
+
+// cfAccount is a Cloudflare account id, formatted into the upstream URL path.
+var cfAccount = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // needsBaseURL are the types with no default host: base_url is their server or workspace URL.
 var needsBaseURL = map[string]bool{"ollama": true, "sgl": true, "vllm": true, "databricks": true}
@@ -828,7 +835,7 @@ func checkKeyConfig(p, old *store.Provider, tenant bool, allowPrivate bool) erro
 		// the adapter follows URLs from upstream responses: only the vendor's host is trusted
 		return fmt.Errorf("%w: org %s providers use the vendor's API; leave base_url empty", store.ErrInvalid, p.Type)
 	}
-	cloud := p.Type == "azure" || p.Type == "bedrock" || p.Type == "vertex"
+	cloud := p.Type == "azure" || awsTypes[p.Type] || p.Type == "vertex" || p.Type == "cloudflare"
 	if cloud && p.BaseURL != "" {
 		return fmt.Errorf("%w: base_url is not used by %s; set the endpoint or region on each key", store.ErrInvalid, p.Type)
 	}
@@ -836,7 +843,8 @@ func checkKeyConfig(p, old *store.Provider, tenant bool, allowPrivate bool) erro
 		return fmt.Errorf("%w: %s needs at least one key", store.ErrInvalid, p.Type)
 	}
 	for _, k := range p.Keys {
-		if (k.Azure != nil && p.Type != "azure") || (k.Bedrock != nil && p.Type != "bedrock") || (k.Vertex != nil && p.Type != "vertex") {
+		if (k.Azure != nil && p.Type != "azure") || (k.Bedrock != nil && !awsTypes[p.Type]) || (k.Vertex != nil && p.Type != "vertex") ||
+			(k.Cloudflare != nil && p.Type != "cloudflare") {
 			return fmt.Errorf("%w: key config does not match provider type %s", store.ErrInvalid, p.Type)
 		}
 		switch p.Type {
@@ -847,17 +855,24 @@ func checkKeyConfig(p, old *store.Provider, tenant bool, allowPrivate bool) erro
 			if err := checkBaseURL(k.Azure.Endpoint, allowPrivate); err != nil {
 				return fmt.Errorf("%w: azure endpoint must be a public http(s) URL", store.ErrInvalid)
 			}
-		case "bedrock":
+		case "bedrock", "bedrock_mantle", "sagemaker":
 			b := k.Bedrock
 			if b == nil || !cloudID.MatchString(b.Region) {
-				return fmt.Errorf("%w: bedrock keys need a region such as us-east-1", store.ErrInvalid)
+				return fmt.Errorf("%w: %s keys need a region such as us-east-1", store.ErrInvalid, p.Type)
 			}
 			if (b.AccessKey == "") != (b.SecretKey == "") {
-				return fmt.Errorf("%w: bedrock access_key and secret_key go together", store.ErrInvalid)
+				return fmt.Errorf("%w: %s access_key and secret_key go together", store.ErrInvalid, p.Type)
 			}
 			if tenant && k.Value == "" && b.AccessKey == "" && !keepsCredential(old, k.ID) {
 				// empty credentials mean the gateway host's AWS identity: operators only
-				return fmt.Errorf("%w: bedrock keys need an API key or access_key and secret_key", store.ErrInvalid)
+				return fmt.Errorf("%w: %s keys need an API key or access_key and secret_key", store.ErrInvalid, p.Type)
+			}
+		case "cloudflare":
+			if k.Cloudflare == nil || !cfAccount.MatchString(k.Cloudflare.AccountID) {
+				return fmt.Errorf("%w: cloudflare keys need account_id (32 hex characters)", store.ErrInvalid)
+			}
+			if k.Value == "" && !keepsCredential(old, k.ID) {
+				return fmt.Errorf("%w: cloudflare keys need an API token", store.ErrInvalid)
 			}
 		case "vertex":
 			v := k.Vertex

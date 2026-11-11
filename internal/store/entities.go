@@ -133,6 +133,13 @@ type ProviderKey struct {
 	Azure   *AzureConfig   `json:"azure,omitempty"`
 	Bedrock *BedrockConfig `json:"bedrock,omitempty"`
 	Vertex  *VertexConfig  `json:"vertex,omitempty"`
+	// Cloudflare is the Workers AI account; Value holds the API token.
+	Cloudflare *CloudflareConfig `json:"cloudflare,omitempty"`
+}
+
+// CloudflareConfig is the per-key Cloudflare Workers AI setup.
+type CloudflareConfig struct {
+	AccountID string `json:"account_id"`
 }
 
 // AzureConfig is the per-key Azure OpenAI setup. Deployments map model name -> deployment name.
@@ -142,7 +149,7 @@ type AzureConfig struct {
 	Deployments map[string]string `json:"deployments,omitempty"`
 }
 
-// BedrockConfig is the per-key AWS Bedrock setup. Secret fields follow the Value/Sealed pattern:
+// BedrockConfig is the per-key AWS setup of bedrock, bedrock_mantle and sagemaker keys. Secret fields follow the Value/Sealed pattern:
 // plaintext only on input and inside the gateway, sealed at rest. No access/secret key and no
 // Value means the AWS default credential chain (IAM role) of the gateway host.
 type BedrockConfig struct {
@@ -192,6 +199,10 @@ func (k ProviderKey) Redacted() ProviderKey {
 	}
 	if k.Bedrock != nil {
 		out.Bedrock = &BedrockConfig{Region: k.Bedrock.Region, ARN: k.Bedrock.ARN, Deployments: k.Bedrock.Deployments}
+	}
+	if k.Cloudflare != nil {
+		c := *k.Cloudflare
+		out.Cloudflare = &c
 	}
 	if k.Vertex != nil {
 		v := *k.Vertex

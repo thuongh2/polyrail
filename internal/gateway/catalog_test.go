@@ -57,8 +57,19 @@ func TestAccountMapsCloudKeyConfig(t *testing.T) {
 	if !bk[0].Models.IsAllowed("any-model") {
 		t.Fatalf("a key without a model list must serve every model: %v", bk[0].Models)
 	}
+	aws := store.ProviderKey{ID: "m", Bedrock: &store.BedrockConfig{Region: "us-west-2", AccessKey: "AK", SecretKey: "SK"}}
+	if m := bifrostKey("bedrock_mantle", aws, 1); m.BedrockMantleKeyConfig == nil || m.BedrockKeyConfig != nil || m.BedrockMantleKeyConfig.Region.GetValue() != "us-west-2" {
+		t.Fatalf("bedrock_mantle key: %+v", m)
+	}
+	if m := bifrostKey("sagemaker", aws, 1); m.SageMakerKeyConfig == nil || m.BedrockKeyConfig != nil || m.SageMakerKeyConfig.SecretKey.GetValue() != "SK" {
+		t.Fatalf("sagemaker key: %+v", m)
+	}
+	cf := bifrostKey("cloudflare", store.ProviderKey{ID: "c", Value: "tok", Cloudflare: &store.CloudflareConfig{AccountID: "abc"}}, 1)
+	if cf.CloudflareKeyConfig == nil || cf.CloudflareKeyConfig.AccountID.GetValue() != "abc" || cf.Value.GetValue() != "tok" {
+		t.Fatalf("cloudflare key: %+v", cf)
+	}
 	t.Setenv("GW_TEST_SECRET", "host-secret")
-	ek := bifrostKey(store.ProviderKey{ID: "e", Value: "env.GW_TEST_SECRET"}, 1)
+	ek := bifrostKey("openai", store.ProviderKey{ID: "e", Value: "env.GW_TEST_SECRET"}, 1)
 	if ek.Value.GetValue() != "env.GW_TEST_SECRET" {
 		t.Fatalf("stored key values must stay literal, got %q", ek.Value.GetValue())
 	}

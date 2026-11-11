@@ -267,6 +267,9 @@ config and no `base_url`; `elevenlabs` takes `value` and an optional `base_url`.
 - `bedrock` (platform and org): `bedrock: {region, access_key*, secret_key*, session_token*, arn,
   deployments}`; or a Bedrock API key in `value`. No credentials = the gateway host's AWS identity
   (IAM role, environment), operators only: org providers must supply keys.
+- `bedrock_mantle`, `sagemaker` (platform only): the same `bedrock: {region, access_key*, secret_key*,
+  session_token*, deployments}` block as `bedrock` (no `arn`); empty credentials = host AWS identity.
+- `cloudflare` (platform only): `value*` = Workers AI API token, `cloudflare: {account_id}` (32 hex).
 - `vertex` (platform only): `vertex: {project_id, project_number, region, auth_credentials*,
   deployments}`; `auth_credentials` is service-account JSON, empty = host Google credentials.
 
@@ -281,8 +284,8 @@ Key-only types (`value` + optional `base_url` override): `openai`, `anthropic`, 
 `base_url` (the server; key optional) and `databricks` requires `base_url` = the workspace URL plus a
 token in `value`. Org providers may use the types Bifrost can run many times: `openai`, `anthropic`,
 `gemini`, `cohere`, `bedrock`, `huggingface`, `replicate`, `typesafe`. Not offered: `github-copilot`
-(OAuth device flow), `bedrock_mantle` and `sagemaker` (AWS SigV4 key config), `cloudflare` (per-key
-account id).
+(it signs in with a personal GitHub Copilot subscription through an OAuth device flow; using a
+consumer subscription as a shared API backend is outside GitHub's terms).
 
 Model import: `POST …/providers/{id}/discover` (platform: `/api/admin/providers/{id}/discover`) asks
 the provider for its model list with its own keys (Bifrost `ListModelsRequest`; the provider must be

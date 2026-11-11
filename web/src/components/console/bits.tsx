@@ -102,7 +102,7 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
 
 /** Wraps a wide table so it scrolls inside its border instead of the page. */
 export function TableFrame({ children }: { children: ReactNode }) {
-  return <div className="overflow-hidden rounded-lg border [&_[data-slot=table-container]]:overflow-x-auto">{children}</div>;
+  return <div className="overflow-hidden rounded-lg border [&_[data-slot=table-container]]:overflow-x-auto [&_[data-slot=table-container]]:scrollbar-thin">{children}</div>;
 }
 
 /** Float USD (usage reports) through the same formatter as micro-USD. */

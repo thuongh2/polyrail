@@ -305,7 +305,7 @@ function CreateKeyDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => (o || reset(), onOpenChange(o))}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto scrollbar-thin sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Create API key</DialogTitle>
           <DialogDescription>Leave a limit empty for none. Only admins can change limits later.</DialogDescription>
@@ -331,7 +331,7 @@ function CreateKeyDialog({
           <fieldset className="grid gap-1.5">
             <legend className="mb-1.5 text-sm font-medium">Allowed models</legend>
             <p className="text-xs text-muted-foreground">{picked.length ? `${picked.length} selected` : "None selected: the key can use every model."}</p>
-            <div className="max-h-40 overflow-y-auto rounded-md border p-2">
+            <div className="max-h-40 overflow-y-auto scrollbar-thin rounded-md border p-2">
               {models.error ? (
                 <p className="text-sm text-destructive">{models.error.message}</p>
               ) : !models.data ? (

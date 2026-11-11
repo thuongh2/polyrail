@@ -702,7 +702,7 @@ function ChatPanel({ models, apiKey, keyField }: PanelProps) {
         </div>
 
         <div className="flex min-h-[28rem] flex-col rounded-lg border">
-          <div className="flex-1 space-y-4 overflow-y-auto p-4 lg:max-h-[calc(100dvh-16rem)]" aria-label="Conversation">
+          <div className="no-scrollbar flex-1 space-y-4 overflow-y-auto p-4 lg:max-h-[calc(100dvh-16rem)]" aria-label="Conversation">
             {msgs.length === 0 ? (
               <div className="grid h-full place-items-center py-16 text-center text-sm text-muted-foreground">
                 <p className="max-w-xs">{apiKey ? "Send a message to start." : "Paste an API key on the left, then send a message."}</p>

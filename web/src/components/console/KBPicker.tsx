@@ -10,7 +10,7 @@ export function KBPicker({
     <fieldset className="grid gap-1.5">
       <legend className="mb-1.5 text-sm font-medium">{legend}</legend>
       <p className="text-xs text-muted-foreground">{value.length ? `${value.length} of ${max} selected` : help}</p>
-      <div className="max-h-40 overflow-y-auto rounded-md border p-2">
+      <div className="max-h-40 overflow-y-auto scrollbar-thin rounded-md border p-2">
         {error ? (
           <p className="text-sm text-destructive">{error.message}</p>
         ) : !kbs ? (

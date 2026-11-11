@@ -82,7 +82,7 @@ export function FormDialog({
   };
   return (
     <Dialog open={open} onOpenChange={change}>
-      <DialogContent className={cn("max-h-[calc(100dvh-2rem)] overflow-y-auto", wide ? "sm:max-w-2xl" : "sm:max-w-lg")}>
+      <DialogContent className={cn("max-h-[calc(100dvh-2rem)] overflow-y-auto scrollbar-thin", wide ? "sm:max-w-2xl" : "sm:max-w-lg")}>
         <form onSubmit={submit} className="grid gap-4" noValidate={false}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>

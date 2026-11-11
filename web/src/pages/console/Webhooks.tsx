@@ -250,7 +250,7 @@ function CreateWebhookDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => (o || reset(), onOpenChange(o))}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto scrollbar-thin sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Add webhook</DialogTitle>
           <DialogDescription>The endpoint must use HTTPS on a public address. At most 20 webhooks per organization.</DialogDescription>

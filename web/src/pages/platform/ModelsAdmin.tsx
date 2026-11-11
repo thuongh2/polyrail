@@ -222,13 +222,17 @@ export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
         description={
           <>
             Adds the built-in catalog (from models.dev): one disabled provider per vendor, with no API key, and every
-            catalog model routed to them. Existing providers and models are not changed. Catalog models stay hidden
+            catalog model routed to them. Existing providers and models are not changed, except that catalog models
+            without cache prices get the catalog&apos;s cache read and write prices. Catalog models stay hidden
             until you add an API key to their provider and enable it in Providers.
           </>
         }
         confirmLabel="Load catalog"
         destructive={false}
-        success={(r: CatalogSync) => `Added ${r.providers_added} providers and ${r.models_added} models`}
+        success={(r: CatalogSync) =>
+          `Added ${r.providers_added} providers and ${r.models_added} models` +
+          (r.cache_prices_filled ? `; filled cache prices on ${r.cache_prices_filled} models` : "")
+        }
         onConfirm={async () => {
           const r = await api<CatalogSync>("POST", PLATFORM + "/catalog/sync");
           models.reload();
@@ -318,6 +322,8 @@ function ModelDialog({
   const [mods, setMods] = useState<string[]>(model?.modalities?.length ? model.modalities : ["text"]);
   const [inPrice, setInPrice] = useState(model ? model.pricing.input : "");
   const [outPrice, setOutPrice] = useState(model ? model.pricing.output : "");
+  const [cacheRead, setCacheRead] = useState(model?.pricing.input_cache_read ?? "");
+  const [cacheWrite, setCacheWrite] = useState(model?.pricing.input_cache_write ?? "");
   const [minPrice, setMinPrice] = useState(model?.pricing.audio_minute ?? "");
   const [imgPrice, setImgPrice] = useState(model?.pricing.image ?? "");
   const [reqPrice, setReqPrice] = useState(model?.pricing.request ?? "");
@@ -379,6 +385,8 @@ function ModelDialog({
       modalities: textModel && mods.length ? mods : ["text"],
       input_price_micros: pf.tokens ? micros(inPrice, "Input price") : 0,
       output_price_micros: pf.tokens ? micros(outPrice, "Output price") : 0,
+      cache_read_price_micros: kind === "chat" ? micros(cacheRead, "Cache read price") : undefined,
+      cache_write_price_micros: kind === "chat" ? micros(cacheWrite, "Cache write price") : undefined,
       audio_minute_price_micros: pf.audio ? micros(minPrice, "Audio price") : undefined,
       image_price_micros: pf.image ? micros(imgPrice, "Image price") : undefined,
       video_second_price_micros: pf.video ? micros(vidPrice, "Video price") : undefined,
@@ -489,6 +497,12 @@ function ModelDialog({
         {pf.tokens &&
           price("Output price (USD per 1M tokens)", outPrice, setOutPrice, "0.60", textModel ? undefined : "Optional, when the provider reports output tokens.")}
       </div>
+      {kind === "chat" && (
+        <div className="grid gap-4 sm:grid-cols-3">
+          {price("Cache read (USD per 1M tokens)", cacheRead, setCacheRead, inPrice || "0.075", "Optional. Leave empty to bill cached tokens at the input price.")}
+          {price("Cache write (USD per 1M tokens)", cacheWrite, setCacheWrite, inPrice || "0.1875", "Optional. Leave empty to bill cached tokens at the input price.")}
+        </div>
+      )}
       {!pf.request && (
         <div className="grid gap-3">
           <div className="flex items-center gap-3">

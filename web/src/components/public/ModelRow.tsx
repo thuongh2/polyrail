@@ -31,6 +31,9 @@ export function ModelRow({ m, compactRow = false }: { m: ModelInfo; compactRow?:
         {!compactRow && m.description && (
           <p className="mt-1.5 line-clamp-2 max-w-3xl text-sm text-muted-foreground">{m.description}</p>
         )}
+        {!compactRow && (m.pricing.input_cache_read || m.pricing.input_cache_write) && (
+          <p className="mt-1.5 text-xs text-muted-foreground">{cacheLine(m.pricing)}</p>
+        )}
         {!compactRow && !!m.providers?.length && (
           <p className="mt-1.5 text-xs text-muted-foreground">
             {m.providers.length === 1 ? "Provider: " : `${m.providers.length} providers: `}
@@ -45,6 +48,16 @@ export function ModelRow({ m, compactRow = false }: { m: ModelInfo; compactRow?:
       </dl>
     </li>
   );
+}
+
+/** "Cache read $0.30/M · Cache write $3.75/M" for the prices that are set. */
+export function cacheLine(p: ModelInfo["pricing"]) {
+  return [
+    p.input_cache_read && `Cache read ${perMillion(p.input_cache_read)}/M`,
+    p.input_cache_write && `Cache write ${perMillion(p.input_cache_write)}/M`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

@@ -51,6 +51,8 @@ const (
 	AggCostMicros
 	AggLatencyMs
 	AggCacheHits
+	AggCacheReadTokens  // prompt tokens read from the provider's prompt cache (D32)
+	AggCacheWriteTokens // prompt tokens written to it
 	AggFields
 )
 

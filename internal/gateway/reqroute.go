@@ -522,11 +522,12 @@ func setModel(payload any, id string) {
 }
 
 // billed is what record() bills for a successful request with this usage.
-func billed(m store.Model, in, out int) int64 { return cost(m, in, out) + m.RequestPrice }
+func billed(m store.Model, l store.RequestLog) int64 { return logCost(m, l) + m.RequestPrice }
 
 // withCost adds OpenRouter usage accounting to an encoded response that has usage (at
 // "usage", or "response.usage" for Responses stream events) when the request asked for it:
-// usage.cost (USD), usage.cost_micros and cached_tokens next to Bifrost's cached_read_tokens.
+// usage.cost (USD), usage.cost_micros, and OpenRouter's cached_tokens / cache_write_tokens next to
+// Bifrost's cached_read_tokens / cached_write_tokens.
 func (p *principal) withCost(data []byte, micros int64) []byte {
 	if p.rr == nil || !p.rr.usage {
 		return data
@@ -542,8 +543,10 @@ func (p *principal) withCost(data []byte, micros int64) []byte {
 		out, err = sjson.SetBytes(out, path+".cost_micros", micros)
 	}
 	for _, d := range []string{".prompt_tokens_details", ".input_tokens_details"} {
-		if c := gjson.GetBytes(out, path+d+".cached_read_tokens"); err == nil && c.Exists() && !gjson.GetBytes(out, path+d+".cached_tokens").Exists() {
-			out, err = sjson.SetBytes(out, path+d+".cached_tokens", c.Int())
+		for _, f := range [][2]string{{"cached_read_tokens", "cached_tokens"}, {"cached_write_tokens", "cache_write_tokens"}} {
+			if c := gjson.GetBytes(out, path+d+"."+f[0]); err == nil && c.Exists() && !gjson.GetBytes(out, path+d+"."+f[1]).Exists() {
+				out, err = sjson.SetBytes(out, path+d+"."+f[1], c.Int())
+			}
 		}
 	}
 	if err != nil {

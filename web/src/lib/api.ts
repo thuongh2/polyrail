@@ -27,7 +27,16 @@ export const get = <T>(path: string) => api<T>("GET", path);
  * USD decimal strings: input/output per 1M tokens (speech input: per 1M characters), audio_minute per
  * minute of audio, image per generated image, request per request, video_second per second of video.
  */
-export type Pricing = { input: string; output: string; audio_minute?: string; image?: string; request?: string; video_second?: string };
+export type Pricing = {
+  input: string;
+  output: string;
+  input_cache_read?: string; // USD per 1M prompt tokens read from the provider's prompt cache (absent = input price)
+  input_cache_write?: string; // USD per 1M prompt tokens written to it
+  audio_minute?: string;
+  image?: string;
+  request?: string;
+  video_second?: string;
+};
 
 export type ModelKind = "chat" | "embedding" | "speech" | "transcription" | "image" | "rerank" | "ocr" | "video";
 export const kindLabel: Record<ModelKind, string> = {
@@ -264,6 +273,8 @@ export type ModelInput = {
   modalities?: string[];
   input_price_micros: number;
   output_price_micros: number;
+  cache_read_price_micros?: number; // chat: micro-USD per 1M cached prompt tokens read (0/absent = input price)
+  cache_write_price_micros?: number; // chat: micro-USD per 1M prompt tokens written to the cache
   audio_minute_price_micros?: number; // transcription: micro-USD per audio minute
   image_price_micros?: number; // micro-USD per generated image
   request_price_micros?: number; // micro-USD per successful request, any kind
@@ -284,6 +295,8 @@ export type DiscoveredModel = {
   max_output_tokens?: number;
   input_price_micros?: number;
   output_price_micros?: number;
+  cache_read_price_micros?: number; // upstream list prices of prompt-cache reads / writes
+  cache_write_price_micros?: number;
 };
 /** One entry of POST …/providers/{id}/import; the model gets one target {provider, upstream}. */
 export type ImportModel = {
@@ -296,9 +309,12 @@ export type ImportModel = {
   max_output_tokens?: number;
   input_price_micros: number;
   output_price_micros: number;
+  cache_read_price_micros?: number;
+  cache_write_price_micros?: number;
 };
-/** POST /api/admin/catalog/sync: how many catalog providers (disabled, keyless) and models were added. */
-export type CatalogSync = { providers_added: number; models_added: number };
+/** POST /api/admin/catalog/sync: catalog providers (disabled, keyless) and models added, and existing
+ * catalog models whose unset prompt-cache prices were filled. */
+export type CatalogSync = { providers_added: number; models_added: number; cache_prices_filled: number };
 
 /** POST /v1/images/generations response, as the provider returns it. */
 export type ImageResult = { created?: number; data: { b64_json?: string; url?: string; revised_prompt?: string }[] };
@@ -313,7 +329,9 @@ export type UsageRow = {
   out_tokens: number;
   cost_usd: number;
   avg_latency_ms: number;
-  cache_hits: number;
+  cache_hits: number; // requests served from the gateway's response cache
+  cache_read_tokens?: number; // prompt tokens read from the provider's prompt cache (part of in_tokens)
+  cache_write_tokens?: number; // prompt tokens written to it
 };
 export type UsageReport = { total: UsageRow; daily: UsageRow[]; models: UsageRow[]; keys: UsageRow[]; end_users?: UsageRow[]; workspaces?: UsageRow[] };
 
@@ -326,11 +344,14 @@ export type RequestLog = {
   upstream_model?: string;
   status: number;
   error?: string;
-  in_tokens: number;
-  out_tokens: number;
+  in_tokens: number; // all prompt tokens, prompt-cache reads and writes included
+  out_tokens: number; // all completion tokens, reasoning included
+  cache_read_tokens?: number; // part of in_tokens read from the provider's prompt cache
+  cache_write_tokens?: number; // part of in_tokens written to it
+  reasoning_tokens?: number; // part of out_tokens
   cost_micros: number;
   latency_ms: number;
-  cached?: boolean;
+  cached?: boolean; // served from the gateway's response cache
   stream?: boolean;
   end_user?: string; // the request's `user` field
   at: string;

@@ -461,10 +461,6 @@ func (g *Gateway) TargetOpen(providerID, model string) bool {
 	return !g.rt.br.ok(targetID(store.Target{ProviderID: providerID, Model: model}))
 }
 
-func cost(m store.Model, in, out int) int64 {
-	return (int64(in)*m.InputPrice + int64(out)*m.OutputPrice + 500_000) / 1_000_000 // nearest micro-USD: unbiased over many requests
-}
-
 // record bills and logs one request and returns the micros billed.
 func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start time.Time) int64 {
 	l.ID, l.OrgID, l.KeyID, l.Workspace, l.Model, l.At = store.NewID(), p.Org.ID, p.Key.ID, p.ws(), m.ID, start.UTC()
@@ -476,7 +472,7 @@ func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start 
 	}
 	l.LatencyMs = time.Since(start).Milliseconds()
 	if !l.Cached && l.Cost == 0 { // callers may price by something other than tokens (audio minutes)
-		l.Cost = cost(m, l.InTokens, l.OutTokens)
+		l.Cost = logCost(m, l)
 	}
 	if !l.Cached && l.Status == 200 {
 		l.Cost += m.RequestPrice
@@ -647,9 +643,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
-	if resp.Usage != nil {
-		l.InTokens, l.OutTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
-	}
+	chatTokens(resp.Usage).into(&l)
 	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
 	l.Provider = provName
 	used := usedModel(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, resp.ExtraFields.RoutingInfo.Model)
@@ -722,9 +716,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 				w.Header().Set("X-GW-Route", routeHeader(used, name, c.ExtraFields.RoutingInfo.Model))
 			}
 			served = c.ExtraFields.RoutingInfo.Provider
-			if c.Usage != nil {
-				l.InTokens, l.OutTokens = c.Usage.PromptTokens, c.Usage.CompletionTokens
-			}
+			chatTokens(c.Usage).into(&l)
 			for _, ch := range c.Choices {
 				if ch.ChatStreamResponseChoice != nil && ch.Delta != nil && ch.Delta.Content != nil {
 					chars += len(*ch.Delta.Content)
@@ -734,7 +726,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 			c.Model = used.ID
 			data, _ = hideExtra(chatOut{BifrostChatResponse: c})
 			if c.Usage != nil {
-				data = p.withCost(data, billed(used, l.InTokens, l.OutTokens))
+				data = p.withCost(data, billed(used, l))
 			}
 		} else {
 			continue
@@ -833,12 +825,16 @@ type ModelInfo struct {
 	MaxOutput     int      `json:"max_output_tokens,omitempty"`
 	Modalities    []string `json:"modalities,omitempty"`
 	Pricing       struct {
-		Input       string `json:"input"`                  // USD per 1M tokens (speech: per 1M characters without token usage)
-		Output      string `json:"output"`                 // USD per 1M tokens
-		AudioMinute string `json:"audio_minute,omitempty"` // USD per minute of audio (transcription)
-		Image       string `json:"image,omitempty"`        // USD per generated image
-		Request     string `json:"request,omitempty"`      // USD per request
-		VideoSecond string `json:"video_second,omitempty"` // USD per second of generated video
+		Input  string `json:"input"`  // USD per 1M tokens (speech: per 1M characters without token usage)
+		Output string `json:"output"` // USD per 1M tokens
+		// USD per 1M prompt tokens read from / written to the provider's prompt cache; omitted
+		// when unset (those tokens bill at the input price, D32).
+		InputCacheRead  string `json:"input_cache_read,omitempty"`
+		InputCacheWrite string `json:"input_cache_write,omitempty"`
+		AudioMinute     string `json:"audio_minute,omitempty"` // USD per minute of audio (transcription)
+		Image           string `json:"image,omitempty"`        // USD per generated image
+		Request         string `json:"request,omitempty"`      // USD per request
+		VideoSecond     string `json:"video_second,omitempty"` // USD per second of generated video
 	} `json:"pricing"`
 	Private   bool     `json:"private,omitempty"`
 	Providers []string `json:"providers,omitempty"` // public models only: names of serving providers
@@ -850,6 +846,12 @@ func Info(m store.Model) ModelInfo {
 		Description: m.Description, Kind: m.Kind, ContextLength: m.ContextLength, MaxOutput: m.MaxOutput, Modalities: m.Modalities, Private: m.OrgID != ""}
 	mi.Pricing.Input = usd(m.InputPrice)
 	mi.Pricing.Output = usd(m.OutputPrice)
+	if m.CacheReadPrice > 0 {
+		mi.Pricing.InputCacheRead = usd(m.CacheReadPrice)
+	}
+	if m.CacheWritePrice > 0 {
+		mi.Pricing.InputCacheWrite = usd(m.CacheWritePrice)
+	}
 	if m.AudioMinutePrice > 0 {
 		mi.Pricing.AudioMinute = usd(m.AudioMinutePrice)
 	}

@@ -6,7 +6,7 @@
 |---|---|---|
 | POST | `/v1/chat/completions` | OpenAI request body. `model` is a catalog id (`vendor/name`). `stream: true` returns SSE ending with `data: [DONE]`; the last chunk carries `usage`. Response adds `provider`. |
 | POST | `/v1/embeddings` | OpenAI request body. |
-| GET | `/v1/models` | Models visible to the key, with `pricing.input`/`pricing.output` (USD per 1M tokens), `pricing.image` (USD per image) and `pricing.request` (USD per request) when set, and `context_length`. |
+| GET | `/v1/models` | Models visible to the key, with `pricing.input`/`pricing.output` (USD per 1M tokens); when set `pricing.input_cache_read`/`pricing.input_cache_write` (USD per 1M prompt tokens read from / written to the provider's prompt cache, D32), `pricing.audio_minute`, `pricing.image` (USD per image), `pricing.request` (USD per request), `pricing.video_second`; and `context_length`. All prices are decimal strings in the same units as the model's other prices (per 1M tokens, not per token). |
 | POST | `/v1/models/query` | Model discovery: the same visible models as `GET /v1/models`, filtered by an optional JSON body `{q, kind, modalities, min_context, min_output, max_input_price, max_output_price, owned_by, exclude, sort, limit}`. `q` is a case-insensitive substring of id, name or description; `modalities` must all be present; `min_output` compares `max_output_tokens`; prices are numbers in USD per 1M tokens; `owned_by` is the id's vendor prefix; `exclude` is a list of ids; `sort` is `id` (default), `price` (input + output, cheapest first) or `context` (largest first); `limit` defaults to 50, capped at 100. Unknown fields, a bad `sort` or `limit` < 1 → 400. Same `{"object":"list","data":[...]}` response. |
 | POST | `/v1/completions` | Legacy text completions (chat-kind models), `stream` supported. |
 | POST | `/v1/responses` | OpenAI Responses API (chat-kind models). Streams named SSE events ending with `response.completed`. |
@@ -38,7 +38,15 @@ Model kinds: `chat`, `embedding`, `speech`, `transcription`, `image`, `rerank`, 
 accepts one kind (else 400 `wrong_model_kind`). Model prices (micro-USD): `input_price_micros` /
 `output_price_micros` per 1M tokens, `audio_minute_price_micros`, `image_price_micros` per generated
 image, `video_second_price_micros` per second of generated video, and `request_price_micros`, added to every successful, non-cached request of any kind
-(token counting excepted).
+(token counting excepted). Chat models may also set `cache_read_price_micros` / `cache_write_price_micros`
+(per 1M prompt tokens read from / written to the provider's prompt cache; 0 or absent = billed at the
+input price). Token cost (D32), rounded once to the nearest micro-USD:
+`(prompt − cache_read − cache_write) × input + cache_read × cache_read_price + cache_write × cache_write_price + completion × output`.
+Cache counts come from Bifrost's usage (`prompt_tokens_details.cached_read_tokens` /
+`cached_write_tokens`, filled from OpenAI `cached_tokens`, Anthropic `cache_read_input_tokens` /
+`cache_creation_input_tokens`, Gemini `cachedContentTokenCount`); prompt tokens include them.
+Completion tokens include reasoning tokens, which are logged but not billed twice. Batches use the
+prices copied at creation and the results' `cached_tokens` (or Anthropic cache counts).
 
 Routing: a model's `strategy` orders its targets; the first is the primary, the rest are failover
 fallbacks in that order, and targets whose circuit is open (3 target faults in a row → 30 s, or an
@@ -127,7 +135,8 @@ OpenRouter-compatible request fields on `/v1/chat/completions`, `/v1/responses` 
 - `usage: {"include": true}`: the response `usage` (non-stream body, the stream chunk that carries
   usage, Responses `response.usage`) gains `cost` (USD), `cost_micros` (the amount billed, as
   `X-GW-Cost-Micros`) and `prompt_tokens_details.cached_tokens` /
-  `input_tokens_details.cached_tokens` when the provider reported cached tokens. Reasoning tokens
+  `input_tokens_details.cached_tokens` (prompt-cache reads) and `…cache_write_tokens` (writes) when
+  the provider reported them (chat bodies carry both even without `include`). Reasoning tokens
   are in `completion_tokens_details.reasoning_tokens` as the provider reports them. Without
   `include` the body is unchanged.
 - `user`: recorded on the request log as `end_user` (first 128 bytes; tenant data, never on public
@@ -413,7 +422,7 @@ and `prev_valid_until`. A revoked key cannot be rotated (400). Audited as `key.r
 | GET | `/api/orgs/{org}/presets`, `/presets/{slug}` | workspace viewer (list is a bare JSON array) |
 | POST | `/api/orgs/{org}/presets` | workspace admin (201; 409 when the slug exists) |
 | PUT/DELETE | `/api/orgs/{org}/presets/{slug}` | workspace admin (PUT replaces; 404 when missing) |
-| GET | `/api/orgs/{org}/logs?limit=100` | viewer |
+| GET | `/api/orgs/{org}/logs?limit=100` | viewer — rows carry `in_tokens`, `out_tokens` and, when non-zero, `cache_read_tokens`, `cache_write_tokens` (parts of `in_tokens`) and `reasoning_tokens` (part of `out_tokens`) |
 | GET | `/api/orgs/{org}/audit` | admin |
 | GET/POST | `/api/orgs/{org}/webhooks` | admin (signing secret returned once on create) |
 | PATCH/DELETE | `/api/orgs/{org}/webhooks/{id}` | admin |
@@ -440,7 +449,9 @@ Org PATCH body: `name`, `guardrails`, `max_tokens_cap`, `prepaid`, `mcp_servers`
 `threshold` 0.5–0.999 (default 0.92), `ttl_seconds` 1–86400 (default 3600). `{"model": ""}` turns it off.
 
 Usage report: `{"total", "daily", "models", "keys"}` rows of `{key, requests, errors, in_tokens,
-out_tokens, cost_usd, avg_latency_ms, cache_hits}`; with `group=end_user` also `"end_users"`, one row
+out_tokens, cost_usd, avg_latency_ms, cache_hits, cache_read_tokens, cache_write_tokens}` (`cache_hits`
+counts gateway response-cache hits; `cache_read_tokens` / `cache_write_tokens` are prompt tokens the
+provider read from / wrote to its prompt cache, part of `in_tokens`, counted from D32 on); with `group=end_user` also `"end_users"`, one row
 per request `user` (top 1000 by cost over the period; rollups follow the log retention). Other
 `group` values, or `group` on `/api/admin/usage`, → 400.
 
@@ -664,10 +675,10 @@ extension is accepted and not stored.
 
 `from` / `to` are `YYYY-MM-DD` (UTC; a `to` date includes that day) or RFC 3339; `from` is
 inclusive, `to` exclusive, at most 366 days apart. Defaults: usage the last 30 days, logs the last 7.
-Usage rows are daily: `date,<group>,requests,errors,in_tokens,out_tokens,cost_usd,avg_latency_ms,cache_hits`
+Usage rows are daily: `date,<group>,requests,errors,in_tokens,out_tokens,cost_usd,avg_latency_ms,cache_hits,cache_read_tokens,cache_write_tokens`
 (`group=day` has no group column); `creator` is the email of the user who created the key (or
 `token:<id>` for keys made by a management token). Log rows, newest first, at most 100,000
-(`X-GW-Row-Cap`): `id,at,key_id,model,provider,upstream_model,status,error,in_tokens,out_tokens,cost_usd,latency_ms,cached,stream,kb_chunks,end_user`.
+(`X-GW-Row-Cap`): `id,at,key_id,model,provider,upstream_model,status,error,in_tokens,out_tokens,cost_usd,latency_ms,cached,stream,kb_chunks,end_user,cache_read_tokens,cache_write_tokens,reasoning_tokens`.
 Files are RFC 4180 CSV streamed as they are read; a cell starting with `=`, `+`, `-`, `@`, tab or CR
 gets a leading `'` so spreadsheets do not run it as a formula.
 
@@ -944,7 +955,8 @@ enabled) → `{"provider","models":[{"upstream","name","description","context_le
 "max_output_tokens","input_price_micros","output_price_micros"}]}` (prices only when the upstream lists
 them, converted to micro-USD per 1M tokens). Org providers get a generic error instead of the upstream
 body. `POST …/providers/{id}/import {"models":[{"upstream","id","name","description","kind",
-"context_length","max_output_tokens","input_price_micros","output_price_micros"}]}` (1–500) creates
+"context_length","max_output_tokens","input_price_micros","output_price_micros","cache_read_price_micros",
+"cache_write_price_micros"}]}` (1–500; discovery lists the upstream's cache prices when it has them) creates
 enabled models (public for the platform route, org-private for the org route) with one target
 `{provider, upstream}` → `{"created":[ids]}`. Every entry is validated first; an existing id is 409;
 a store error rolls back the models already created. Each model gets a `model.import` audit entry.
@@ -955,8 +967,11 @@ vendor type with id `cat-<type>`, name = the type, no keys, **disabled**, and ev
 an enabled public model routed to them (several providers of one canonical model are targets of one
 model, strategy `priority`, first-party first). Audit: `catalog.seed`. `POST /api/admin/catalog/sync`
 (operator) does the same on an existing install: it adds the catalog providers and public models whose
-ids are missing and never changes existing ones → `{"providers_added":n,"models_added":n}`, audit
-`catalog.sync`; a second call adds nothing.
+ids are missing; existing records are not changed except that an existing public model with a catalog id
+gets the catalog's `cache_read_price_micros` / `cache_write_price_micros` for whichever of the two is 0
+(a price an operator set is kept) → `{"providers_added":n,"models_added":n,"cache_prices_filled":n}`,
+audit `catalog.sync`; a second call adds and fills nothing. Catalog cache prices come from models.dev
+`cost.text.input.cache` (`read`; `write`, or its `5m` price when given per TTL).
 
 Visibility rule: a model is listed (`GET /v1/models`, `/v1/models/query`, the Anthropic and GenAI
 model lists, `/api/public/models`, the public model page, the status page, an org's model list) and
@@ -974,8 +989,8 @@ provider (paste a key, enable it) is what makes its models appear. The platform 
   "auth_credentials":"{\"type\":\"service_account\",...}"}}]}
 ```
 
-Prices in model bodies are `input_price_micros` / `output_price_micros`: micro-USD per 1M tokens
-(`$0.15` → `150000`). Model bodies also take `strategy` (one of the routing strategies above, else
+Prices in model bodies are `input_price_micros` / `output_price_micros` (and optional
+`cache_read_price_micros` / `cache_write_price_micros`): micro-USD per 1M tokens (`$0.15` → `150000`). Model bodies also take `strategy` (one of the routing strategies above, else
 400) and `targets: [{provider_id, model, weight, input_price_micros?, output_price_micros?}]`; target
 prices are used only by the `cost` strategy.
 

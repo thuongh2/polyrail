@@ -53,6 +53,13 @@ func TestEmbeddedCatalog(t *testing.T) {
 	if m := ids["openai/gpt-4o"]; m.InputPrice != 2_500_000 || m.OutputPrice != 10_000_000 || m.ContextLength != 128000 {
 		t.Fatalf("gpt-4o price/context: %+v", m)
 	}
+	// prompt-cache prices from cost.text.input.cache (write: the 5-minute TTL price)
+	if m := ids["anthropic/claude-sonnet-4-5"]; m.CacheReadPrice != 300_000 || m.CacheWritePrice != 3_750_000 {
+		t.Fatalf("claude-sonnet-4-5 cache prices: %+v", m)
+	}
+	if m := ids["openai/gpt-4o"]; m.CacheReadPrice != 1_250_000 || m.CacheWritePrice != 0 {
+		t.Fatalf("gpt-4o cache prices: %+v", m)
+	}
 }
 
 func TestSyncIsAdditiveAndIdempotent(t *testing.T) {
@@ -75,12 +82,24 @@ func TestSyncIsAdditiveAndIdempotent(t *testing.T) {
 	if err := s.PutModel(ctx, &mine); err != nil {
 		t.Fatal(err)
 	}
-	np, nm, err := Sync(ctx, s)
+	// an operator-set cache price stays; only the unset one is filled
+	claude := store.Model{ID: "anthropic/claude-sonnet-4-5", Name: "Claude", InputPrice: 2, CacheReadPrice: 7, Enabled: true,
+		Targets: []store.Target{{ProviderID: ProviderID("openai"), Model: "x", Weight: 1}}}
+	if err := s.PutModel(ctx, &claude); err != nil {
+		t.Fatal(err)
+	}
+	np, nm, nc, err := Sync(ctx, s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if np != len(c.Providers)-1 || nm != len(c.Models)-1 {
-		t.Fatalf("added %d providers, %d models; want %d, %d", np, nm, len(c.Providers)-1, len(c.Models)-1)
+	if np != len(c.Providers)-1 || nm != len(c.Models)-2 || nc != 2 {
+		t.Fatalf("added %d providers, %d models, filled %d; want %d, %d, 2", np, nm, nc, len(c.Providers)-1, len(c.Models)-2)
+	}
+	if m, _ := s.GetModel(ctx, "", "openai/gpt-4o"); m.CacheReadPrice != 1_250_000 || m.InputPrice != 1 {
+		t.Fatalf("gpt-4o cache read price not filled or other fields changed: %+v", m)
+	}
+	if m, _ := s.GetModel(ctx, "", "anthropic/claude-sonnet-4-5"); m.CacheReadPrice != 7 || m.CacheWritePrice != 3_750_000 || m.Name != "Claude" {
+		t.Fatalf("claude cache prices: %+v", m)
 	}
 	if p, _ := s.GetProvider(ctx, ProviderID("openai")); p.Name != "mine" {
 		t.Fatalf("existing provider changed: %+v", p)
@@ -92,11 +111,11 @@ func TestSyncIsAdditiveAndIdempotent(t *testing.T) {
 	if err != nil || p.Enabled || len(p.Keys) != 0 || p.Type != "anthropic" || p.Name != "anthropic" {
 		t.Fatalf("catalog provider: %+v %v", p, err)
 	}
-	m, err := s.GetModel(ctx, "", "anthropic/claude-sonnet-4-5")
-	if err != nil || !m.Enabled || m.Targets[0].ProviderID != ProviderID("anthropic") || m.InputPrice <= 0 {
+	m, err := s.GetModel(ctx, "", "anthropic/claude-haiku-4-5")
+	if err != nil || !m.Enabled || m.Targets[0].ProviderID != ProviderID("anthropic") || m.InputPrice <= 0 || m.CacheWritePrice != 1_250_000 {
 		t.Fatalf("catalog model: %+v %v", m, err)
 	}
-	if np, nm, err := Sync(ctx, s); err != nil || np != 0 || nm != 0 {
-		t.Fatalf("second sync added %d, %d (%v)", np, nm, err)
+	if np, nm, nc, err := Sync(ctx, s); err != nil || np != 0 || nm != 0 || nc != 0 {
+		t.Fatalf("second sync added %d, %d, filled %d (%v)", np, nm, nc, err)
 	}
 }

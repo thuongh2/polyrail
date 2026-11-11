@@ -125,8 +125,14 @@ export default function Logs() {
                       <TableCell>
                         <StatusBadge status={l.status} />
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{fmt(l.in_tokens)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmt(l.out_tokens)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {fmt(l.in_tokens)}
+                        {!!l.cache_read_tokens && <span className="block text-xs text-muted-foreground">{fmt(l.cache_read_tokens)} cached</span>}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {fmt(l.out_tokens)}
+                        {!!l.reasoning_tokens && <span className="block text-xs text-muted-foreground">{fmt(l.reasoning_tokens)} reasoning</span>}
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">{usd(l.cost_micros)}</TableCell>
                       <TableCell className="text-right tabular-nums">{ms(l.latency_ms)}</TableCell>
                       <TableCell className="space-x-1 whitespace-nowrap">
@@ -161,11 +167,14 @@ export default function Logs() {
                 <Detail k="API key" v={keyName(open.key_id)} />
                 <Detail k="End user" v={open.end_user ? <code className="break-all text-xs">{open.end_user}</code> : "–"} />
                 <Detail k="Tokens in" v={fmt(open.in_tokens)} />
+                {!!open.cache_read_tokens && <Detail k="Prompt cache read" v={`${fmt(open.cache_read_tokens)} tokens`} />}
+                {!!open.cache_write_tokens && <Detail k="Prompt cache write" v={`${fmt(open.cache_write_tokens)} tokens`} />}
                 <Detail k="Tokens out" v={fmt(open.out_tokens)} />
+                {!!open.reasoning_tokens && <Detail k="Reasoning" v={`${fmt(open.reasoning_tokens)} tokens`} />}
                 <Detail k="Cost" v={usd(open.cost_micros)} />
                 <Detail k="Latency" v={ms(open.latency_ms)} />
                 <Detail k="Streamed" v={open.stream ? "Yes" : "No"} />
-                <Detail k="From cache" v={open.cached ? "Yes" : "No"} />
+                <Detail k="Response cache" v={open.cached ? "Yes" : "No"} />
               </dl>
               {showContent && <ContentView key={open.id} base={base} id={open.id} />}
             </>

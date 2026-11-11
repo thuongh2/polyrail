@@ -19,7 +19,7 @@ type Msg = {
   content: string;
   provider?: string;
   latency?: number;
-  usage?: { prompt_tokens: number; completion_tokens: number };
+  usage?: Usage;
   error?: string;
   stopped?: boolean;
   kb?: string; // X-GW-KB response header: the KB ids used, "empty" or "error"
@@ -61,10 +61,13 @@ async function readSSE(body: ReadableStream<Uint8Array>, onData: (json: unknown)
   }
 }
 
+/** OpenAI usage; prompt_tokens_details.cached_tokens = prompt tokens read from the provider's prompt cache. */
+type Usage = { prompt_tokens: number; completion_tokens: number; prompt_tokens_details?: { cached_tokens?: number } };
+
 type Chunk = {
   provider?: string;
   choices?: { delta?: { content?: string } }[];
-  usage?: { prompt_tokens: number; completion_tokens: number };
+  usage?: Usage;
   error?: { message?: string };
 };
 
@@ -807,7 +810,8 @@ function Message({ m, streaming, docName }: { m: Msg; streaming: boolean; docNam
             <div className="flex gap-1">
               <dt>Tokens</dt>
               <dd className="text-foreground">
-                {fmt(m.usage.prompt_tokens)} in, {fmt(m.usage.completion_tokens)} out
+                {fmt(m.usage.prompt_tokens)} in
+                {!!m.usage.prompt_tokens_details?.cached_tokens && ` (${fmt(m.usage.prompt_tokens_details.cached_tokens)} cached)`}, {fmt(m.usage.completion_tokens)} out
               </dd>
             </div>
           )}

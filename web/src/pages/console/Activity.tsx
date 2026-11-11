@@ -226,6 +226,7 @@ function UsageTable({ rows, first, empty, name }: { rows: UsageRow[]; first: str
             <TableHead className="text-right">Requests</TableHead>
             <TableHead className="text-right">Errors</TableHead>
             <TableHead className="text-right">Tokens in</TableHead>
+            <TableHead className="text-right">Cached</TableHead>
             <TableHead className="text-right">Tokens out</TableHead>
             <TableHead className="text-right">Avg latency</TableHead>
             <TableHead className="text-right">Spend</TableHead>
@@ -238,6 +239,9 @@ function UsageTable({ rows, first, empty, name }: { rows: UsageRow[]; first: str
               <TableCell className="text-right tabular-nums">{fmt(r.requests)}</TableCell>
               <TableCell className={"text-right tabular-nums " + (r.errors ? "text-danger" : "text-muted-foreground")}>{fmt(r.errors)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmt(r.in_tokens)}</TableCell>
+              <TableCell className="text-right tabular-nums text-muted-foreground" title="Prompt tokens read from the provider's prompt cache">
+                {fmt(r.cache_read_tokens ?? 0)}
+              </TableCell>
               <TableCell className="text-right tabular-nums">{fmt(r.out_tokens)}</TableCell>
               <TableCell className="text-right tabular-nums">{ms(r.avg_latency_ms)}</TableCell>
               <TableCell className="text-right tabular-nums">{money(r.cost_usd)}</TableCell>

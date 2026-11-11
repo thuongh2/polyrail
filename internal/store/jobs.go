@@ -34,6 +34,8 @@ type Job struct {
 	// Prices copied from the model at creation, so a later price or model change cannot alter the bill.
 	InputPrice       int64 `json:"input_price_micros,omitempty"`
 	OutputPrice      int64 `json:"output_price_micros,omitempty"`
+	CacheReadPrice   int64 `json:"cache_read_price_micros,omitempty"`
+	CacheWritePrice  int64 `json:"cache_write_price_micros,omitempty"`
 	VideoSecondPrice int64 `json:"video_second_price_micros,omitempty"`
 
 	// files

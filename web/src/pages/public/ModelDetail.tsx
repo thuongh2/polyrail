@@ -173,9 +173,17 @@ function Overview({ d }: { d: Detail }) {
               <TableBody>
                 <PriceRow label={m.kind === "speech" ? "Input (tokens or characters)" : "Input"} p={m.pricing.input} />
                 {(m.kind === "chat" || Number(m.pricing.output) > 0) && <PriceRow label="Output" p={m.pricing.output} />}
+                {m.pricing.input_cache_read && <PriceRow label="Input cache read" p={m.pricing.input_cache_read} />}
+                {m.pricing.input_cache_write && <PriceRow label="Input cache write" p={m.pricing.input_cache_write} />}
               </TableBody>
             </Table>
           </div>
+        )}
+        {(m.pricing.input_cache_read || m.pricing.input_cache_write) && (
+          <p className="mb-3 text-xs text-muted-foreground">
+            Prompt tokens the provider reads from or writes to its prompt cache use the cache prices
+            {m.pricing.input_cache_read && m.pricing.input_cache_write ? "" : "; the other cached tokens use the input price"}.
+          </p>
         )}
         {units.length > 0 && (
           <div className="rounded-lg border">

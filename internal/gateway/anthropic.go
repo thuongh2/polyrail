@@ -68,16 +68,16 @@ func (g *Gateway) AnthropicMessages(rw http.ResponseWriter, r *http.Request) {
 			g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 			return
 		}
-		g.pump(w, bctx, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
+		g.pump(w, bctx, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *tokens) {
 			ev := c.BifrostResponsesStreamResponse
 			if ev == nil {
 				return "", nil, "", nil
 			}
-			var u *usagePair
+			var u *tokens
 			if ev.Response != nil {
 				ev.Response.Model = m.ID
 				if ev.Response.Usage != nil {
-					u = &usagePair{ev.Response.Usage.InputTokens, ev.Response.Usage.OutputTokens}
+					u = respTokens(ev.Response.Usage)
 				}
 			}
 			var frames sseFrames
@@ -99,9 +99,7 @@ func (g *Gateway) AnthropicMessages(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
-	if resp.Usage != nil {
-		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
-	}
+	respTokens(resp.Usage).into(&l)
 	l.Provider = g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
 	g.record(p, m, l, start)
 	resp.Model = m.ID

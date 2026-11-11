@@ -25,7 +25,7 @@ const DOCS_URL = "https://shoutrrr.nickfedor.com/";
 const README_URL = "https://github.com/nicholas-fedor/shoutrrr#readme";
 
 const alertEvents: [AlertEvent, string][] = [
-  ["key.quarantined", "A provider key was quarantined after repeated auth failures, or by an operator."],
+  ["key.quarantined", "A provider key was quarantined after 3 consecutive auth failures."],
   ["key.recovered", "A quarantined key passed a test or was re-enabled."],
   ["provider.unavailable", "A provider has no available key."],
   ["budget.exceeded", "A request was refused for credits or a key's monthly budget."],
@@ -193,7 +193,7 @@ export default function Alerts({ scope = "org" }: { scope?: Scope }) {
         )}
       </DataState>
       <p className="mt-3 text-xs text-muted-foreground">
-        Each event is sent at most once per channel and subject every 10 minutes. A channel is disabled after {MAX_FAILURES} failed deliveries in a
+        Each event is sent at most once per subject (provider, key, model or budget) every 10 minutes. A channel is disabled after {MAX_FAILURES} failed deliveries in a
         row. Messages are sent with{" "}
         <a className="underline underline-offset-4" href={README_URL} target="_blank" rel="noreferrer">shoutrrr</a>.
       </p>
@@ -273,12 +273,14 @@ function buildURL(kind: Kind, f: Form): string {
       return `slack://hook:${m[1]}-${m[2]}-${m[3]}@webhook`;
     }
     case "teams": {
-      const m = v("webhook").match(
-        /^https:\/\/([\w-]+\.webhook\.office\.com)\/webhookb2\/([\w-]+)@([\w-]+)\/IncomingWebhook\/(\w+)\/([\w-]+)(?:\/([\w-]+))?\/?$/,
-      );
-      if (!m) throw new Error("Paste the incoming webhook URL (https://….webhook.office.com/webhookb2/…). For other Teams URLs use Custom URL.");
-      const [, host, group, tenant, alt, owner, extra] = m;
-      return `teams://${group}@${tenant}/${alt}/${owner}${extra ? "/" + extra : ""}?host=${host}`;
+      // Power Automate workflow webhooks only (Office 365 connectors are retired); same check as
+      // shoutrrr's teams.ValidateWebhookURL.
+      const u = v("webhook");
+      const ok =
+        /^https:\/\/[a-zA-Z0-9][a-zA-Z0-9.-]*\.logic\.azure(?:\.[a-z]{2,})?(:\d+)?\/(?:powerautomate\/automations\/direct\/(?:[A-Za-z0-9-]+\/)*)?workflows\//.test(u) ||
+        /^https:\/\/[a-zA-Z0-9][a-zA-Z0-9.-]*\.environment\.api\.powerplatform\.com(:\d+)?\/powerautomate\/automations\/direct\/(?:[A-Za-z0-9-]+\/)*workflows\//.test(u);
+      if (!ok) throw new Error("Paste the workflow URL from Teams → Workflows → \"Post to a channel when a webhook request is received\" (https://….logic.azure.com/workflows/… or ….powerplatform.com/…).");
+      return `teams://?host=${enc(u)}`;
     }
     case "smtp": {
       const host = v("host");
@@ -290,7 +292,7 @@ function buildURL(kind: Kind, f: Form): string {
       if (!from.includes("@")) throw new Error("Enter the sender address.");
       if (!to.length || to.some((x) => !x.includes("@"))) throw new Error("Enter one or more recipient addresses.");
       const auth = v("user") ? `${enc(v("user"))}:${enc(f.password ?? "")}@` : "";
-      return `smtp://${auth}${host}:${port}/?from=${enc(from)}&to=${to.map(enc).join(",")}`;
+      return `smtp://${auth}${host}:${port}/?fromaddress=${enc(from)}&toaddresses=${to.map(enc).join(",")}`;
     }
     case "ntfy": {
       const topic = v("topic");
@@ -318,6 +320,18 @@ function ChannelDialog({
 }) {
   const [name, setName] = useState(channel?.name ?? "");
   const [replace, setReplace] = useState(!channel);
+  const { config } = useSession();
+  // Services this server offers for the scope (GET /api/auth/config alert_services); older servers
+  // do not list them, then every builder is offered and the server validates.
+  const offered = config?.alert_services;
+  const unavailable = (k: Kind) =>
+    k === "custom" || !offered
+      ? ""
+      : !offered.platform.includes(k)
+        ? "needs a build with -tags alertsfull"
+        : scope === "org" && !offered.org.includes(k)
+          ? "platform channels only"
+          : "";
   const [kind, setKind] = useState<Kind>("telegram");
   const [form, setForm] = useState<Form>({ mode: "webhook" });
   const [all, setAll] = useState(channel?.events?.includes("*") ?? false);
@@ -405,7 +419,15 @@ function ChannelDialog({
                 <Select value={kind} onValueChange={(k) => (setKind(k as Kind), setErr(""))}>
                   <SelectTrigger id="alert-service" className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {kinds.map(([k, label]) => <SelectItem key={k} value={k}>{label}</SelectItem>)}
+                    {kinds.map(([k, label]) => {
+                      const why = unavailable(k);
+                      return (
+                        <SelectItem key={k} value={k} disabled={!!why}>
+                          {label}
+                          {why && <span className="text-muted-foreground">({why})</span>}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -441,8 +463,8 @@ function ChannelDialog({
               {kind === "teams" &&
                 text("webhook", "Incoming webhook URL", {
                   type: "password",
-                  placeholder: "https://example.webhook.office.com/webhookb2/…",
-                  hint: "An Office 365 connector webhook. Workflows (Power Automate) URLs are not supported by this builder.",
+                  placeholder: "https://prod-00.westus.logic.azure.com:443/workflows/…",
+                  hint: "A Teams Workflows (Power Automate) webhook URL. Office 365 connector URLs are retired and not accepted.",
                 })}
               {kind === "smtp" && (
                 <>
@@ -468,7 +490,10 @@ function ChannelDialog({
                 <>
                   {text("url", "Shoutrrr URL", { type: "password", placeholder: "gotify://gotify.example.com/token" })}
                   <p className="text-xs text-muted-foreground">
-                    Any service shoutrrr supports, such as Gotify, Pushover, Matrix or Google Chat. URL formats:{" "}
+                    {offered
+                      ? `Services on this server: ${(scope === "org" ? offered.org : offered.platform).map((x) => serviceOf(x)[0]).join(", ")}.`
+                      : "A shoutrrr service URL, such as Gotify, Pushover, Matrix or Google Chat."}{" "}
+                    URL formats:{" "}
                     <a className="inline-flex items-center gap-0.5 underline underline-offset-4" href={DOCS_URL} target="_blank" rel="noreferrer">
                       shoutrrr services <ExternalLink className="size-3" aria-hidden />
                     </a>

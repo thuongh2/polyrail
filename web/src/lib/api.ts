@@ -96,7 +96,10 @@ export const publicApi = {
 export type Role = "viewer" | "member" | "admin" | "owner";
 export type User = { id: string; email: string; name: string; operator: boolean; disabled?: boolean; created_at: string };
 export type OrgRef = { id: string; name: string; role: Role };
-export type AuthConfig = { signup: boolean; sso: boolean; tenant_proxy?: boolean; provider_types: { platform: string[]; org: string[]; org_fixed_url?: string[] } };
+export type AuthConfig = { signup: boolean; sso: boolean; tenant_proxy?: boolean; provider_types: { platform: string[]; org: string[]; org_fixed_url?: string[] };
+  /** Alert channel services this build offers per scope (smtp and generic need -tags alertsfull). */
+  alert_services?: { platform: string[]; org: string[] };
+};
 
 export const authApi = {
   config: () => get<AuthConfig>("/api/auth/config"),
@@ -449,19 +452,19 @@ export type ProviderKeyView = {
   /** First 4 chars + "****" + last 4; the key name for cloud types. */
   masked: string;
   weight: number;
-  models?: string[];
+  models?: string[] | null;
   enabled: boolean;
   status: KeyStatus;
   status_reason?: string;
-  cooldown_until?: string;
-  last_used_at?: string;
+  cooldown_until?: string | null;
+  last_used_at?: string | null;
   stats_24h: { requests: number; errors: number; avg_latency_ms: number };
 };
 export type KeyAddResult = { added: number; duplicates: number; invalid: number };
 export type KeyTest = { ok: boolean; status: number; latency_ms: number; error?: string };
 export type KeyBulkAction = "enable" | "disable" | "delete" | "test" | "clear";
 /** One per-id entry of POST …/keys/bulk; test results carry the KeyTest fields. */
-export type KeyBulkResult = { id: string; ok: boolean; error?: string; latency_ms?: number };
+export type KeyBulkResult = { id: string; ok: boolean; error?: string; status?: number; latency_ms?: number };
 export type KeyStatPoint = { hour: string; requests: number; errors: number; avg_latency_ms: number; in_tokens: number; out_tokens: number };
 export type KeyPatch = { enabled?: boolean; weight?: number; name?: string; models?: string[] };
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -42,5 +43,20 @@ func TestEmbeddingsHashedBagOfWords(t *testing.T) {
 	embeddings(rec, httptest.NewRequest("POST", "/v1/embeddings", strings.NewReader(`{"input":"hello"}`)))
 	if !strings.Contains(rec.Body.String(), `"index":0`) || strings.Count(rec.Body.String(), ",")+1 < 64 {
 		t.Fatalf("default dims: %s", rec.Body)
+	}
+}
+
+func TestKeyFaults(t *testing.T) {
+	h := keyFaults(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
+	for key, want := range map[string]int{"bad-1": 401, "rl-1": 429, "slow-x": 429, "good": 200, "": 200} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+		if key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+		h.ServeHTTP(rec, req)
+		if rec.Code != want || (want == 429 && rec.Header().Get("Retry-After") != "5") {
+			t.Errorf("key %q: %d %v", key, rec.Code, rec.Header())
+		}
 	}
 }

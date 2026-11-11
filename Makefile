@@ -12,13 +12,15 @@ ui:
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
+# TAGS=alertsfull adds the smtp and generic alert services (docs/CONFIG.md "Build tags").
+TAGS ?=
 build:
-	go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/polyrail ./cmd/polyrail
+	go build -trimpath -tags "$(TAGS)" -ldflags="-s -w -X main.version=$(VERSION)" -o bin/polyrail ./cmd/polyrail
 # dist cross-builds bin/polyrail-<os>-<arch> and bin/mockprovider-<os>-<arch> (used by scripts/run-local.sh).
 dist:
 	for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do \
 	  os=$${p%/*}; arch=$${p#*/}; \
-	  GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/polyrail-$$os-$$arch ./cmd/polyrail || exit 1; \
+	  GOOS=$$os GOARCH=$$arch go build -trimpath -tags "$(TAGS)" -ldflags="-s -w -X main.version=$(VERSION)" -o bin/polyrail-$$os-$$arch ./cmd/polyrail || exit 1; \
 	  GOOS=$$os GOARCH=$$arch go build -trimpath -o bin/mockprovider-$$os-$$arch ./tools/mockprovider || exit 1; \
 	done
 test:

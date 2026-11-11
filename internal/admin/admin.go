@@ -105,6 +105,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/orgs/{org}/keys/{id}", a.org(store.RoleMember, a.patchKey))
 	mux.HandleFunc("GET /api/orgs/{org}/providers", a.org(store.RoleAdmin, a.listProviders))
 	mux.HandleFunc("POST /api/orgs/{org}/providers", a.org(store.RoleAdmin, a.putProvider))
+	mux.HandleFunc("GET /api/orgs/{org}/providers/{id}", a.org(store.RoleAdmin, a.getProvider))
 	mux.HandleFunc("PUT /api/orgs/{org}/providers/{id}", a.org(store.RoleAdmin, a.putProvider))
 	mux.HandleFunc("DELETE /api/orgs/{org}/providers/{id}", a.org(store.RoleAdmin, a.deleteProvider))
 	mux.HandleFunc("POST /api/orgs/{org}/providers/{id}/discover", a.org(store.RoleAdmin, a.discoverModels))
@@ -125,6 +126,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	// platform (operator) scope; org "_" means public resources
 	mux.HandleFunc("GET /api/admin/providers", a.operator(a.platform(a.listProviders)))
 	mux.HandleFunc("POST /api/admin/providers", a.operator(a.platform(a.putProvider)))
+	mux.HandleFunc("GET /api/admin/providers/{id}", a.operator(a.platform(a.getProvider)))
 	mux.HandleFunc("PUT /api/admin/providers/{id}", a.operator(a.platform(a.putProvider)))
 	mux.HandleFunc("DELETE /api/admin/providers/{id}", a.operator(a.platform(a.deleteProvider)))
 	mux.HandleFunc("POST /api/admin/providers/{id}/discover", a.operator(a.platform(a.discoverModels)))
@@ -321,7 +323,9 @@ func (a *API) authConfig(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(org)
 	sort.Strings(fixed)
 	writeJSON(w, 200, map[string]any{"signup": a.cfg.AllowSignup, "sso": a.oidc != nil, "tenant_proxy": a.cfg.AllowTenantProxy,
-		"provider_types": map[string][]string{"platform": platform, "org": org, "org_fixed_url": fixed}})
+		"provider_types": map[string][]string{"platform": platform, "org": org, "org_fixed_url": fixed},
+		// alert channel services in this build (smtp and generic need -tags alertsfull) per scope
+		"alert_services": map[string][]string{"platform": alert.Services(), "org": alert.TenantServices(a.cfg.AllowPrivateURLs)}})
 }
 
 // session is /me without the 401: signed-out visitors get {"user": null}, so public pages can
@@ -997,6 +1001,16 @@ func (a *API) listProviders(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, out)
+}
+
+// getProvider answers one provider of the route's scope as listProviders shows it (secrets hidden).
+func (a *API) getProvider(w http.ResponseWriter, r *http.Request) {
+	p, err := a.S.GetProvider(r.Context(), r.PathValue("id"))
+	if err != nil || p.OrgID != owner(r) {
+		fail(w, store.ErrNotFound)
+		return
+	}
+	writeJSON(w, 200, redact(*p))
 }
 
 func (a *API) putProvider(w http.ResponseWriter, r *http.Request) {

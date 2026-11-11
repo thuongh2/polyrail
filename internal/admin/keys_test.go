@@ -242,6 +242,8 @@ func TestProviderKeysTenantScope(t *testing.T) {
 	// isolation: other orgs, lower roles and the platform scope cannot reach these keys
 	orgB := "/api/orgs/" + f.orgB.ID + "/providers/" + p.ID
 	for _, c := range []struct{ as, method, path, body string }{
+		{"outsider", "GET", orgB, ""},
+		{"op", "GET", "/api/admin/providers/" + p.ID, ""},
 		{"outsider", "GET", orgB + "/keys", ""},
 		{"outsider", "POST", orgB + "/keys", `{"keys":"x-key-0000000001"}`},
 		{"outsider", "POST", orgB + "/keys/" + kid + "/test", ""},
@@ -256,6 +258,9 @@ func TestProviderKeysTenantScope(t *testing.T) {
 		expect(t, f.do(t, c.as, c.method, c.path, c.body), 404, c.as+" "+c.method+" "+c.path)
 	}
 	expect(t, f.do(t, "member", "GET", base+"/keys", ""), 403, "member")
+	if r := f.do(t, "admin", "GET", base, ""); r.code != 200 || !strings.Contains(r.body, `"name":"mine"`) || strings.Contains(r.body, "bad-key-000000001") {
+		t.Fatalf("get provider: %d %s", r.code, r.body)
+	}
 	if rows := f.keys(t, "admin", base); len(rows) != 1 || !rows[0].Enabled {
 		t.Fatalf("keys changed by outsiders: %+v", rows)
 	}

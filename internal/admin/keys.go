@@ -124,6 +124,9 @@ func (a *API) viewKeys(ctx context.Context, p *store.Provider) ([]keyView, error
 		if v.Models == nil {
 			v.Models = []string{}
 		}
+		if v.Weight <= 0 {
+			v.Weight = 1 // routing treats an unset weight as 1 (gateway catalog)
+		}
 		switch {
 		case k.Value != "":
 			v.Masked = gateway.MaskKey(k.Value)

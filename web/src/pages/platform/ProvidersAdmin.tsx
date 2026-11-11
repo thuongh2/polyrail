@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, get, orgBase, PLATFORM, type Provider, type ProviderKey, type ProxyPool } from "@/lib/api";
-import { useAsync } from "@/lib/hooks";
+import { useAsync, useNewParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 import { providerLabel } from "@/lib/providers";
 import { ProviderLogo } from "@/components/ProviderLogo";
@@ -43,6 +43,7 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
   const [deleting, setDeleting] = useState<Provider | null>(null);
   const [discovering, setDiscovering] = useState<Provider | null>(null);
   const [, navigate] = useLocation();
+  useNewParam(() => setEditing("new"), allowed && !!base);
 
   const title = scope === "platform" ? "Public providers" : "Providers";
   const description =

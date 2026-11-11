@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSearch } from "wouter";
 
 /** Loads data with fn; reload() runs it again. deps re-run it automatically. */
 export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []) {
@@ -42,4 +43,21 @@ export function useQueryParam(name: string, fallback = ""): [string, (v: string)
     [name, fallback],
   );
   return [value, set];
+}
+
+/**
+ * Runs onNew when the URL carries ?new=1 (the command palette's create actions) and removes the
+ * parameter, so a reload or Back does not open the dialog again. enabled=false ignores it (no permission).
+ */
+export function useNewParam(onNew: () => void, enabled = true) {
+  const search = useSearch();
+  useEffect(() => {
+    const p = new URLSearchParams(search);
+    if (p.get("new") !== "1") return;
+    p.delete("new");
+    const qs = p.toString();
+    history.replaceState(history.state, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+    if (enabled) onNew();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, enabled]);
 }

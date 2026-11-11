@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""UI smoke test: signs in, opens every page directly AND by clicking the console sidebar, and
+"""UI smoke test: signs in, opens every page directly AND by clicking the org sidebar, Settings sub-nav and
+Admin area sidebar, tries the Ctrl+K palette, and
 fails on "Page not found", a doubled path or a browser console error.
   python3 scripts/ui-smoke.py http://127.0.0.1:8080 admin@local.test 'password'
 Needs Python Playwright (pip install playwright && playwright install chromium)."""
@@ -11,6 +12,10 @@ public = ["/", "/models", "/status", "/docs"]
 console = ["activity", "logs", "playground", "keys", "credits", "models", "presets", "kbs", "providers", "workspaces", "members", "policies",
            "settings", "webhooks", "alerts", "observability", "sso", "audit", "account", "platform/activity", "platform/orgs", "platform/providers",
            "platform/models", "platform/users", "platform/mcp", "platform/alerts", "platform/observability", "platform/proxies", "platform/audit"]
+main_nav = ["activity", "logs", "playground", "keys", "models", "presets", "kbs", "providers", "policies", "credits", "settings", "account"]
+settings_nav = ["settings", "members", "workspaces", "sso", "webhooks", "alerts", "observability", "audit"]
+admin_nav = ["platform/activity", "platform/orgs", "platform/users", "platform/providers", "platform/models", "platform/proxies", "platform/mcp",
+             "platform/alerts", "platform/observability", "platform/audit"]
 failures, errors = [], []
 
 def check(pg, what):
@@ -30,14 +35,39 @@ with sync_playwright() as p:
     pg.wait_for_url("**/app/**")
     for path in console:
         pg.goto(f"{base}/app/{path}"); pg.wait_for_load_state("networkidle"); check(pg, "open /app/" + path)
+    # Click through each navigation, as a person would: the org sidebar, the Settings hub sub-nav and the
+    # Admin area sidebar (which replaces the org sidebar under /app/platform).
+    navs = [("/app/activity", "Console", main_nav), ("/app/settings", "Settings", settings_nav), ("/app/platform/activity", "Admin area", admin_nav)]
+    for start, label, paths in navs:
+        pg.goto(base + start); pg.wait_for_load_state("networkidle")
+        for path in paths:
+            link = pg.locator(f'nav[aria-label="{label}"] a[href$="/{path}"]').first
+            if not link.count():
+                failures.append(f"{label} nav: no link to {path}")
+                continue
+            link.click(); pg.wait_for_timeout(300); check(pg, f"click {label} nav {path}")
+            if not pg.url.split("?")[0].endswith("/app/" + path):
+                failures.append(f"click {label} nav {path}: url is {pg.url[len(base):]}")
+    pg.goto(base + "/app/alerts"); pg.wait_for_load_state("networkidle")
+    if pg.locator('nav[aria-label="Console"] a[aria-current="page"]').inner_text() != "Settings":
+        failures.append("settings page /app/alerts does not highlight Settings in the sidebar")
+    if pg.locator('nav[aria-label="Breadcrumb"]').inner_text().replace("\n", " ") != "Settings / Integrations / Alerts":
+        failures.append(f"alerts breadcrumb: {pg.locator('nav[aria-label=Breadcrumb]').inner_text()!r}")
+    pg.goto(base + "/app/platform/proxies"); pg.wait_for_load_state("networkidle")
+    if pg.locator('nav[aria-label="Console"]').count() or not pg.get_by_text("Admin", exact=True).count():
+        failures.append("admin area: org sidebar still shown or no Admin badge")
+    # Command palette: Ctrl+K, type, Enter.
     pg.goto(base + "/app/activity"); pg.wait_for_load_state("networkidle")
-    for path in console:  # click through the sidebar, as a person would
-        link = pg.locator(f'nav[aria-label="Console"] a[href$="/{path}"]').first
-        if not link.count():
-            continue
-        link.click(); pg.wait_for_timeout(300); check(pg, "click sidebar " + path)
-        if not pg.url.split("?")[0].endswith("/app/" + path):
-            failures.append(f"click sidebar {path}: url is {pg.url[len(base):]}")
+    pg.keyboard.press("Control+k")
+    box = pg.get_by_role("combobox", name="Search pages and actions")
+    box.wait_for(); box.fill("proxies"); pg.keyboard.press("Enter"); pg.wait_for_timeout(500)
+    if not pg.url.split("?")[0].endswith("/app/platform/proxies"):
+        failures.append(f"palette: proxies went to {pg.url[len(base):]}")
+    pg.keyboard.press("Control+k"); pg.get_by_role("combobox", name="Search pages and actions").fill("create api key")
+    pg.keyboard.press("Enter"); pg.wait_for_timeout(800)
+    if not pg.get_by_role("dialog").get_by_text("Create API key").count():
+        failures.append("palette: Create API key did not open the create dialog")
+    pg.keyboard.press("Escape")
     pg.goto(base + "/app/webhooks"); pg.wait_for_load_state("networkidle")
     if not pg.get_by_role("heading", name="Webhooks").count():
         failures.append("webhooks: no page heading")

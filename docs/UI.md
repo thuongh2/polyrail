@@ -34,25 +34,50 @@ charts are small SVG components. No new runtime dependency without a reason in d
 `components/layout/ConsoleLayout.tsx`, modeled on GitLab's current frame. The browser page never scrolls:
 the frame is `h-dvh overflow-hidden` on the muted `--frame` surface (token on `:root` and `.dark`).
 
-- Top bar (no border, on the frame): wordmark (sm and up), org switcher, workspace switcher, then Models, theme
-  toggle, account, sign out.
-- Sidebar (md and up, on the frame, no border): nav groups from the `groups` config with plain small
-  muted headings; active item is a `--frame-active` pill, bold, with a thin `bg-signal` left mark. The nav
-  scrolls internally (`no-scrollbar`); Account, Docs and "Collapse sidebar" are pinned below it.
-  Collapsed = icons only (`aria-label` + `title` on each link), stored in `localStorage["console.sidebar"]`.
+- Top bar (no border, on the frame): wordmark (sm and up), org switcher and workspace switcher (an "Admin" badge
+  instead inside the Admin area), then "Search…" with the Ctrl/⌘K hint (icon only below lg), Models, theme toggle,
+  account email (xl), sign out.
+- Sidebar (md and up, on the frame, no border): the current section's groups from `components/layout/nav.ts`
+  (see "Navigation map") with plain small muted headings; active item is a `--frame-active` pill, bold, with a
+  thin `bg-signal` left mark. The nav scrolls internally (`no-scrollbar`); Settings, Docs, Admin area (operators),
+  Account and "Collapse sidebar" are pinned below it. Collapsed = icons only (`aria-label` + `title` on each
+  link), stored in `localStorage["console.sidebar"]`.
+- Command palette (`CommandPalette.tsx`, lazy chunk loaded on first open): Ctrl/⌘K or the Search button. Lists
+  every page the user may open (from nav.ts, same role gating) with its group, plus create actions that deep-link
+  with `?new=1` ("Create API key", "Add provider", "Add public provider"; pages read it with `useNewParam`).
+  Subsequence filter, ↑↓ Home End Enter, Esc closes; combobox + listbox + `aria-activedescendant` in the shadcn Dialog.
 - Content is a raised panel (`bg-background`, `rounded-xl`, border, small shadow, inset from the frame).
   It is the only scroll container (`<main tabIndex=0>`, `no-scrollbar`, keyboard/wheel/touch scroll
   still work) and resets to the top on navigation. Pages must not rely on window scroll. Inside: a
-  breadcrumb derived from the nav config ("Organization / API keys"), then the page, max width 1200px.
+  breadcrumb derived from nav.ts (section / group / page: "Build / API keys", "Settings / Integrations / Alerts",
+  "Admin / Routing / Proxies"), then the page, max width 1200px.
 - Workspaces (D31): `useSession()` exposes `workspaces`, `ws` (null = "All workspaces", org owners/admins only),
   `wsCan(min)` (role in the current workspace), `wsList(path)` (adds `?workspace=`) and `wsBody` (`{workspace_id}` for
   create bodies). The choice is stored per org in `localStorage["console.ws.<org>"]` and mirrored in `?ws=` (absent
   for the default). Workspace-scoped pages (API keys, Providers, Models, Policies, Presets, Knowledge bases,
   Observability, Logs, Activity, Playground) list with `wsList` and create with `wsBody`; under "All workspaces" they
   add a Workspace column and create in the default workspace. The layout remounts the page on a switch, so lists reload.
-- Below md the sidebar is the Sheet drawer and the panel is full width without the rounded inset.
+- Below md the sidebar is the Sheet drawer (same section nav and pinned entries) and the panel is full width
+  without the rounded inset.
 - Scrollbars: `no-scrollbar` (hidden, still scrollable) and `scrollbar-thin` (thin, border-colored) are
   utilities in index.css. Wide tables (`TableFrame`) and dialogs use `scrollbar-thin`.
+
+## Navigation map (binding)
+
+Owner ruling 2026-11-11: the sidebar stays short and task based. Config lives in `components/layout/nav.ts`;
+URLs never change when an entry moves (add a redirect if a new path replaces an old one).
+
+| Section | Where it shows | Entries |
+|---|---|---|
+| Organization sidebar | every org page | Activity, Logs, Playground · **Build**: API keys, Models, Presets, Knowledge bases · **Manage**: Providers (admin), Policies (admin), Credits · pinned: Settings, Docs, Admin area (operators), Account, Collapse |
+| Settings hub (`/app/settings`) | sub-nav inside the panel: left column from lg, scrolling tab row below; the sidebar highlights Settings | General (`/app/settings`), Members, Workspaces, Security & SSO (owner) · **Integrations**: Webhooks, Alerts, Observability (admins) · Audit log (admin) |
+| Admin area (`/app/platform/*`, operators) | replaces the org sidebar; top bar shows "Admin" | ← Back to org · Overview, Organizations, Users · **Routing**: Providers, Models, Proxies, MCP servers · **Monitoring**: Alerts, Observability, Audit log |
+
+Rules for new pages: put an org feature into Build (things developers create and call), Manage (things admins
+govern: upstreams, rules, money) or the Settings hub (organization configuration and integrations); put
+platform-wide operator pages into an Admin area group. Never add a new top-level sidebar item or group
+without an owner decision. Give the item `min`/`ws` for role gating and `keywords` for the palette; the
+breadcrumb and palette follow from it. Add the path to the matching click-through list in `scripts/ui-smoke.py`.
 
 ## Routes
 

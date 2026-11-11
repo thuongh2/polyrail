@@ -18,6 +18,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/tidwall/sjson"
 )
 
 // target resolves and admits a request for model id of the given kind.
@@ -56,8 +57,19 @@ func (g *Gateway) upstreamFailed(w http.ResponseWriter, snap *Snapshot, p *princ
 	writeError(w, ae)
 }
 
-func writeJSONHidden(w http.ResponseWriter, provName string, v any) {
+// hideExtra encodes a response without Bifrost's internal extra_fields (routing, keys, latency).
+// Deleting after encoding also covers core types with their own MarshalJSON, which an embedding
+// wrapper cannot override.
+func hideExtra(v any) ([]byte, error) {
 	out, err := sonic.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return sjson.DeleteBytes(out, "extra_fields")
+}
+
+func writeJSONHidden(w http.ResponseWriter, provName string, v any) {
+	out, err := hideExtra(v)
 	if err != nil {
 		writeError(w, errf(500, "api_error", "encode", "cannot encode response"))
 		return
@@ -105,18 +117,19 @@ func (g *Gateway) Speech(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	breq := req.ToBifrostSpeechRequest()
+	bctx := newBifrostCtx(r)
+	breq := req.ToBifrostSpeechRequest(bctx)
 	if !g.guard(w, p, m, []*string{&breq.Input.Input}, start) {
 		return
 	}
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
-	resp, berr := g.BF.SpeechRequest(r.Context(), breq)
+	resp, berr := g.BF.SpeechRequest(bctx, breq)
 	if berr != nil {
 		g.upstreamFailed(w, snap, p, m, ts, berr, start)
 		return
 	}
-	provName := g.settle(snap, m, ts, resp.ExtraFields.Provider, false, start, 0)
-	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.ModelRequested}
+	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
+	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil && resp.Usage.InputTokens > 0 {
 		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
 	} else {
@@ -176,15 +189,16 @@ func (g *Gateway) Transcriptions(w http.ResponseWriter, r *http.Request) {
 	if req.Prompt != nil && !g.guard(w, p, m, []*string{req.Prompt}, start) {
 		return
 	}
-	breq := req.ToBifrostTranscriptionRequest()
+	bctx := newBifrostCtx(r)
+	breq := req.ToBifrostTranscriptionRequest(bctx)
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
-	resp, berr := g.BF.TranscriptionRequest(r.Context(), breq)
+	resp, berr := g.BF.TranscriptionRequest(bctx, breq)
 	if berr != nil {
 		g.upstreamFailed(w, snap, p, m, ts, berr, start)
 		return
 	}
-	provName := g.settle(snap, m, ts, resp.ExtraFields.Provider, false, start, 0)
-	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.ModelRequested}
+	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
+	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	l.InTokens, l.OutTokens, l.Cost = transcriptionUsage(m, resp)
 	g.record(p, m, l, start)
 	if req.ResponseFormat != nil && (*req.ResponseFormat == "text" || *req.ResponseFormat == "srt" || *req.ResponseFormat == "vtt") {
@@ -193,10 +207,7 @@ func (g *Gateway) Transcriptions(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, resp.Text)
 		return
 	}
-	writeJSONHidden(w, provName, struct {
-		*schemas.BifrostTranscriptionResponse
-		ExtraFields *struct{} `json:"extra_fields,omitempty"`
-	}{BifrostTranscriptionResponse: resp})
+	writeJSONHidden(w, provName, resp)
 }
 
 // transcriptionUsage returns tokens and, for duration-priced models, the cost in micro-USD.
@@ -245,7 +256,8 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	breq := req.ToBifrostTextCompletionRequest()
+	bctx := newBifrostCtx(r)
+	breq := req.ToBifrostTextCompletionRequest(bctx)
 	var segs []*string
 	if in := breq.Input; in != nil {
 		if in.PromptStr != nil {
@@ -265,17 +277,13 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 		breq.Params.MaxTokens = &c
 	}
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
-	type out struct {
-		*schemas.BifrostTextCompletionResponse
-		ExtraFields *struct{} `json:"extra_fields,omitempty"`
-	}
 	if req.Stream != nil && *req.Stream {
-		ch, berr := g.BF.TextCompletionStreamRequest(r.Context(), breq)
+		ch, berr := g.BF.TextCompletionStreamRequest(bctx, breq)
 		if berr != nil {
 			g.upstreamFailed(w, snap, p, m, ts, berr, start)
 			return
 		}
-		g.pump(w, snap, p, m, ts, ch, start, func(c *schemas.BifrostStream) (string, any, schemas.ModelProvider, *usagePair) {
+		g.pump(w, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
 			t := c.BifrostTextCompletionResponse
 			if t == nil {
 				return "", nil, "", nil
@@ -285,23 +293,23 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 			if t.Usage != nil {
 				u = &usagePair{t.Usage.PromptTokens, t.Usage.CompletionTokens}
 			}
-			return "", out{BifrostTextCompletionResponse: t}, t.ExtraFields.Provider, u
+			return "", t, t.ExtraFields.RoutingInfo.Provider, u
 		})
 		return
 	}
-	resp, berr := g.BF.TextCompletionRequest(r.Context(), breq)
+	resp, berr := g.BF.TextCompletionRequest(bctx, breq)
 	if berr != nil {
 		g.upstreamFailed(w, snap, p, m, ts, berr, start)
 		return
 	}
-	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.ModelRequested}
+	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	}
-	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.Provider, false, start, l.OutTokens)
+	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
 	g.record(p, m, l, start)
 	resp.Model = m.ID
-	writeJSONHidden(w, l.Provider, out{BifrostTextCompletionResponse: resp})
+	writeJSONHidden(w, l.Provider, resp)
 }
 
 // ---- Responses API: POST /v1/responses (chat-kind models) ----
@@ -327,21 +335,18 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	breq := req.ToBifrostResponsesRequest()
+	bctx := newBifrostCtx(r)
+	breq := req.ToBifrostResponsesRequest(bctx)
 	if !g.prepareResponses(w, p, m, ts, snap, breq, start) {
 		return
 	}
-	type out struct {
-		*schemas.BifrostResponsesResponse
-		ExtraFields *struct{} `json:"extra_fields,omitempty"`
-	}
 	if req.Stream != nil && *req.Stream {
-		ch, berr := g.BF.ResponsesStreamRequest(r.Context(), breq)
+		ch, berr := g.BF.ResponsesStreamRequest(bctx, breq)
 		if berr != nil {
 			g.upstreamFailed(w, snap, p, m, ts, berr, start)
 			return
 		}
-		g.pump(w, snap, p, m, ts, ch, start, func(c *schemas.BifrostStream) (string, any, schemas.ModelProvider, *usagePair) {
+		g.pump(w, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
 			ev := c.BifrostResponsesStreamResponse
 			if ev == nil {
 				return "", nil, "", nil
@@ -353,26 +358,23 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 					u = &usagePair{ev.Response.Usage.InputTokens, ev.Response.Usage.OutputTokens}
 				}
 			}
-			return string(ev.Type), struct {
-				*schemas.BifrostResponsesStreamResponse
-				ExtraFields *struct{} `json:"extra_fields,omitempty"`
-			}{BifrostResponsesStreamResponse: ev}, ev.ExtraFields.Provider, u
+			return string(ev.Type), ev, ev.ExtraFields.RoutingInfo.Provider, u
 		})
 		return
 	}
-	resp, berr := g.BF.ResponsesRequest(r.Context(), breq)
+	resp, berr := g.BF.ResponsesRequest(bctx, breq)
 	if berr != nil {
 		g.upstreamFailed(w, snap, p, m, ts, berr, start)
 		return
 	}
-	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.ModelRequested}
+	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
 	}
-	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.Provider, false, start, l.OutTokens)
+	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
 	g.record(p, m, l, start)
 	resp.Model = m.ID
-	writeJSONHidden(w, l.Provider, out{BifrostResponsesResponse: resp})
+	writeJSONHidden(w, l.Provider, resp)
 }
 
 // prepareResponses applies guardrails, the org's max-token cap and the route plan to a Responses
@@ -413,8 +415,8 @@ type usagePair struct{ in, out int }
 
 // pump writes a Bifrost stream as server-sent events. conv maps one chunk to (event name or "",
 // payload, serving provider, usage if present); a nil payload skips the chunk.
-func (g *Gateway) pump(w http.ResponseWriter, snap *Snapshot, p *principal, m store.Model, ts []store.Target, ch chan *schemas.BifrostStream, start time.Time,
-	conv func(*schemas.BifrostStream) (string, any, schemas.ModelProvider, *usagePair)) {
+func (g *Gateway) pump(w http.ResponseWriter, snap *Snapshot, p *principal, m store.Model, ts []store.Target, ch chan *schemas.BifrostStreamChunk, start time.Time,
+	conv func(*schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair)) {
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -453,7 +455,7 @@ func (g *Gateway) pump(w http.ResponseWriter, snap *Snapshot, p *principal, m st
 		if ok {
 			named = true
 		} else {
-			data, err := sonic.Marshal(payload)
+			data, err := hideExtra(payload)
 			if err != nil {
 				continue
 			}

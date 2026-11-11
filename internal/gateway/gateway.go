@@ -192,6 +192,11 @@ func fromBifrost(be *schemas.BifrostError, private bool) *apiError {
 // targetFault reports whether a status counts against the provider's circuit breaker.
 func targetFault(status int) bool { return status >= 500 || status == 429 }
 
+// newBifrostCtx is the per-request Bifrost context; it ends with the client request.
+func newBifrostCtx(r *http.Request) *schemas.BifrostContext {
+	return schemas.NewBifrostContext(r.Context(), schemas.NoDeadline)
+}
+
 // InvalidateAuth drops cached API key principals so key and org changes apply on this node now.
 func (g *Gateway) InvalidateAuth() { g.auth.Clear() }
 
@@ -374,11 +379,10 @@ func (g *Gateway) readBody(w http.ResponseWriter, r *http.Request) ([]byte, *api
 
 // ---- handlers ----
 
-// chatOut hides Bifrost's internal extra_fields and adds the serving provider.
+// chatOut adds the serving provider; hideExtra drops Bifrost's internal extra_fields.
 type chatOut struct {
 	*schemas.BifrostChatResponse
-	ExtraFields *struct{} `json:"extra_fields,omitempty"`
-	Provider    string    `json:"provider,omitempty"`
+	Provider string `json:"provider,omitempty"`
 }
 
 func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -408,7 +412,8 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
-	breq := req.ToBifrostChatRequest()
+	bctx := newBifrostCtx(r)
+	breq := req.ToBifrostChatRequest(bctx)
 	if reason, err := applyGuardrails(p.Org, texts(breq.Input)); err != nil {
 		writeError(w, errf(500, "api_error", "guardrail_config", "%v", err))
 		return
@@ -425,7 +430,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := g.snap.Load()
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
-	bctx, usesMCP := g.withMCP(ctx, r, p)
+	usesMCP := g.withMCP(bctx, r, p)
 	w.Header().Set("x-gateway-request-id", store.NewID())
 
 	if req.Stream != nil && *req.Stream {
@@ -455,14 +460,14 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, ae)
 		return
 	}
-	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.ModelRequested}
+	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	}
-	provName := g.settle(snap, m, ts, resp.ExtraFields.Provider, false, start, l.OutTokens)
+	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
 	l.Provider = provName
 	resp.Model = m.ID
-	out, err := sonic.Marshal(chatOut{BifrostChatResponse: resp, Provider: provName})
+	out, err := hideExtra(chatOut{BifrostChatResponse: resp, Provider: provName})
 	if err != nil {
 		writeError(w, errf(500, "api_error", "encode", "cannot encode response"))
 		return
@@ -484,7 +489,7 @@ func cacheTTL(r *http.Request) time.Duration {
 	return time.Duration(min(n, 86400)) * time.Second
 }
 
-func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principal, m store.Model, ts []store.Target, breq *schemas.BifrostChatRequest, start time.Time) {
+func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *principal, m store.Model, ts []store.Target, breq *schemas.BifrostChatRequest, start time.Time) {
 	snap := g.snap.Load()
 	ch, berr := g.BF.ChatCompletionStreamRequest(ctx, breq)
 	if berr != nil {
@@ -513,9 +518,9 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principa
 			data, _ = json.Marshal(map[string]any{"error": map[string]any{"message": ae.msg, "type": ae.typ, "code": ae.code}})
 		} else if c := chunk.BifrostChatResponse; c != nil {
 			if served == "" { // headers are still unsent before the first chunk
-				w.Header().Set("x-gateway-provider", snap.Providers[snap.byBifrost[c.ExtraFields.Provider]].Name)
+				w.Header().Set("x-gateway-provider", snap.Providers[snap.byBifrost[c.ExtraFields.RoutingInfo.Provider]].Name)
 			}
-			served = c.ExtraFields.Provider
+			served = c.ExtraFields.RoutingInfo.Provider
 			if c.Usage != nil {
 				l.InTokens, l.OutTokens = c.Usage.PromptTokens, c.Usage.CompletionTokens
 			}
@@ -525,7 +530,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principa
 				}
 			}
 			c.Model = m.ID
-			data, _ = sonic.Marshal(chatOut{BifrostChatResponse: c})
+			data, _ = hideExtra(chatOut{BifrostChatResponse: c})
 		} else {
 			continue
 		}
@@ -575,14 +580,14 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	snap := g.snap.Load()
-	breq := req.ToBifrostEmbeddingRequest()
+	bctx := newBifrostCtx(r)
+	breq := req.ToBifrostEmbeddingRequest(bctx)
 	var segs []*string
-	if in := breq.Input; in != nil {
-		if in.Text != nil {
-			segs = append(segs, in.Text)
-		}
-		for i := range in.Texts {
-			segs = append(segs, &in.Texts[i])
+	for _, item := range breq.Input {
+		for _, part := range item.Content {
+			if part.Text != nil {
+				segs = append(segs, part.Text)
+			}
 		}
 	}
 	if reason, err := applyGuardrails(p.Org, segs); err != nil {
@@ -594,7 +599,7 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
-	resp, berr := g.BF.EmbeddingRequest(ctx, breq)
+	resp, berr := g.BF.EmbeddingRequest(bctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
 		g.settle(snap, m, ts, "", targetFault(ae.status), start, 0)
@@ -602,17 +607,14 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, ae)
 		return
 	}
-	provName := g.settle(snap, m, ts, resp.ExtraFields.Provider, false, start, 0)
+	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
 	l := store.RequestLog{Status: 200, Provider: provName}
 	if resp.Usage != nil {
 		l.InTokens = resp.Usage.PromptTokens
 	}
 	g.record(p, m, l, start)
 	resp.Model = m.ID
-	out, _ := sonic.Marshal(struct {
-		*schemas.BifrostEmbeddingResponse
-		ExtraFields *struct{} `json:"extra_fields,omitempty"`
-	}{BifrostEmbeddingResponse: resp})
+	out, _ := hideExtra(resp)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("x-gateway-provider", provName)
 	_, _ = w.Write(out)

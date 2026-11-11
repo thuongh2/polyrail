@@ -57,17 +57,18 @@ func (g *Gateway) AnthropicMessages(rw http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	breq := req.ToBifrostResponsesRequest(r.Context())
+	bctx := newBifrostCtx(r)
+	breq := req.ToBifrostResponsesRequest(bctx)
 	if !g.prepareResponses(w, p, m, ts, snap, breq, start) {
 		return
 	}
 	if req.Stream != nil && *req.Stream {
-		ch, berr := g.BF.ResponsesStreamRequest(r.Context(), breq)
+		ch, berr := g.BF.ResponsesStreamRequest(bctx, breq)
 		if berr != nil {
 			g.upstreamFailed(w, snap, p, m, ts, berr, start)
 			return
 		}
-		g.pump(w, snap, p, m, ts, ch, start, func(c *schemas.BifrostStream) (string, any, schemas.ModelProvider, *usagePair) {
+		g.pump(w, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
 			ev := c.BifrostResponsesStreamResponse
 			if ev == nil {
 				return "", nil, "", nil
@@ -80,7 +81,7 @@ func (g *Gateway) AnthropicMessages(rw http.ResponseWriter, r *http.Request) {
 				}
 			}
 			var frames sseFrames
-			for _, a := range anthropic.ToAnthropicResponsesStreamResponse(r.Context(), ev) {
+			for _, a := range anthropic.ToAnthropicResponsesStreamResponse(bctx, ev) {
 				if data, err := sonic.Marshal(a); err == nil {
 					frames = fmt.Appendf(frames, "event: %s\ndata: %s\n\n", a.Type, data)
 				}
@@ -88,23 +89,23 @@ func (g *Gateway) AnthropicMessages(rw http.ResponseWriter, r *http.Request) {
 			if len(frames) == 0 { // OpenAI lifecycle events with no Anthropic counterpart
 				return "", nil, "", nil
 			}
-			return "", frames, ev.ExtraFields.Provider, u
+			return "", frames, ev.ExtraFields.RoutingInfo.Provider, u
 		})
 		return
 	}
-	resp, berr := g.BF.ResponsesRequest(r.Context(), breq)
+	resp, berr := g.BF.ResponsesRequest(bctx, breq)
 	if berr != nil {
 		g.upstreamFailed(w, snap, p, m, ts, berr, start)
 		return
 	}
-	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.ModelRequested}
+	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
 	}
-	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.Provider, false, start, l.OutTokens)
+	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
 	g.record(p, m, l, start)
 	resp.Model = m.ID
-	writeJSONHidden(w, l.Provider, anthropic.ToAnthropicResponsesResponse(resp))
+	writeJSONHidden(w, l.Provider, anthropic.ToAnthropicResponsesResponse(bctx, resp))
 }
 
 // AnthropicModels lists the chat models this key may use in the Anthropic list format.

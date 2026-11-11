@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Small single-binary image. Build: docker build -t agent-gateway .
-FROM golang:1.24-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 # go.mod replaces golang.org/x/* etc. with their GitHub mirrors (docs/DECISIONS.md D2);
 # "direct" serves those, the proxy serves the rest. go.sum pins every hash.

@@ -1,7 +1,7 @@
 # Bifrost feature parity
 
 What agent-gateway covers from Bifrost's documented feature set (docs.getbifrost.ai, read
-2026-11-11), built on Bifrost core v1.2.38. "Core" marks features the pinned core supports.
+2026-11-11), built on Bifrost core v1.15.2. "Core" marks features the pinned core supports.
 
 ## Supported
 
@@ -23,12 +23,12 @@ What agent-gateway covers from Bifrost's documented feature set (docs.getbifrost
 
 | Feature | Why | Path forward |
 |---|---|---|
-| Google GenAI (Gemini) SDK drop-in (`/genai/...`) | core v1.2.38 has no inbound Gemini → Bifrost chat converter | upgrade core (D1) |
-| Image generation, video, realtime, containers | not in core v1.2.38 | upgrade core |
+| Google GenAI (Gemini) SDK drop-in (`/genai/...`) | converters exist in core v1.15.2; route not built | add route |
+| Image generation, video, realtime, containers | in core v1.15.2; routes, pricing and tenant isolation not built | next milestone |
 | Batches and Files APIs | in core, but need per-org isolation of file and batch ids and deferred billing | next milestone |
 | Semantic cache | needs an embedding model and a vector store; exact-match cache exists | add with Valkey vector search |
-| Count tokens endpoints | provider-specific, not in core v1.2.38 for all providers | upgrade core |
-| Providers added in later cores (Databricks, Hugging Face, Replicate, xAI native, DeepSeek native, vLLM native) | not in core v1.2.38 | use type `openai` + base URL today |
+| Count tokens endpoints | `CountTokensRequest` in core v1.15.2; route not built | add route |
+| Providers added in later cores (Databricks, Hugging Face, Replicate, xAI native, DeepSeek native, vLLM native) | in core v1.15.2; not yet in the admin type list | add types; use `openai` + base URL today |
 | LiteLLM / LangChain / PydanticAI / Bedrock / Cohere SDK routes | Bifrost HTTP transport features, not core | add on demand |
 | Plugins (Go/WASM), Relays, A2A agent gateway, MCP server mode, code mode | Bifrost HTTP transport features, not core | out of scope for v1 |
 | Bifrost enterprise: SCIM, secret managers, alerting, log exports, clustering via gossip | enterprise | partial equivalents: OIDC SSO, Postgres/Valkey scale-out |

@@ -649,6 +649,7 @@ type keyInput struct {
 	TPM              *int      `json:"tpm"`
 	MonthlyBudgetUSD *float64  `json:"monthly_budget_usd"`
 	Models           *[]string `json:"models"`
+	MCPServers       *[]string `json:"mcp_servers"`
 	ExpiresInDays    *int      `json:"expires_in_days"`
 	Revoked          *bool     `json:"revoked"`
 }
@@ -668,6 +669,9 @@ func (in keyInput) apply(k *store.APIKey) {
 	}
 	if in.Models != nil {
 		k.Models = *in.Models
+	}
+	if in.MCPServers != nil {
+		k.MCPServers = *in.MCPServers
 	}
 	if in.ExpiresInDays != nil && *in.ExpiresInDays > 0 {
 		t := time.Now().UTC().AddDate(0, 0, *in.ExpiresInDays)
@@ -716,7 +720,7 @@ func (a *API) patchKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if role(r).Rank() < store.RoleAdmin.Rank() {
 		// members may rename or revoke their own keys, not lift limits an admin set
-		if cur.CreatedBy != user(r).ID || in.RPM != nil || in.TPM != nil || in.MonthlyBudgetUSD != nil || in.Models != nil || in.ExpiresInDays != nil {
+		if cur.CreatedBy != user(r).ID || in.RPM != nil || in.TPM != nil || in.MonthlyBudgetUSD != nil || in.Models != nil || in.MCPServers != nil || in.ExpiresInDays != nil {
 			fail(w, errForbidden)
 			return
 		}

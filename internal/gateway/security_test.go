@@ -44,10 +44,10 @@ func TestMCPOrgAllowlist(t *testing.T) {
 	g := &Gateway{}
 	g.mcp.byName.Store("search", "id1")
 	g.mcp.byName.Store("files", "id2")
-	ids := func(org store.Org, hdr string) []string {
+	ids := func(org store.Org, hdr string, key ...string) []string {
 		r := httptest.NewRequest("POST", "/", nil)
 		r.Header.Set("x-gateway-mcp-clients", hdr)
-		ctx, _ := g.withMCP(context.Background(), r, org)
+		ctx, _ := g.withMCP(context.Background(), r, &principal{Org: org, Key: store.APIKey{MCPServers: key}})
 		return ctx.Value(bifrost.MCPContextKeyIncludeClients).([]string)
 	}
 	if got := ids(store.Org{}, "*"); len(got) != 0 {
@@ -61,6 +61,13 @@ func TestMCPOrgAllowlist(t *testing.T) {
 	}
 	if got := ids(store.Org{MCPServers: []string{"*"}}, ""); len(got) != 0 {
 		t.Fatalf("no header must inject nothing: %v", got)
+	}
+	// per-key list narrows the org grant (org ∩ key); it never widens it
+	if got := ids(store.Org{MCPServers: []string{"*"}}, "*", "files"); len(got) != 1 || got[0] != "id2" {
+		t.Fatalf("key limited to files: %v", got)
+	}
+	if got := ids(store.Org{MCPServers: []string{"search"}}, "*", "files"); len(got) != 0 {
+		t.Fatalf("key list must not widen the org grant: %v", got)
 	}
 }
 

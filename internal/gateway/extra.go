@@ -328,29 +328,9 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	breq := req.ToBifrostResponsesRequest()
-	var segs []*string
-	for i := range breq.Input {
-		if c := breq.Input[i].Content; c != nil {
-			if c.ContentStr != nil {
-				segs = append(segs, c.ContentStr)
-			}
-			for j := range c.ContentBlocks {
-				if c.ContentBlocks[j].Text != nil {
-					segs = append(segs, c.ContentBlocks[j].Text)
-				}
-			}
-		}
-	}
-	if !g.guard(w, p, m, segs, start) {
+	if !g.prepareResponses(w, p, m, ts, snap, breq, start) {
 		return
 	}
-	if breq.Params == nil {
-		breq.Params = &schemas.ResponsesParameters{}
-	}
-	if c := p.Org.MaxTokensCap; c > 0 && (breq.Params.MaxOutputTokens == nil || *breq.Params.MaxOutputTokens > c) {
-		breq.Params.MaxOutputTokens = &c
-	}
-	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	type out struct {
 		*schemas.BifrostResponsesResponse
 		ExtraFields *struct{} `json:"extra_fields,omitempty"`
@@ -395,7 +375,39 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 	writeJSONHidden(w, l.Provider, out{BifrostResponsesResponse: resp})
 }
 
+// prepareResponses applies guardrails, the org's max-token cap and the route plan to a Responses
+// request; false means the error response was already written.
+func (g *Gateway) prepareResponses(w http.ResponseWriter, p *principal, m store.Model, ts []store.Target, snap *Snapshot, breq *schemas.BifrostResponsesRequest, start time.Time) bool {
+	var segs []*string
+	for i := range breq.Input {
+		if c := breq.Input[i].Content; c != nil {
+			if c.ContentStr != nil {
+				segs = append(segs, c.ContentStr)
+			}
+			for j := range c.ContentBlocks {
+				if c.ContentBlocks[j].Text != nil {
+					segs = append(segs, c.ContentBlocks[j].Text)
+				}
+			}
+		}
+	}
+	if !g.guard(w, p, m, segs, start) {
+		return false
+	}
+	if breq.Params == nil {
+		breq.Params = &schemas.ResponsesParameters{}
+	}
+	if c := p.Org.MaxTokensCap; c > 0 && (breq.Params.MaxOutputTokens == nil || *breq.Params.MaxOutputTokens > c) {
+		breq.Params.MaxOutputTokens = &c
+	}
+	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
+	return true
+}
+
 // ---- shared SSE pump ----
+
+// sseFrames is a pump payload that is already framed as one or more server-sent events.
+type sseFrames []byte
 
 type usagePair struct{ in, out int }
 
@@ -419,7 +431,7 @@ func (g *Gateway) pump(w http.ResponseWriter, snap *Snapshot, p *principal, m st
 		if c.BifrostError != nil {
 			ae := fromBifrost(c.BifrostError, m.OrgID != "")
 			l.Status, l.Error = ae.status, ae.msg
-			payload = map[string]any{"error": map[string]any{"message": ae.msg, "type": ae.typ, "code": ae.code}}
+			event, payload = errorBody(w, ae)
 		} else {
 			var prov schemas.ModelProvider
 			var u *usagePair
@@ -437,16 +449,21 @@ func (g *Gateway) pump(w http.ResponseWriter, snap *Snapshot, p *principal, m st
 				l.InTokens, l.OutTokens = u.in, u.out
 			}
 		}
-		data, err := sonic.Marshal(payload)
-		if err != nil {
-			continue
+		frame, ok := payload.(sseFrames)
+		if ok {
+			named = true
+		} else {
+			data, err := sonic.Marshal(payload)
+			if err != nil {
+				continue
+			}
+			if event != "" {
+				frame, named = fmt.Appendf(nil, "event: %s\n", event), true
+			}
+			frame = fmt.Appendf(frame, "data: %s\n\n", data)
 		}
 		_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
-		prefix := ""
-		if event != "" {
-			prefix, named = "event: "+event+"\n", true
-		}
-		if _, err := fmt.Fprintf(w, "%sdata: %s\n\n", prefix, data); err != nil || rc.Flush() != nil {
+		if _, err := w.Write(frame); err != nil || rc.Flush() != nil {
 			gone = true
 			l.Status, l.Error = 499, "client closed connection"
 		}

@@ -10,8 +10,10 @@ export CGO_ENABLED ?= 0
 ui:
 	cd web && npm ci && npm run build
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 build:
-	go build -trimpath -ldflags="-s -w" -o bin/gateway ./cmd/gateway
+	go build -trimpath -ldflags="-s -w -X main.version=$(VERSION)" -o bin/gateway ./cmd/gateway
 test:
 	go test ./...
 check:

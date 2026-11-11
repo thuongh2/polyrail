@@ -92,19 +92,23 @@ func (g *Gateway) syncMCP(ctx context.Context) error {
 	return nil
 }
 
-func mcpAllowed(org store.Org, name string) bool {
-	return slices.Contains(org.MCPServers, "*") || slices.Contains(org.MCPServers, name)
+// mcpAllowed reports whether the key may use an MCP server: the operator granted it to the org and
+// the key's own list (empty = every granted server) names it.
+func mcpAllowed(p *principal, name string) bool {
+	org := p.Org.MCPServers
+	return (slices.Contains(org, "*") || slices.Contains(org, name)) &&
+		(len(p.Key.MCPServers) == 0 || slices.Contains(p.Key.MCPServers, name))
 }
 
 // withMCP sets which MCP servers' tools are injected into the request. Opt-in per request with
 // header x-gateway-mcp-clients: name1,name2 (or *), limited to the servers the operator granted
-// the org. Without it no tools are injected. Reports whether any server was included.
-func (g *Gateway) withMCP(ctx context.Context, r *http.Request, org store.Org) (context.Context, bool) {
+// the org and the API key allows. Without it no tools are injected. Reports whether any server was included.
+func (g *Gateway) withMCP(ctx context.Context, r *http.Request, p *principal) (context.Context, bool) {
 	include := []string{}
 	for _, name := range strings.Split(r.Header.Get("x-gateway-mcp-clients"), ",") {
 		name = strings.TrimSpace(name)
 		g.mcp.byName.Range(func(n, id any) bool {
-			if (name == "*" || name == n.(string)) && mcpAllowed(org, n.(string)) && !slices.Contains(include, id.(string)) {
+			if (name == "*" || name == n.(string)) && mcpAllowed(p, n.(string)) && !slices.Contains(include, id.(string)) {
 				include = append(include, id.(string))
 			}
 			return true
@@ -114,7 +118,7 @@ func (g *Gateway) withMCP(ctx context.Context, r *http.Request, org store.Org) (
 }
 
 // MCPExecute runs one tool call returned by the model: POST /v1/mcp/tool/execute.
-// The tool must belong to an MCP server granted to the caller's org; calls are rate limited,
+// The tool must belong to an MCP server granted to the caller's org and allowed for the key; calls are rate limited,
 // budget-checked and logged like model requests.
 func (g *Gateway) MCPExecute(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -146,8 +150,8 @@ func (g *Gateway) MCPExecute(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if server == "" || !mcpAllowed(p.Org, server) {
-		writeError(w, errf(403, "permission_error", "mcp_tool_not_allowed", "tool %q is not available to this organization", *call.Function.Name))
+	if server == "" || !mcpAllowed(p, server) {
+		writeError(w, errf(403, "permission_error", "mcp_tool_not_allowed", "tool %q is not available to this API key", *call.Function.Name))
 		return
 	}
 	if e := g.admit(r.Context(), p); e != nil {

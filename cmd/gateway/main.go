@@ -6,12 +6,14 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,6 +28,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+// version is set at build time: go build -ldflags "-X main.version=v1.2.3".
+var version = "dev"
 
 func env(k, def string) string {
 	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
@@ -169,9 +174,12 @@ func run() error {
 	mux.HandleFunc("POST /v1/audio/speech", g.Speech)
 	mux.HandleFunc("POST /v1/audio/transcriptions", g.Transcriptions)
 	mux.HandleFunc("POST /v1/mcp/tool/execute", g.MCPExecute)
+	mux.HandleFunc("POST /anthropic/v1/messages", g.AnthropicMessages)
+	mux.HandleFunc("GET /anthropic/v1/models", g.AnthropicModels)
+	aliases(mux)
 	api.Register(mux)
 	mux.Handle("GET /metrics", metricsAuth(os.Getenv("METRICS_TOKEN"), promhttp.Handler()))
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
+	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := kv.Ping(r.Context()); err != nil {
 			http.Error(w, "store unavailable", http.StatusServiceUnavailable)
@@ -204,6 +212,28 @@ func run() error {
 	return nil
 }
 
+func healthz(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) }
+
+// aliases registers SDK base-URL aliases and Bifrost-compatible meta endpoints:
+// /openai/v1/* serves exactly what /v1/* serves (OpenAI SDK base_url ending in /openai/v1),
+// GET /health is /healthz, and GET /api/version reports the build.
+func aliases(mux *http.ServeMux) {
+	mux.Handle("/openai/v1/", http.StripPrefix("/openai", mux))
+	mux.HandleFunc("GET /health", healthz)
+	core := "unknown"
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, d := range bi.Deps {
+			if d.Path == "github.com/maximhq/bifrost/core" {
+				core = d.Version
+			}
+		}
+	}
+	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"version": version, "bifrost_core": core})
+	})
+}
+
 // metricsAuth requires "Authorization: Bearer <METRICS_TOKEN>" when a token is configured.
 func metricsAuth(token string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -218,9 +248,9 @@ func metricsAuth(token string, h http.Handler) http.Handler {
 // withCORS lets browser apps call the OpenAI-compatible API (key auth, no cookies).
 func withCORS(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/v1/") {
+		if p := r.URL.Path; strings.HasPrefix(p, "/v1/") || strings.HasPrefix(p, "/openai/v1/") || strings.HasPrefix(p, "/anthropic/v1/") {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, x-gateway-cache, x-gateway-mcp-clients")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, anthropic-version, anthropic-beta, x-gateway-cache, x-gateway-mcp-clients")
 			w.Header().Set("Access-Control-Expose-Headers", "x-gateway-provider, x-gateway-request-id, x-gateway-cache-hit")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)

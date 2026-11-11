@@ -19,6 +19,8 @@ Test locations: `gw` = internal/gateway/gateway_test.go, `adm` = internal/admin/
 | AC3 embeddings | gw TestEmbeddingsAndModels; e2e | covered |
 | AC4 `/v1/models` = public + own private | gw TestEmbeddingsAndModels (public only); e2e (public only) | partial: no test that org B's key does not see org A's private model via `/v1/models` (adm TestCrossTenantProvidersAndModels checks it only on the admin API and public catalog) |
 | AC5 OpenAI error shape + status | gw TestPolicies (401/400/404 codes); e2e (401/404/400) | covered |
+| Anthropic `/anthropic/v1/messages` (non-stream, SSE, error shape, spend) and `/anthropic/v1/models` | gw TestAnthropicMessages (anthropic-type mock upstream) | covered (OpenAI-type upstream behind the Anthropic route not tested) |
+| `/openai/v1/*` alias, `/health`, `/api/version` | cmd/gateway TestAliasesAndVersion | covered |
 
 ## F2 Providers
 | AC | Tests | Status |
@@ -80,6 +82,7 @@ Test locations: `gw` = internal/gateway/gateway_test.go, `adm` = internal/admin/
 | AC | Tests | Status |
 |---|---|---|
 | AC1 MCP servers, tools in chat, `x-gateway-mcp-clients` | gw TestMCPOrgAllowlist; adm TestMCPGrantOperatorOnly | partial: no live MCP server |
+| Per-key `mcp_servers` (org grant ∩ key list; admins only on PATCH) | gw TestMCPOrgAllowlist; adm TestMemberCannotLiftAdminLimits | partial: `MCPExecute` key check shares `mcpAllowed`, no live MCP server |
 | AC2 `/metrics` | e2e (`gateway_requests_total`, latency histogram, dropped logs) | partial: cache-hit metric not asserted |
 | AC3 JSON logs, `/healthz`, `/readyz` | e2e (healthz, readyz, JSON "shutting down" log) | covered |
 

@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { ListPlus, Pencil, Plus, Trash2 } from "lucide-react";
 import type { Scope } from "@/App";
 import { DataState, EmptyState, PageHeader } from "@/components/states";
+import { DiscoverDialog } from "@/components/platform/DiscoverDialog";
 import { ConfirmDialog, EnabledText, Field, FormDialog, NoAccess, splitList } from "@/components/platform/kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,7 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
   const state = useAsync(() => (base && allowed ? get<Provider[]>(base) : Promise.resolve([] as Provider[])), [base, allowed]);
   const [editing, setEditing] = useState<Provider | "new" | null>(null);
   const [deleting, setDeleting] = useState<Provider | null>(null);
+  const [discovering, setDiscovering] = useState<Provider | null>(null);
 
   const title = scope === "platform" ? "Public providers" : "Providers";
   const description =
@@ -87,6 +89,16 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
                     <TableCell><EnabledText on={p.enabled} /></TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!p.enabled}
+                          title={p.enabled ? undefined : "Enable the provider to list its models"}
+                          aria-label={`Discover models from ${p.name}`}
+                          onClick={() => setDiscovering(p)}
+                        >
+                          <ListPlus aria-hidden /> Discover models
+                        </Button>
                         <Button size="icon" variant="ghost" aria-label={`Edit ${p.name}`} onClick={() => setEditing(p)}>
                           <Pencil aria-hidden />
                         </Button>
@@ -113,6 +125,7 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
           onSaved={state.reload}
         />
       )}
+      {discovering && <DiscoverDialog key={discovering.id} base={base} provider={discovering} onClose={() => setDiscovering(null)} />}
       <ConfirmDialog
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
@@ -128,6 +141,9 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
     </>
   );
 }
+
+/** Self-hosted or workspace types that only work with a base URL. */
+const needsURL = (t: string) => ["ollama", "sgl", "vllm", "databricks"].includes(t);
 
 /** Types whose credentials live in per-key config; the dialog edits their first key. */
 const CLOUD = ["azure", "bedrock", "vertex"] as const;
@@ -280,9 +296,18 @@ function ProviderDialog({
           </Select>
         </div>
         {!isCloud(type) && (
-          <Field label="Base URL" hint="Optional for hosted providers. Any OpenAI-compatible API works as type openai with its base URL.">
+          <Field
+            label="Base URL"
+            hint={
+              needsURL(type)
+                ? type === "databricks"
+                  ? "Required: the workspace URL. Put the access token in API keys."
+                  : "Required: the server's URL. The key is optional."
+                : "Optional for hosted providers. Any OpenAI-compatible API works as type openai with its base URL."
+            }
+          >
             {(id, hint) => (
-              <Input id={id} aria-describedby={hint} value={baseURL} onChange={(e) => setBaseURL(e.target.value)} placeholder="https://api.example.com/v1" inputMode="url" autoComplete="off" />
+              <Input id={id} aria-describedby={hint} required={needsURL(type)} value={baseURL} onChange={(e) => setBaseURL(e.target.value)} placeholder="https://api.example.com/v1" inputMode="url" autoComplete="off" />
             )}
           </Field>
         )}

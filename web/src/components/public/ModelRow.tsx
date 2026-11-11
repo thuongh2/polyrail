@@ -1,7 +1,7 @@
 import { pathID } from "@/lib/api";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
-import { compact, kindLabel, perMillion, perMinute, type ModelInfo } from "@/lib/api";
+import { compact, kindLabel, mainPrice, perMillion, type ModelInfo } from "@/lib/api";
 import { CopyButton } from "./CodeTabs";
 
 export const modelHref = (id: string) => `/models/${pathID(id)}`;
@@ -10,7 +10,7 @@ export const modelHref = (id: string) => `/models/${pathID(id)}`;
 export function ModelRow({ m, compactRow = false }: { m: ModelInfo; compactRow?: boolean }) {
   const noOutput = m.kind !== "chat" && Number(m.pricing.output) === 0;
   return (
-    <li className="group relative grid gap-3 px-4 py-4 hover:bg-accent/50 md:grid-cols-[minmax(0,1fr)_6rem_6rem_6rem] md:items-start md:gap-6">
+    <li className="group relative grid gap-3 px-4 py-4 hover:bg-accent/50 md:grid-cols-[minmax(0,1fr)_6rem_8rem_6rem] md:items-start md:gap-6">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Link
@@ -38,8 +38,8 @@ export function ModelRow({ m, compactRow = false }: { m: ModelInfo; compactRow?:
       </div>
       <dl className="grid grid-cols-3 gap-2 text-sm md:contents">
         <Stat label="Context" value={m.context_length ? compact(m.context_length) : "–"} />
-        <Stat label="Input / 1M" value={m.pricing.audio_minute ? perMinute(m.pricing.audio_minute) : perMillion(m.pricing.input)} />
-        <Stat label="Output / 1M" value={noOutput ? "–" : perMillion(m.pricing.output)} />
+        <Stat label="Input" value={mainPrice(m)} />
+        <Stat label="Output" value={noOutput ? "–" : perMillion(m.pricing.output)} />
       </dl>
     </li>
   );
@@ -57,11 +57,11 @@ function Stat({ label, value }: { label: string; value: string }) {
 /** Column heads matching ModelRow's wide layout. */
 export function ModelListHead() {
   return (
-    <div className="hidden gap-6 border-b px-4 py-2 text-xs text-muted-foreground md:grid md:grid-cols-[minmax(0,1fr)_6rem_6rem_6rem]">
+    <div className="hidden gap-6 border-b px-4 py-2 text-xs text-muted-foreground md:grid md:grid-cols-[minmax(0,1fr)_6rem_8rem_6rem]">
       <span>Model</span>
       <span className="text-right">Context</span>
-      <span className="text-right">Input / 1M</span>
-      <span className="text-right">Output / 1M</span>
+      <span className="text-right">Input</span>
+      <span className="text-right">Output</span>
     </div>
   );
 }

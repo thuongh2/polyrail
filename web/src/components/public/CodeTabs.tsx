@@ -149,6 +149,131 @@ const res = await client.audio.transcriptions.create({
 console.log(res.text);`,
       },
     ];
+  if (kind === "image")
+    return [
+      {
+        label: "curl",
+        code: `curl ${base}/images/generations \\
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${model}",
+    "prompt": "A lighthouse at dusk, watercolor",
+    "size": "1024x1024",
+    "n": 1
+  }'`,
+      },
+      {
+        label: "Python",
+        code: `import base64, os
+from openai import OpenAI
+
+client = OpenAI(base_url="${base}", api_key=os.environ["GATEWAY_API_KEY"])
+
+res = client.images.generate(model="${model}", prompt="A lighthouse at dusk, watercolor", size="1024x1024")
+img = res.data[0]
+if img.b64_json:
+    open("image.png", "wb").write(base64.b64decode(img.b64_json))
+else:
+    print(img.url)`,
+      },
+      {
+        label: "TypeScript",
+        code: `import fs from "node:fs";
+import OpenAI from "openai";
+
+const client = new OpenAI({ baseURL: "${base}", apiKey: process.env.GATEWAY_API_KEY });
+
+const res = await client.images.generate({ model: "${model}", prompt: "A lighthouse at dusk, watercolor", size: "1024x1024" });
+const img = res.data?.[0];
+if (img?.b64_json) fs.writeFileSync("image.png", Buffer.from(img.b64_json, "base64"));
+else console.log(img?.url);`,
+      },
+    ];
+  if (kind === "rerank")
+    return [
+      {
+        label: "curl",
+        code: `curl ${base}/rerank \\
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${model}",
+    "query": "How do I rotate an API key?",
+    "documents": ["Keys can be revoked in the console.", "Create a new key, deploy it, then revoke the old one."],
+    "top_n": 2
+  }'`,
+      },
+      {
+        label: "Python",
+        code: `import os, requests
+
+res = requests.post(
+    "${base}/rerank",
+    headers={"Authorization": f"Bearer {os.environ['GATEWAY_API_KEY']}"},
+    json={
+        "model": "${model}",
+        "query": "How do I rotate an API key?",
+        "documents": ["Keys can be revoked in the console.", "Create a new key, deploy it, then revoke the old one."],
+    },
+)
+for r in res.json()["results"]:
+    print(r["index"], r["relevance_score"])`,
+      },
+    ];
+  if (kind === "ocr")
+    return [
+      {
+        label: "curl",
+        code: `curl ${base}/ocr \\
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${model}",
+    "document": {"type": "document_url", "document_url": "https://example.com/invoice.pdf"}
+  }'`,
+      },
+      {
+        label: "Python",
+        code: `import os, requests
+
+res = requests.post(
+    "${base}/ocr",
+    headers={"Authorization": f"Bearer {os.environ['GATEWAY_API_KEY']}"},
+    json={"model": "${model}", "document": {"type": "image_url", "image_url": "https://example.com/receipt.png"}},
+)
+for page in res.json()["pages"]:
+    print(page["markdown"])`,
+      },
+    ];
+  if (kind === "video")
+    return [
+      {
+        label: "curl",
+        code: `# start the job
+curl ${base}/videos \\
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model": "${model}", "prompt": "A paper boat on a rainy street", "seconds": "4"}'
+
+# poll until "status": "completed", then download
+curl ${base}/videos/video-gw-… -H "Authorization: Bearer $GATEWAY_API_KEY"
+curl ${base}/videos/video-gw-…/content -H "Authorization: Bearer $GATEWAY_API_KEY" --output video.mp4`,
+      },
+      {
+        label: "Python",
+        code: `import os, time
+from openai import OpenAI
+
+client = OpenAI(base_url="${base}", api_key=os.environ["GATEWAY_API_KEY"])
+
+video = client.videos.create(model="${model}", prompt="A paper boat on a rainy street", seconds="4")
+while video.status in ("queued", "in_progress"):
+    time.sleep(5)
+    video = client.videos.retrieve(video.id)
+client.videos.download_content(video.id).write_to_file("video.mp4")`,
+      },
+    ];
   if (kind === "embedding")
     return [
       {
@@ -216,6 +341,35 @@ const res = await client.chat.completions.create({
   messages: [{ role: "user", content: "Hello" }],
 });
 console.log(res.choices[0].message.content);`,
+    },
+  ];
+}
+
+/** Client setup for the three SDK drop-ins: OpenAI (/v1), Anthropic (/anthropic) and Google GenAI (/genai). */
+export function sdkSamples(origin: string, model: string): Sample[] {
+  return [
+    {
+      label: "OpenAI",
+      code: `from openai import OpenAI
+
+# base_url ${origin}/v1 or ${origin}/openai/v1
+client = OpenAI(base_url="${origin}/v1", api_key="sk-gw-…")
+client.chat.completions.create(model="${model}", messages=[{"role": "user", "content": "Hello"}])`,
+    },
+    {
+      label: "Anthropic",
+      code: `from anthropic import Anthropic
+
+client = Anthropic(base_url="${origin}/anthropic", api_key="sk-gw-…")
+client.messages.create(model="${model}", max_tokens=256, messages=[{"role": "user", "content": "Hello"}])`,
+    },
+    {
+      label: "Google GenAI",
+      code: `from google import genai
+
+# sent as x-goog-api-key: use your gateway key
+client = genai.Client(api_key="sk-gw-…", http_options={"base_url": "${origin}/genai"})
+client.models.generate_content(model="${model}", contents="Hello")`,
     },
   ];
 }

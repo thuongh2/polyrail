@@ -83,7 +83,7 @@ export default function Models() {
     <>
       <PageHeader
         title="Models"
-        description="Every public model on this gateway. Prices are USD per 1M tokens (per 1M characters for text to speech, per minute where marked); call any of them by id through /v1."
+        description="Every public model on this gateway. Prices are USD per 1M tokens (per 1M characters for text to speech) unless marked per minute, image, second or request; call any of them by id through /v1."
       />
       <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-8">
         <div className="lg:hidden">

@@ -22,15 +22,22 @@ export const get = <T>(path: string) => api<T>("GET", path);
 
 // ---- public ----
 
-/** USD decimal strings: input/output per 1M tokens (speech input: per 1M characters), audio_minute per minute of audio. */
-export type Pricing = { input: string; output: string; audio_minute?: string };
+/**
+ * USD decimal strings: input/output per 1M tokens (speech input: per 1M characters), audio_minute per
+ * minute of audio, image per generated image, request per request, video_second per second of video.
+ */
+export type Pricing = { input: string; output: string; audio_minute?: string; image?: string; request?: string; video_second?: string };
 
-export type ModelKind = "chat" | "embedding" | "speech" | "transcription";
+export type ModelKind = "chat" | "embedding" | "speech" | "transcription" | "image" | "rerank" | "ocr" | "video";
 export const kindLabel: Record<ModelKind, string> = {
   chat: "Chat",
   embedding: "Embedding",
   speech: "Text to speech",
   transcription: "Speech to text",
+  image: "Image",
+  rerank: "Rerank",
+  ocr: "OCR",
+  video: "Video",
 };
 
 export type ModelInfo = {
@@ -187,11 +194,42 @@ export type ModelInput = {
   input_price_micros: number;
   output_price_micros: number;
   audio_minute_price_micros?: number; // transcription: micro-USD per audio minute
+  image_price_micros?: number; // micro-USD per generated image
+  request_price_micros?: number; // micro-USD per successful request, any kind
+  video_second_price_micros?: number; // micro-USD per second of generated video
   targets: Target[];
   enabled: boolean;
 };
 // Model as listed by GET .../models (ModelInfo + management fields).
 export type ModelView = ModelInfo & { targets?: Target[]; enabled: boolean; owner: "platform" | "org" };
+
+/** One upstream model from POST …/providers/{id}/discover (prices in micro-USD per 1M tokens, when listed). */
+export type DiscoveredModel = {
+  upstream: string;
+  name?: string;
+  description?: string;
+  context_length?: number;
+  max_output_tokens?: number;
+  input_price_micros?: number;
+  output_price_micros?: number;
+};
+/** One entry of POST …/providers/{id}/import; the model gets one target {provider, upstream}. */
+export type ImportModel = {
+  upstream: string;
+  id: string;
+  name: string;
+  description?: string;
+  kind: ModelKind;
+  context_length?: number;
+  max_output_tokens?: number;
+  input_price_micros: number;
+  output_price_micros: number;
+};
+
+/** POST /v1/images/generations response, as the provider returns it. */
+export type ImageResult = { created?: number; data: { b64_json?: string; url?: string; revised_prompt?: string }[] };
+/** POST /v1/rerank response, sorted by score. */
+export type RerankResult = { id?: string; model?: string; results: { index: number; relevance_score: number; document?: unknown }[] };
 
 export type UsageRow = {
   key: string; // day (yyyymmdd), model id, key id or "total"
@@ -254,6 +292,22 @@ export function perMillion(p: string) {
 
 /** "$0.006 / min" from the API's USD-per-minute decimal string. */
 export const perMinute = (p: string) => (Number(p) === 0 ? "Free" : perMillion(p) + " / min");
+
+/** "$0.04 / image" style price from a USD decimal string with a unit. */
+const per = (p: string, unit: string) => (Number(p) === 0 ? "Free" : unitUSD(p) + " / " + unit);
+
+/** A small unit price from a USD decimal string, without trailing zeros ("$0.04", "$0.0015"). */
+export const unitUSD = (p: string) => "$" + Number(p).toLocaleString("en-US", { maximumFractionDigits: 6 });
+
+/** The headline price of a model: its per-unit price for media kinds, else input per 1M tokens. */
+export function mainPrice(m: Pick<ModelInfo, "kind" | "pricing">) {
+  const p = m.pricing;
+  if (p.audio_minute) return perMinute(p.audio_minute);
+  if (p.image) return per(p.image, "image");
+  if (p.video_second) return per(p.video_second, "sec");
+  if (p.request && (m.kind === "rerank" || m.kind === "ocr" || m.kind === "video" || Number(p.input) === 0)) return per(p.request, "request");
+  return perMillion(p.input);
+}
 
 export const fmt = (n: number | undefined) => (n ?? 0).toLocaleString();
 

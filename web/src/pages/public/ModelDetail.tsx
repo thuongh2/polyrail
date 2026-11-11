@@ -6,10 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, ErrorState, LoadingRows } from "@/components/states";
-import { apiBase, CodeBlock, CodeTabs, CopyButton, requestSamples } from "@/components/public/CodeTabs";
+import { apiBase, CodeBlock, CodeTabs, CopyButton, requestSamples, sdkSamples } from "@/components/public/CodeTabs";
 import { StatusBadge, latency } from "@/components/public/StatusBadge";
 import { UptimeBar, UptimeLegend } from "@/components/public/UptimeBar";
-import { ApiError, compact, fmt, kindLabel, pct, perMillion, perMinute, publicApi, type ModelDetail as Detail } from "@/lib/api";
+import { ApiError, compact, fmt, kindLabel, mainPrice, pct, perMillion, publicApi, unitUSD, type ModelDetail as Detail } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 
 const tps = (v: number | null) => (v == null ? "–" : `${compact(Math.round(v))} tok/s`);
@@ -72,8 +72,8 @@ export default function ModelDetail({ id }: { id: string }) {
           <Meta label="Created" value={m.created ? new Date(m.created * 1000).toLocaleDateString() : "–"} />
           <Meta label="Context" value={m.context_length ? `${fmt(m.context_length)} tokens` : "–"} />
           <Meta label="Max output" value={m.max_output_tokens ? `${fmt(m.max_output_tokens)} tokens` : "–"} />
-          {m.pricing.audio_minute ? (
-            <Meta label="Audio price" value={perMinute(m.pricing.audio_minute)} />
+          {unitPrices(m.pricing).length ? (
+            <Meta label="Price" value={mainPrice(m)} />
           ) : (
             <Meta label="Input price" value={`${perMillion(m.pricing.input)} / ${unit}`} />
           )}
@@ -116,8 +116,20 @@ function Meta({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+/** Non-token prices of a model as [label, USD string] rows. */
+function unitPrices(p: Detail["model"]["pricing"]): [string, string][] {
+  const rows: [string, string | undefined][] = [
+    ["Minute of input audio", p.audio_minute],
+    ["Generated image", p.image],
+    ["Second of generated video", p.video_second],
+    ["Request", p.request],
+  ];
+  return rows.filter((r): r is [string, string] => !!r[1]);
+}
+
 function Overview({ d }: { d: Detail }) {
   const m = d.model;
+  const units = unitPrices(m.pricing);
   const s = d.stats_24h;
   return (
     <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
@@ -143,42 +155,45 @@ function Overview({ d }: { d: Detail }) {
         <h2 id="price-h" className="mb-3 text-lg font-semibold">
           Pricing
         </h2>
-        {!(m.pricing.audio_minute && Number(m.pricing.input) === 0 && Number(m.pricing.output) === 0) && (
-        <div className="mb-3 rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Tokens</TableHead>
-              <TableHead className="text-right">Per 1M</TableHead>
-              <TableHead className="text-right">Per 1K</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <PriceRow label={m.kind === "speech" ? "Input (tokens or characters)" : "Input"} p={m.pricing.input} />
-            {(m.kind === "chat" || Number(m.pricing.output) > 0) && <PriceRow label="Output" p={m.pricing.output} />}
-          </TableBody>
-        </Table>
-        </div>
+        {!(units.length && Number(m.pricing.input) === 0 && Number(m.pricing.output) === 0) && (
+          <div className="mb-3 rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tokens</TableHead>
+                  <TableHead className="text-right">Per 1M</TableHead>
+                  <TableHead className="text-right">Per 1K</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <PriceRow label={m.kind === "speech" ? "Input (tokens or characters)" : "Input"} p={m.pricing.input} />
+                {(m.kind === "chat" || Number(m.pricing.output) > 0) && <PriceRow label="Output" p={m.pricing.output} />}
+              </TableBody>
+            </Table>
+          </div>
         )}
-        {m.pricing.audio_minute && (
+        {units.length > 0 && (
           <div className="rounded-lg border">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Audio</TableHead>
-                  <TableHead className="text-right">Per minute</TableHead>
-                  <TableHead className="text-right">Per hour</TableHead>
+                  <TableHead>Charged per</TableHead>
+                  <TableHead className="text-right">Price</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                <TableRow>
-                  <TableCell>Input audio</TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">{perMinute(m.pricing.audio_minute).replace(" / min", "")}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{perMillion(String(Number(m.pricing.audio_minute) * 60))}</TableCell>
-                </TableRow>
+                {units.map(([label, p]) => (
+                  <TableRow key={label}>
+                    <TableCell>{label}</TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">{Number(p) === 0 ? "Free" : unitUSD(p)}</TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </div>
+        )}
+        {m.pricing.request && (
+          <p className="mt-2 text-xs text-muted-foreground">The request price is added to every successful request, on top of other prices.</p>
         )}
         {m.kind === "speech" && (
           <p className="mt-2 text-xs text-muted-foreground">When the provider reports no token usage, input is billed per 1M characters of text.</p>
@@ -286,7 +301,18 @@ function ApiTab({ d }: { d: Detail }) {
   const m = d.model;
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]">
-      <CodeTabs samples={requestSamples(base, m.id, m.kind)} />
+      <div className="min-w-0 space-y-8">
+        <CodeTabs samples={requestSamples(base, m.id, m.kind)} />
+        {m.kind === "chat" && (
+          <section aria-labelledby="sdk-h" className="space-y-2">
+            <h2 id="sdk-h" className="font-medium">SDKs</h2>
+            <p className="text-sm text-muted-foreground">
+              The OpenAI, Anthropic and Google GenAI SDKs work unchanged: point their base URL at the gateway and use a gateway key.
+            </p>
+            <CodeTabs samples={sdkSamples(location.origin, m.id)} />
+          </section>
+        )}
+      </div>
       <aside className="space-y-4 text-sm">
         <div>
           <h2 className="mb-1 font-medium">Base URL</h2>
@@ -297,6 +323,10 @@ function ApiTab({ d }: { d: Detail }) {
           {m.kind === "chat" && "Add \"stream\": true for server-sent events. "}
           {m.kind === "speech" && "The response body is the audio file; the provider is in the x-gateway-provider header. "}
           {m.kind === "transcription" && "Send the audio as multipart form data; the response is JSON with the text. "}
+          {m.kind === "image" && "Images come back as b64_json or url, as the provider returns them. Edits and variations take multipart form data. "}
+          {m.kind === "rerank" && "Results are sorted by relevance_score; index points into your documents. "}
+          {m.kind === "ocr" && "Each page comes back as markdown. "}
+          {m.kind === "video" && "Videos are async jobs: poll GET /v1/videos/{id} until completed, then download /content. "}
           <Link href="/docs" className="text-foreground underline underline-offset-4">
             Full reference
           </Link>

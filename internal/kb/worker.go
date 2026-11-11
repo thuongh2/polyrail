@@ -13,7 +13,6 @@ import (
 const (
 	batchInputs = 64
 	batchChars  = 200000
-	queueScan   = 1000
 )
 
 // Start runs cfg.Workers ingestion workers until ctx ends. Workers on every node share the KV
@@ -38,10 +37,10 @@ func (s *Service) work(ctx context.Context, owner string) {
 	}
 }
 
-// drain claims and processes every claimable queue entry, oldest doc first.
-// shortcut: scans up to 1000 entries per poll; shard the queue by org if it grows past that.
+// drain claims and processes every claimable queue entry, round-robin across orgs.
+// shortcut: reads the whole queue per poll (≤ 200 entries per org); shard it by org if that grows.
 func (s *Service) drain(ctx context.Context, owner string) {
-	jobs, err := s.st.ListKBJobs(ctx, queueScan)
+	jobs, err := s.st.ListKBJobs(ctx, 0)
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Warn("kb queue scan failed", "err", err)
@@ -50,11 +49,14 @@ func (s *Service) drain(ctx context.Context, owner string) {
 	}
 	mQueueDepth.Set(float64(len(jobs)))
 	now := time.Now()
-	for i := len(jobs) - 1; i >= 0 && ctx.Err() == nil; i-- { // doc ids sort newest first
-		if jobs[i].LeaseUntil.After(now) {
+	for _, j := range fairOrder(jobs) {
+		if ctx.Err() != nil {
+			return
+		}
+		if j.LeaseUntil.After(now) {
 			continue
 		}
-		job, doc, err := s.st.ClaimKBJob(ctx, jobs[i].DocID, owner, s.lease, maxAttempts)
+		job, doc, err := s.st.ClaimKBJob(ctx, j.DocID, owner, s.lease, maxAttempts)
 		switch {
 		case errors.Is(err, store.ErrLeased) || errors.Is(err, store.ErrNotFound):
 			continue
@@ -128,6 +130,10 @@ func (s *Service) process(ctx context.Context, owner string, job *store.KBJob, d
 			return
 		}
 		for i, v := range vecs {
+			if len(v) > MaxDimensions { // a tenant's own endpoint could return any size: bound the index
+				fail("embedding has too many dimensions", true)
+				return
+			}
 			chunks[start+i].Vec = v
 		}
 		if err := s.st.RenewKBJob(ctx, doc.ID, owner, s.lease); err != nil {
@@ -161,4 +167,27 @@ func (s *Service) orgChunks(ctx context.Context, org string) (int, error) {
 		n += k.Chunks
 	}
 	return n, err
+}
+
+// fairOrder turns the queue (newest doc first) into a processing order that takes each org's
+// oldest doc in turn, so one org's backlog cannot hold up the others.
+func fairOrder(jobs []store.KBJob) []store.KBJob {
+	var orgs []string
+	byOrg := map[string][]store.KBJob{}
+	for i := len(jobs) - 1; i >= 0; i-- {
+		j := jobs[i]
+		if _, ok := byOrg[j.OrgID]; !ok {
+			orgs = append(orgs, j.OrgID)
+		}
+		byOrg[j.OrgID] = append(byOrg[j.OrgID], j)
+	}
+	out := make([]store.KBJob, 0, len(jobs))
+	for round := 0; len(out) < len(jobs); round++ {
+		for _, o := range orgs {
+			if q := byOrg[o]; round < len(q) {
+				out = append(out, q[round])
+			}
+		}
+	}
+	return out
 }

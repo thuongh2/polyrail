@@ -594,3 +594,92 @@ func BenchmarkSearch100k(b *testing.B) {
 	}
 	b.ReportMetric(float64(ix.size)/n, "bytes/chunk")
 }
+
+// M14: a 2 MB run without sentence ends used to be hard-cut by re-counting the remaining text on
+// every cut (quadratic: seconds of worker CPU per document).
+func TestChunkerHardCutIsLinear(t *testing.T) {
+	text := strings.Repeat("é", 1_000_000) // 2 MB, no break
+	start := time.Now()
+	cs := chunkText(text, 200, 0)
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("hard cut took %v", d)
+	}
+	if len(cs) != 1_000_000/200 {
+		t.Fatalf("%d chunks", len(cs))
+	}
+	for _, c := range cs {
+		if n := len([]rune(c.Text)); n != 200 {
+			t.Fatalf("chunk of %d runes", n)
+		}
+	}
+	if got := units("ab cdefgh  ijk", 3); strings.Join(got, "|") != "ab |cde|fgh|ijk" {
+		t.Fatalf("units %q", got)
+	}
+}
+
+// M14: the worker served the queue FIFO across orgs from a window of the 1,000 newest entries,
+// so one org's backlog (or orgs past the window) starved everyone else.
+func TestFairQueueOrder(t *testing.T) {
+	// ListKBJobs order: newest doc first
+	jobs := []store.KBJob{{OrgID: "b", DocID: "6"}, {OrgID: "a", DocID: "5"}, {OrgID: "a", DocID: "4"},
+		{OrgID: "a", DocID: "3"}, {OrgID: "c", DocID: "2"}, {OrgID: "a", DocID: "1"}}
+	var got []string
+	for _, j := range fairOrder(jobs) {
+		got = append(got, j.OrgID+j.DocID)
+	}
+	if strings.Join(got, ",") != "a1,c2,b6,a3,a4,a5" {
+		t.Fatalf("order %v", got)
+	}
+}
+
+type wideEmb struct{ fakeEmb }
+
+func (w *wideEmb) Embed(_ context.Context, _, _, _ string, _ int, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i := range out {
+		out[i] = make([]float32, MaxDimensions+1)
+		out[i][0] = 1
+	}
+	return out, nil
+}
+
+// M13: the index byte budget (KB_INDEX_MB) was not enforced: an index larger than the budget was
+// loaded and kept, and vectors of any length (a tenant's own embedding endpoint) were stored.
+func TestIndexBudgetEnforced(t *testing.T) {
+	c := newIndexCache(1500, func(_ context.Context, org, kb string) (*index, error) {
+		ix := newIndex(1)
+		ix.size = 2000
+		return ix, nil
+	})
+	if _, err := c.get(context.Background(), "o", "big", 1); !errors.Is(err, ErrLimit) {
+		t.Fatalf("over-budget index: %v", err)
+	}
+	if c.used != 0 || c.ll.Len() != 0 {
+		t.Fatalf("over-budget index cached: %d", c.used)
+	}
+
+	// the loader stops early instead of materializing an index past the budget
+	s, _, st, org := newTestService(t)
+	ctx := context.Background()
+	s.vs = NewKVStore(st, 4096)
+	k := &store.KB{OrgID: org, Name: "kb", EmbedModel: "m", Dimensions: 512}
+	if err := s.CreateKB(ctx, k); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := s.AddDoc(ctx, org, k.ID, DocInput{Text: strings.Repeat("Refund policy text for the budget test. ", 400)})
+	s.drain(ctx, "w")
+	waitStatus(t, s, org, k.ID, d.ID, store.KBReady)
+	if _, err := s.Search(ctx, org, []string{k.ID}, "refund policy", "", SearchOpts{}); !errors.Is(err, ErrLimit) {
+		t.Fatalf("search over budget: %v", err)
+	}
+
+	// vectors wider than MaxDimensions fail the document
+	w := &wideEmb{}
+	s.emb = w
+	s.vs = NewKVStore(st, 1<<20)
+	d2, _ := s.AddDoc(ctx, org, k.ID, DocInput{Text: "Some text that is long enough to become a chunk."})
+	s.drain(ctx, "w")
+	if got := waitStatus(t, s, org, k.ID, d2.ID, store.KBFailed); got.Error != "embedding has too many dimensions" {
+		t.Fatalf("wide vectors: %+v", got)
+	}
+}

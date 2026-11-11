@@ -2,6 +2,9 @@ package admin
 
 import (
 	"context"
+	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -58,9 +61,32 @@ func TestProviderProxy(t *testing.T) {
 		expect(t, g.do(t, "admin", "POST", GA, tenant(`{"url":"`+u+`"}`)), 400, "tenant private proxy "+u)
 	}
 	expect(t, g.do(t, "admin", "POST", GA, tenant(`{"url":"socks5://8.8.8.8:1080"}`)), 200, "tenant public proxy")
+
+	// L21: a new tenant proxy or proxy CA could read the stored key (a TLS-inspecting proxy
+	// re-signs upstream with the tenant's CA), so it needs the keys again, like a new base_url
+	withKey := func(proxy, key string) string {
+		return `{"name":"t","type":"openai","base_url":"https://8.8.8.8","enabled":true,"keys":[{"id":"k1","value":"` + key + `","weight":1}],"proxy":` + proxy + `}`
+	}
+	r = g.do(t, "admin", "POST", GA, withKey(`{"url":"http://8.8.8.8:3128"}`, "sk-tenant-secret"))
+	expect(t, r, 200, "tenant provider with key and proxy")
+	var tp store.Provider
+	r.json(t, &tp)
+	expect(t, g.do(t, "admin", "PUT", GA+"/"+tp.ID, withKey(`{"url":"http://8.8.8.8:3128"}`, "")), 200, "same proxy keeps the key")
+	expect(t, g.do(t, "admin", "PUT", GA+"/"+tp.ID, withKey(`{"url":"http://8.8.4.4:3128"}`, "")), 400, "new tenant proxy without re-entering keys")
+	srvCA := `-----BEGIN CERTIFICATE-----\n` + testCA(t) + `\n-----END CERTIFICATE-----\n` // JSON-escaped newlines
+	expect(t, g.do(t, "admin", "PUT", GA+"/"+tp.ID, withKey(`{"url":"http://8.8.8.8:3128","ca_cert_pem":"`+srvCA+`"}`, "")), 400, "new tenant proxy CA without re-entering keys")
+	expect(t, g.do(t, "admin", "PUT", GA+"/"+tp.ID, withKey(`{"url":"http://8.8.4.4:3128"}`, "sk-new")), 200, "new tenant proxy with keys")
+	expect(t, g.do(t, "admin", "PUT", GA+"/"+tp.ID, withKey(`{"url":"http://8.8.4.4:3128","ca_cert_pem":"`+srvCA+`"}`, "sk-new")), 200, "new tenant proxy CA with keys")
 	var cfg map[string]any
 	g.do(t, "", "GET", "/api/auth/config", "").json(t, &cfg)
 	if cfg["tenant_proxy"] != true {
 		t.Fatalf("auth config: %v", cfg)
 	}
+}
+
+// testCA returns the base64 DER of a throwaway TLS certificate.
+func testCA(t *testing.T) string {
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	return base64.StdEncoding.EncodeToString(srv.Certificate().Raw)
 }

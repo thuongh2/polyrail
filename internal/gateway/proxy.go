@@ -4,9 +4,11 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -101,23 +103,86 @@ func proxyHostURL(raw string) string {
 
 // proxyConfig is the Bifrost proxy setting for p: its own proxy (tenants only when allowed),
 // else the global proxy unless p opts out, else none. Values are literal SecretVars (secret()).
-func (a *account) proxyConfig(p store.Provider) *schemas.ProxyConfig {
+// A tenant's own http/socks5 proxy is pinned to an address vetted as public (pinProxyURL):
+// Bifrost dials the proxy hop with a plain dialer, without the private-network check.
+func (a *account) proxyConfig(p store.Provider) (*schemas.ProxyConfig, error) {
 	x, noProxy := p.Proxy, ""
 	if x != nil && p.OrgID != "" && !a.tenantProxy {
 		x = nil // stored while tenant proxies were allowed: ignored until they are again
 	}
 	if x == nil || x.URL == "" {
 		if p.NoProxy || a.proxy == nil {
-			return nil
+			return nil, nil
 		}
 		x, noProxy = &a.proxy.ProviderProxy, a.proxy.NoProxy
+	}
+	proxyURL := x.URL
+	if p.OrgID != "" && x == p.Proxy && !a.allowPrivate {
+		var err error
+		if proxyURL, err = pinProxyURL(x.URL); err != nil {
+			return nil, fmt.Errorf("provider %s proxy: %w", p.ID, err)
+		}
 	}
 	typ := schemas.HTTPProxy // http:// and https:// proxies both tunnel with CONNECT
 	if strings.HasPrefix(x.URL, "socks5://") {
 		typ = schemas.Socks5Proxy
 	}
-	return &schemas.ProxyConfig{Type: typ, URL: secretPtr(x.URL), Username: secretPtr(x.Username),
-		Password: secretPtr(x.Password), CACertPEM: secretPtr(x.CACertPEM), NoProxy: noProxy}
+	return &schemas.ProxyConfig{Type: typ, URL: secretPtr(proxyURL), Username: secretPtr(x.Username),
+		Password: secretPtr(x.Password), CACertPEM: secretPtr(x.CACertPEM), NoProxy: noProxy}, nil
+}
+
+// lookupProxyIP resolves proxy hosts (tests replace it).
+var lookupProxyIP = net.LookupIP
+
+// pinnedProxies caches pinProxyURL results: Bifrost asks for provider configs on hot paths.
+var pinnedProxies = newTTLCache[string](10_000, 0)
+
+// pinProxyURL requires every address of the proxy host to be public and, for http and socks5
+// proxies, returns the URL with the host replaced by the first address, so a host that rebinds
+// to an internal address after this check is never dialed. https proxies keep the host name:
+// the TLS handshake verifies it, which an internal service cannot satisfy.
+// shortcut: the pinned address lives as long as the provider's client (until its config changes
+// or the node restarts); re-pin periodically if tenant proxies with moving addresses need it.
+func pinProxyURL(raw string) (string, error) {
+	if v, ok := pinnedProxies.Get(raw); ok {
+		if v == "" {
+			return "", ErrPrivateAddress
+		}
+		return v, nil
+	}
+	pinned, err := pinProxy(raw)
+	pinnedProxies.Set(raw, pinned, 0, 30*time.Second)
+	return pinned, err
+}
+
+func pinProxy(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return "", ErrPrivateAddress
+	}
+	ips := []net.IP{net.ParseIP(u.Hostname())}
+	if ips[0] == nil {
+		if ips, err = lookupProxyIP(u.Hostname()); err != nil || len(ips) == 0 {
+			return "", ErrPrivateAddress // same answer as a private address: no internal DNS oracle
+		}
+	}
+	for _, ip := range ips {
+		if blockedIP(ip) {
+			return "", ErrPrivateAddress
+		}
+	}
+	if u.Scheme == "https" {
+		return raw, nil
+	}
+	host := ips[0].String()
+	if u.Port() != "" {
+		u.Host = net.JoinHostPort(host, u.Port())
+	} else if ips[0].To4() == nil {
+		u.Host = "[" + host + "]"
+	} else {
+		u.Host = host
+	}
+	return u.String(), nil
 }
 
 // proxyOf is what a provider's proxy setting looks like to Reload (restart on change).

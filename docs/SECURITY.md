@@ -244,9 +244,11 @@ Global proxy (`UPSTREAM_PROXY_URL`, operator env) and per-provider `proxy` are p
   public addresses at save (`gateway.CheckPublicProxy`) and again before each request
   (`tenantReachable`, 30 s cache), unless `ALLOW_PRIVATE_PROVIDER_URLS`. A proxy connects wherever it
   is asked, so a tenant-chosen private proxy would be an SSRF relay into internal networks.
-- **The dial-time private-address block does not apply through a proxy.** Bifrost's dialer
-  (`AllowPrivateNetwork=false` for tenants) checks the address it connects to, which is then the
-  proxy, not the upstream. Org provider `base_url`s are still checked at save and before every
+- **The dial-time private-address block does not apply through a proxy.** Bifrost dials the proxy
+  hop with a plain `net.Dialer` (no `AllowPrivateNetwork` check) and the upstream is reached by the
+  proxy. A tenant's own http/socks5 proxy is therefore pinned to an address vetted as public when the
+  provider's client is built (`pinProxyURL`, M12); https proxies keep their host name, which the TLS
+  handshake verifies. Org provider `base_url`s are still checked at save and before every
   request (H1 rebinding residual unchanged). Operators who let org admins add providers and use a
   global proxy should make the proxy deny internal ranges. Hosts in `UPSTREAM_NO_PROXY` connect
   directly and keep the dial-time checks (Bifrost returns them to the checked dialer).
@@ -256,3 +258,40 @@ Global proxy (`UPSTREAM_PROXY_URL`, operator env) and per-provider `proxy` are p
   never logged (startup logs the URL without them).
 - A tenant's `ca_cert_pem` is trusted only by that provider's own client.
 [TestProviderProxy, TestProxyConfigPrecedence, TestCheckProxyAndParseGlobal, TestChatGoesThroughProviderProxy]
+
+## Review: knowledge bases (D21) and upstream proxy (D22) (2026-11-11)
+
+Scope: `git diff 2ca205e..HEAD -- internal cmd tools` (`internal/kb`, `internal/store/kb.go`,
+`internal/gateway/{kb,vectorstores,proxy}.go`, grounding in `gateway.go`/`extra.go`,
+`internal/admin/kb.go`, provider `proxy`). Verified by `gofmt -l`, `go vet ./...` and
+`go test -race -count=1 ./...` with Postgres and Redis.
+
+Checked and fine: every KB/doc/chunk/source/queue key carries the org and ids are format-checked
+(`validKBRef`), so another org's KB is a 404 on the admin API, `/v1/vector_stores` (list, get, files,
+search), in `X-GW-KB` and in key `kb_ids` (validated at save, re-resolved per request); the index
+cache and the 2 s KB-meta cache are keyed `org/kb`; response and semantic cache keys include the
+KBs' `id@rev`; admin routes need viewer (read), member (search, billed to the org) and admin
+(mutations, audited), members cannot set `kb_ids`; a key mutates only stores it created; org delete
+removes `kb/`, `kbdoc/`, `kbsrc/`, `kbchunk/` and workers drop orphaned `kbq/` entries, chunks written
+by a run that loses its doc are removed; URL ingest checks the URL and every redirect (≤ 3), dials
+through `PublicDialer` (rebinding, IPv6, mapped addresses), sends no proxy, caps 15 s and 5 MB of
+decoded body (gzip is limited after decompression), checks the content type before reading and never
+echoes bodies; uploads go through `MaxBytesReader` (doc limit + 1 MB) and multipart spills to temp
+files above 8 MB; `x/net/html` caps nesting depth (deep `<div>` input is rejected in ms); BM25 and
+filters are linear; grounding and vector-store query embeddings and ingestion embeddings pass `admit`
+(prepaid credits, key budget) and are recorded; logs and metrics carry ids and counts, never query or
+excerpt text; `X-GW-KB*` response headers hold only validated ids; proxy passwords are sealed,
+`json` output goes through `ProviderProxy.Redacted`, credentials in `UPSTREAM_PROXY_URL` are split out
+and not logged, all proxy values are literal SecretVars (`env.*` is never resolved); tenant proxies
+are off by default and checked public at save and per request.
+
+| ID | Severity | Finding | Resolution |
+|---|---|---|---|
+| M12 | medium | **Tenant proxy hop dialed without the private-address check.** Bifrost connects to a provider's proxy with a plain `net.Dialer`; only our save-time and 30 s cached request-time DNS checks guarded it. A tenant proxy host answering public for the check and `127.0.0.1`/`10.x`/`169.254.169.254` for Bifrost's own lookup made the gateway open CONNECT/SOCKS sessions to internal services (with `ALLOW_TENANT_PROXY`). The docs claimed a dial-time check that did not exist. | Fixed. `proxyConfig` pins a tenant's http/socks5 proxy to an address vetted as public (every answer must be public); https proxies keep the host, which TLS verification binds. A host that fails the check leaves the provider unconfigured. [TestTenantProxyPinnedToPublicIP] |
+| M13 | medium | **KB index memory budget not enforced.** An index larger than `KB_INDEX_MB` was loaded and kept ("newest stays"), concurrent cold loads of different KBs were unbounded, and vectors of any length were stored when `dimensions` is native (an org's own embedding endpoint can return 100k-dim vectors at price 0): one org could push a node far past 2 GB. | Fixed. Vectors longer than 8,192 fail the document; the loader stops once its estimate passes the budget and an over-budget index is never cached (`limit_exceeded`; grounding fails open); loads run one at a time. [TestIndexBudgetEnforced] |
+| M14 | medium | **Ingestion starvation.** The worker read only the 1,000 newest queue entries and served them oldest first across all orgs, so one org's backlog (200 docs × 2 MB) held every other org's documents, and entries outside the window waited until it drained. The chunker's hard cut re-counted the remaining text per cut: a 2 MB run without sentence ends cost seconds of the single worker's CPU per document. | Fixed. The worker reads the whole queue (≤ 200 per org) and takes each org's oldest doc in turn (`fairOrder`); the hard cut is one pass. [TestFairQueueOrder, TestChunkerHardCutIsLinear] |
+| L21 | low | Changing a tenant provider's proxy URL or proxy CA kept the stored keys; with a tenant CA a TLS-inspecting proxy reads them in transit (the L6 pattern: an org admin learns keys another admin entered). | Fixed. For org providers a new proxy URL or CA requires re-entering keys, like `base_url`. [TestProviderProxy] |
+| L22 | low | The `<kb_context>` escape matched only the exact tag; `</kb_context >`, `< /kb_context>` or `<kb_context x>` in a document passed through as a plausible closing delimiter. | Fixed (whitespace and attribute variants escaped). [TestKBTemplateEscapes] |
+| L23 | low | Any key of the org may ground on, list and search any org KB (`X-GW-KB` overrides `kb_ids`), and KB embeddings ignore the key's model allowlist (the model is a KB setting; usage is billed to the key). | Accepted (documented design, docs/KB.md §4–5); `kb_ids` is a default, not an allowlist. |
+| L24 | low | The per-org queued-doc cap (200) is counted outside the insert transaction, so concurrent adds can overshoot it slightly; the KB count cap (20) likewise. | Accepted (bounded by request concurrency). |
+| L25 | low | A pinned tenant proxy address lives as long as the provider's client; a legitimate proxy that changes address needs a provider save or restart. | Accepted (`shortcut` in `pinProxyURL`). |

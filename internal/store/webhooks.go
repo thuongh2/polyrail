@@ -24,10 +24,9 @@ type storedWebhook struct {
 	Sealed string `json:"sealed_secret"`
 }
 
+// hookKey is a webhook's KV key. Webhook writes skip the config version bump: no catalog
+// snapshot depends on them, and the failure counter changes on every failed delivery.
 func hookKey(orgID, id string) string { return "hook/" + orgID + "/" + id }
-
-// Webhook writes skip the config version bump: no catalog snapshot depends on them, and the
-// failure counter changes on every failed delivery.
 
 func (s *Store) seal(w *Webhook) (storedWebhook, error) {
 	sealed, err := s.box.Seal(w.Secret)

@@ -102,7 +102,7 @@ func TestSemanticCacheHitMissAndGating(t *testing.T) {
 		t.Fatalf("first request must miss: %q %v", a, r.Header)
 	}
 	a, r = f.ask(t, "tell me about cat", temp0)
-	if a != "answer 1" || r.Header.Get("X-GW-Cache") != "semantic" || r.Header.Get("X-GW-Cache-Score") != "1.0000" {
+	if a != "answer 1" || r.Header.Get("X-GW-Cache") != "semantic" || r.Header.Get("X-GW-Cache-Score") != "1.0000" || r.Header.Get("X-GW-Cost-Micros") != "0" {
 		t.Fatalf("identical prompt must hit: %q %v", a, r.Header)
 	}
 	a, r = f.ask(t, "tell me about kitten", temp0)
@@ -115,7 +115,7 @@ func TestSemanticCacheHitMissAndGating(t *testing.T) {
 	if f.embeds.Load() != 4 || f.chats.Load() != 2 {
 		t.Fatalf("embeds=%d chats=%d", f.embeds.Load(), f.chats.Load())
 	}
-	// not eligible: no explicit temperature, temperature > 0, tools, json_schema, stream
+	// not eligible: no explicit temperature, temperature > 0, tools, json_schema
 	for _, extra := range []string{"", `,"temperature":0.7`,
 		temp0 + `,"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}]`,
 		temp0 + `,"response_format":{"type":"json_schema","json_schema":{"name":"x","schema":{"type":"object"}}}`} {

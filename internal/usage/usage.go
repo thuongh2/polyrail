@@ -27,6 +27,7 @@ type Pipeline struct {
 	pending  map[string]store.Agg // counters not yet flushed; billing is never dropped
 	inflight map[string]store.Agg // counters being written by the current flush
 	gen      int64                // bumped when a flush commits; guards Spent against double reads
+	flushMu  sync.RWMutex         // held by a flush while it writes; Spent's store read waits for it
 
 	DroppedLogs atomic.Int64
 
@@ -123,25 +124,32 @@ func (p *Pipeline) Spent(ctx context.Context, key string) (int64, error) {
 		p.mu.Lock()
 		gen := p.gen
 		p.mu.Unlock()
-		var stored store.Agg
 		if c, ok := p.spendCache.Load(key); ok && c.(cachedAgg).gen == gen && time.Now().Before(c.(cachedAgg).exp) {
-			stored = c.(cachedAgg).a
-		} else {
-			a, err := p.kv.GetAgg(ctx, key)
-			if err != nil {
-				return 0, err
+			p.mu.Lock()
+			if p.gen != gen { // a flush committed since: the cached value misses it
+				p.mu.Unlock()
+				continue
 			}
-			stored = a
-			p.spendCache.Store(key, cachedAgg{a, gen, time.Now().Add(p.interval)})
-		}
-		p.mu.Lock()
-		if p.gen != gen { // a flush committed while we read: the stored value may miss or double count
+			pend, infl := p.pending[key], p.inflight[key]
 			p.mu.Unlock()
-			continue
+			return c.(cachedAgg).a[store.AggCostMicros] + pend[store.AggCostMicros] + infl[store.AggCostMicros], nil
 		}
-		pend, infl := p.pending[key], p.inflight[key]
+		// Not during a flush: a read between its commit and gen++ would count inflight twice.
+		p.flushMu.RLock()
+		p.mu.Lock()
+		gen = p.gen
 		p.mu.Unlock()
-		return stored[store.AggCostMicros] + pend[store.AggCostMicros] + infl[store.AggCostMicros], nil
+		a, err := p.kv.GetAgg(ctx, key)
+		if err != nil {
+			p.flushMu.RUnlock()
+			return 0, err
+		}
+		p.spendCache.Store(key, cachedAgg{a, gen, time.Now().Add(p.interval)})
+		p.mu.Lock()
+		pend := p.pending[key]
+		p.mu.Unlock()
+		p.flushMu.RUnlock()
+		return a[store.AggCostMicros] + pend[store.AggCostMicros], nil
 	}
 }
 
@@ -173,6 +181,7 @@ func (p *Pipeline) run() {
 func (p *Pipeline) flush(batch []store.RequestLog) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	p.flushMu.Lock()
 	p.mu.Lock()
 	adds := p.pending
 	p.pending, p.inflight = map[string]store.Agg{}, adds
@@ -191,9 +200,12 @@ func (p *Pipeline) flush(batch []store.RequestLog) {
 		}
 		p.inflight = nil
 		p.mu.Unlock()
+		p.flushMu.Unlock()
 		if err != nil {
 			slog.Error("usage: counter flush failed, will retry", "err", err, "keys", len(adds))
 		}
+	} else {
+		p.flushMu.Unlock()
 	}
 	if len(batch) == 0 {
 		return

@@ -107,6 +107,9 @@ func tenantReachable(p store.Provider, allowPrivate, async bool) bool {
 	if p.OrgID == "" || allowPrivate {
 		return true
 	}
+	if p.Proxy != nil && p.Proxy.URL != "" && !publicURLCached(proxyHostURL(p.Proxy.URL)) {
+		return false // a tenant proxy that no longer resolves to public addresses
+	}
 	if p.BaseURL != "" && (followsUpstreamURLs[p.Type] || (async && p.Type == "gemini")) {
 		return false
 	}

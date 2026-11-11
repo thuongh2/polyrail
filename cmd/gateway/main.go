@@ -51,6 +51,29 @@ func envInt(k string, def int) int {
 
 func envBool(k string) bool { b, _ := strconv.ParseBool(os.Getenv(k)); return b }
 
+// globalProxy reads UPSTREAM_PROXY_URL, UPSTREAM_NO_PROXY and UPSTREAM_PROXY_CA_FILE; a bad
+// setting stops startup instead of sending traffic around the proxy.
+func globalProxy() (*gateway.GlobalProxy, error) {
+	var ca []byte
+	if f := os.Getenv("UPSTREAM_PROXY_CA_FILE"); f != "" {
+		var err error
+		if ca, err = os.ReadFile(f); err != nil {
+			return nil, fmt.Errorf("UPSTREAM_PROXY_CA_FILE: %w", err)
+		}
+	}
+	p, err := gateway.ParseGlobalProxy(env("UPSTREAM_PROXY_URL", ""), env("UPSTREAM_NO_PROXY", ""), string(ca))
+	if err != nil {
+		return nil, fmt.Errorf("UPSTREAM_PROXY_URL: %w", err)
+	}
+	if p == nil && len(ca) > 0 {
+		return nil, errors.New("UPSTREAM_PROXY_CA_FILE is set without UPSTREAM_PROXY_URL")
+	}
+	if p != nil {
+		slog.Info("upstream proxy", "url", p.URL, "no_proxy", p.NoProxy)
+	}
+	return p, nil
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" { // for container HEALTHCHECK without curl
 		resp, err := http.Get("http://127.0.0.1" + listenPort() + "/healthz")
@@ -125,6 +148,11 @@ func run() error {
 	}, func() float64 { return float64(up.DroppedLogs.Load()) }))
 
 	allowPrivate := envBool("ALLOW_PRIVATE_PROVIDER_URLS")
+	proxy, err := globalProxy()
+	if err != nil {
+		return err
+	}
+	tenantProxy := envBool("ALLOW_TENANT_PROXY")
 	g, err := gateway.New(ctx, s, lim, up, gateway.Config{
 		MaxBodyBytes: int64(envInt("MAX_BODY_MB", 8)) << 20,
 		Concurrency:  envInt("PROVIDER_CONCURRENCY", 64),
@@ -133,6 +161,8 @@ func run() error {
 		PollInterval: 2 * time.Second,
 
 		AllowPrivateURLs: allowPrivate,
+		Proxy:            proxy,
+		AllowTenantProxy: tenantProxy,
 	})
 	if err != nil {
 		return err
@@ -145,6 +175,7 @@ func run() error {
 		AllowSignup:      envBool("ALLOW_SIGNUP"),
 		SignupPrepaid:    envBool("SIGNUP_PREPAID"),
 		AllowPrivateURLs: allowPrivate,
+		AllowTenantProxy: tenantProxy,
 		LogRetentionDays: envInt("LOG_RETENTION_DAYS", 14),
 	}
 	if iss := os.Getenv("OIDC_ISSUER"); iss != "" {

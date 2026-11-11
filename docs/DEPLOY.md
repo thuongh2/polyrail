@@ -60,6 +60,23 @@ The nodes are stateless; put any HTTP load balancer in front. Use the same `MAST
 - Keep `ALLOW_SIGNUP=false` unless you run a public service; sign-up does not verify email.
 - Rotate `ADMIN_PASSWORD` after first start by changing it in the console (Account).
 
+## Running behind a corporate proxy
+
+When upstream APIs are reachable only through an egress proxy, set it once for every provider:
+
+```sh
+UPSTREAM_PROXY_URL=http://user:pass@proxy.corp:3128   # or https://..., socks5://...
+UPSTREAM_NO_PROXY=localhost,.corp.example              # optional: hosts to reach directly
+UPSTREAM_PROXY_CA_FILE=/etc/ssl/corp-root.pem          # optional: TLS-inspecting proxy CA
+```
+
+The gateway refuses to start on a malformed value. Only model calls go through it (Bifrost provider
+clients); webhooks, SSO and knowledge-base URL fetches do not. A provider can use its own proxy or
+opt out (`no_proxy`) in Platform → Providers → Proxy. Through a proxy, the proxy decides which
+addresses are reachable: the gateway still checks org provider URLs before each request, but the
+connect-time private-address block applies only to direct connections, so configure the proxy to
+deny internal ranges if org admins can add providers (docs/SECURITY.md "Outbound proxy").
+
 ## Upgrading Bifrost core
 
 The gateway pins `github.com/maximhq/bifrost/core v1.15.2`, which needs Go 1.27 (the Dockerfile

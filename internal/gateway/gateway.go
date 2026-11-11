@@ -37,6 +37,10 @@ type Config struct {
 	PollInterval time.Duration
 	// AllowPrivateURLs lets tenant providers reach private networks (else re-checked per request).
 	AllowPrivateURLs bool
+	// Proxy is the global outbound proxy for upstream calls (nil: direct).
+	Proxy *GlobalProxy
+	// AllowTenantProxy lets org providers set their own (public) proxy.
+	AllowTenantProxy bool
 }
 
 // Events receives org events for webhooks (internal/webhook). Emit must not block.
@@ -89,7 +93,8 @@ func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipe
 		return nil, err
 	}
 	g.BF, err = bifrost.Init(ctx, schemas.BifrostConfig{
-		Account:   &account{snap: g.snap.Load, concurrency: cfg.Concurrency, buffer: cfg.Buffer, allowPrivate: cfg.AllowPrivateURLs},
+		Account: &account{snap: g.snap.Load, concurrency: cfg.Concurrency, buffer: cfg.Buffer, allowPrivate: cfg.AllowPrivateURLs,
+			proxy: cfg.Proxy, tenantProxy: cfg.AllowTenantProxy},
 		Logger:    bifrost.NewDefaultLogger(schemas.LogLevelWarn),
 		MCPConfig: mcpCfg,
 	})
@@ -133,7 +138,7 @@ func (g *Gateway) Reload(ctx context.Context) error {
 	g.auth.Clear() // key revocations and org changes take effect now
 	for id, p := range next.Providers {
 		old, ok := prev.Providers[id]
-		if ok && old.BaseURL == p.BaseURL && old.TimeoutSeconds == p.TimeoutSeconds {
+		if ok && old.BaseURL == p.BaseURL && old.TimeoutSeconds == p.TimeoutSeconds && proxyOf(old) == proxyOf(p) && old.NoProxy == p.NoProxy {
 			continue // keys are read per request; only network config needs a provider restart
 		}
 		if ok {

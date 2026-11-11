@@ -96,7 +96,7 @@ export const publicApi = {
 export type Role = "viewer" | "member" | "admin" | "owner";
 export type User = { id: string; email: string; name: string; operator: boolean; disabled?: boolean; created_at: string };
 export type OrgRef = { id: string; name: string; role: Role };
-export type AuthConfig = { signup: boolean; sso: boolean; provider_types: { platform: string[]; org: string[]; org_fixed_url?: string[] } };
+export type AuthConfig = { signup: boolean; sso: boolean; tenant_proxy?: boolean; provider_types: { platform: string[]; org: string[]; org_fixed_url?: string[] } };
 
 export const authApi = {
   config: () => get<AuthConfig>("/api/auth/config"),
@@ -189,9 +189,15 @@ export type Provider = {
   base_url?: string;
   timeout_seconds?: number;
   keys: ProviderKey[];
+  /** Outbound proxy for this provider's upstream calls; password is write-only. */
+  proxy?: ProviderProxy;
+  /** Connect directly even when the gateway has a global proxy. */
+  no_proxy?: boolean;
   enabled: boolean;
   created_at: string;
 };
+
+export type ProviderProxy = { url: string; username?: string; password?: string; ca_cert_pem?: string };
 
 /** input/output_price_micros override the model price for the cost strategy only (billing uses the model price). */
 export type Target = { provider_id: string; model: string; weight: number; input_price_micros?: number; output_price_micros?: number };

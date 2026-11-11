@@ -104,7 +104,7 @@ type providerHealth struct {
 func (a *API) publicModel(w http.ResponseWriter, r *http.Request) {
 	snap := a.G.Snapshot()
 	m, ok := snap.Models["_|"+r.PathValue("id")]
-	if !ok || !m.Enabled || m.OrgID != "" {
+	if !ok || !snap.Live(m) || m.OrgID != "" {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}

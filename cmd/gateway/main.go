@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/agent-gateway/agent-gateway/internal/admin"
+	"github.com/agent-gateway/agent-gateway/internal/catalog"
 	"github.com/agent-gateway/agent-gateway/internal/gateway"
 	"github.com/agent-gateway/agent-gateway/internal/limits"
 	"github.com/agent-gateway/agent-gateway/internal/store"
@@ -168,6 +169,9 @@ func run() error {
 	if err := bootstrap(ctx, s); err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}
+	if err := seedCatalog(ctx, s); err != nil {
+		return fmt.Errorf("seed catalog: %w", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", g.Idempotent(g.ChatCompletions))
@@ -313,6 +317,26 @@ func bootstrap(ctx context.Context, s *store.Store) error {
 	}
 	slog.Info("created operator account", "email", u.Email)
 	return s.CreateOrg(ctx, &store.Org{Name: "Default"}, u.ID)
+}
+
+// seedCatalog loads the embedded model catalog into a store with no providers at all (a fresh
+// install): disabled keyless providers plus their models, which stay hidden until an operator adds
+// a key and enables a provider. SEED_CATALOG=0 turns it off; existing installs use
+// POST /api/admin/catalog/sync instead.
+func seedCatalog(ctx context.Context, s *store.Store) error {
+	if os.Getenv("SEED_CATALOG") == "0" {
+		return nil
+	}
+	if ps, err := s.ListProviders(ctx, false); err != nil || len(ps) > 0 {
+		return err
+	}
+	np, nm, err := catalog.Sync(ctx, s)
+	if err != nil {
+		return err
+	}
+	slog.Info("seeded model catalog", "providers", np, "models", nm)
+	return s.Audit(ctx, store.AuditEntry{OrgID: "_", Actor: "system", Action: "catalog.seed", Target: "catalog",
+		Detail: fmt.Sprintf("providers_added=%d models_added=%d", np, nm)})
 }
 
 func retention(ctx context.Context, s *store.Store, days int) {

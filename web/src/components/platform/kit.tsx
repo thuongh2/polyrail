@@ -104,8 +104,9 @@ export function FormDialog({
   );
 }
 
-/** Confirmation for a destructive action. Stays open and shows the error if the action fails. */
-export function ConfirmDialog({
+/** Confirmation for a destructive action. Stays open and shows the error if the action fails.
+ * `success` may be a function of onConfirm's result, for toasts that report what happened. */
+export function ConfirmDialog<T>({
   open, onOpenChange, title, description, confirmLabel, success, onConfirm, destructive = true,
 }: {
   open: boolean;
@@ -113,8 +114,8 @@ export function ConfirmDialog({
   title: string;
   description: ReactNode;
   confirmLabel: string;
-  success: string;
-  onConfirm: () => Promise<unknown>;
+  success: string | ((result: T) => string);
+  onConfirm: () => Promise<T>;
   destructive?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
@@ -123,8 +124,8 @@ export function ConfirmDialog({
     setBusy(true);
     setError(undefined);
     try {
-      await onConfirm();
-      toast(success);
+      const result = await onConfirm();
+      toast(typeof success === "function" ? success(result) : success);
       onOpenChange(false);
     } catch (err) {
       setError((err as Error).message);

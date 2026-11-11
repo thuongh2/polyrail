@@ -8,6 +8,7 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `LISTEN_ADDR` | `:8080` | HTTP listen address. |
 | `PUBLIC_URL` | `http://localhost<port>` | External URL. `https://` turns on Secure cookies; used for the SSO callback. |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | – | On first start, creates this operator account (password 10+ characters) and a `Default` org. Ignored once the user exists. |
+| `SEED_CATALOG` | on | On a store with no providers at all (first start), loads the embedded model catalog: disabled keyless providers `cat-<type>` and their models, hidden until a provider is enabled (docs/API.md "Model catalog"). `0` turns it off. |
 | `STORE` | `pebble` | `pebble` (embedded, single node) or `postgres` (shared, for several nodes). |
 | `DATA_DIR` | `./data` | Pebble data directory. |
 | `PEBBLE_CACHE_MB` | `32` | Pebble block cache. |

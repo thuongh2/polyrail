@@ -706,6 +706,23 @@ func (s *Store) PutProvider(ctx context.Context, p *Provider) error {
 	})
 }
 
+// CreateKeylessProvider creates a provider under a caller-chosen id (the model catalog's
+// deterministic "cat-<type>" ids); ErrExists when the id is taken. It stores no key secrets.
+func (s *Store) CreateKeylessProvider(ctx context.Context, p *Provider) error {
+	if p.ID == "" || p.Name == "" || p.Type == "" || len(p.Keys) > 0 {
+		return fmt.Errorf("%w: provider id, name and type required, and no keys", ErrInvalid)
+	}
+	p.CreatedAt, p.Keys = time.Now().UTC(), []ProviderKey{}
+	return s.update(ctx, func(tx Tx) error {
+		if _, err := getJSON[Provider](tx.Get, "prov/"+p.ID); err == nil {
+			return ErrExists
+		} else if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		return putJSON(tx, "prov/"+p.ID, p)
+	})
+}
+
 func (s *Store) GetProvider(ctx context.Context, id string) (*Provider, error) {
 	return getJSON[Provider](s.get(ctx), "prov/"+id)
 }

@@ -128,6 +128,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/models", a.operator(a.platform(a.putModel)))
 	mux.HandleFunc("PUT /api/admin/models/{id...}", a.operator(a.platform(a.putModel)))
 	mux.HandleFunc("DELETE /api/admin/models/{id...}", a.operator(a.platform(a.deleteModel)))
+	mux.HandleFunc("POST /api/admin/catalog/sync", a.operator(a.platform(a.syncCatalog)))
 	mux.HandleFunc("GET /api/admin/usage", a.operator(a.platform(a.usageReport)))
 	mux.HandleFunc("GET /api/admin/audit", a.operator(a.platform(a.listAudit)))
 	mux.HandleFunc("GET /api/admin/users", a.operator(a.listUsers))
@@ -1012,8 +1013,9 @@ func (a *API) listModels(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			var pub []store.Model
 			pub, err = a.S.ListModels(ctx, "")
+			snap := a.G.Snapshot()
 			for _, m := range pub {
-				if m.Enabled {
+				if snap.Live(m) { // public models an org can call: enabled, with an enabled provider
 					ms = append(ms, m)
 				}
 			}

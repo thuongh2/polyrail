@@ -49,7 +49,7 @@ type Gateway struct {
 	snap atomic.Pointer[Snapshot]
 	auth *ttlCache[*principal]
 	resp *ttlCache[[]byte]
-	br   *breaker
+	rt   *router
 	mcp  mcpState
 }
 
@@ -68,7 +68,7 @@ func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipe
 	g := &Gateway{S: s, Usage: up, Lim: lim, cfg: cfg,
 		auth: newTTLCache[*principal](50_000, 0),
 		resp: newTTLCache[[]byte](100_000, cfg.CacheMB<<20),
-		br:   newBreaker(),
+		rt:   newRouter(),
 	}
 	snap, err := loadSnapshot(ctx, s)
 	if err != nil {
@@ -192,9 +192,6 @@ func fromBifrost(be *schemas.BifrostError, private bool) *apiError {
 	return &apiError{status, "upstream_error", "provider_error", msg}
 }
 
-// targetFault reports whether a status counts against the provider's circuit breaker.
-func targetFault(status int) bool { return status >= 500 || status == 429 }
-
 // newBifrostCtx is the per-request Bifrost context; it ends with the client request.
 func newBifrostCtx(r *http.Request) *schemas.BifrostContext {
 	return schemas.NewBifrostContext(r.Context(), schemas.NoDeadline)
@@ -278,7 +275,8 @@ func (g *Gateway) admit(ctx context.Context, p *principal) *apiError {
 	return nil
 }
 
-func (g *Gateway) resolve(p *principal, id, kind string) (store.Model, []store.Target, *apiError) {
+// resolve finds the model and plans its targets; affinity yields the cache-affinity key (may be nil).
+func (g *Gateway) resolve(p *principal, id, kind string, affinity func() string) (store.Model, []store.Target, *apiError) {
 	snap := g.snap.Load()
 	m, ok := snap.Model(p.Org.ID, id)
 	if !ok {
@@ -290,7 +288,7 @@ func (g *Gateway) resolve(p *principal, id, kind string) (store.Model, []store.T
 	if m.Kind != kind {
 		return m, nil, errf(400, "invalid_request_error", "wrong_model_kind", "model %q is a %s model", id, m.Kind)
 	}
-	ts := plan(m, snap, g.br)
+	ts := plan(m, snap, g.rt, affinity)
 	if !g.cfg.AllowPrivateURLs {
 		ts = slices.DeleteFunc(ts, func(t store.Target) bool {
 			return !tenantReachable(snap.Providers[t.ProviderID], false, false)
@@ -310,11 +308,15 @@ func bifrostTargets(snap *Snapshot, ts []store.Target) (schemas.ModelProvider, s
 	return BifrostKey(snap.Providers[ts[0].ProviderID]), ts[0].Model, fb
 }
 
-// settle updates circuit breakers from which provider ended up serving the request and returns
-// that provider's name. For public models it also records per-provider health: every target
-// counted as failed by the breaker is a failure (latency 0), the serving one a success.
+// settle updates circuit breakers and routing stats from which provider ended up serving the
+// request and returns that provider's name. For public models it also records per-provider
+// health: every target tried before the serving one is a failure (latency 0), that one a success.
+// Requests that failed at every target go through settleErr, which knows each target's status.
 func (g *Gateway) settle(snap *Snapshot, m store.Model, ts []store.Target, served schemas.ModelProvider, failed bool, start time.Time, outTokens int) string {
 	servedID := snap.byBifrost[served]
+	if !failed && servedID == "" {
+		return "" // nothing was served (client left before the first chunk): no verdict on targets
+	}
 	health := func(t store.Target, ok bool) {
 		if m.OrgID != "" { // shortcut: only public health is shown; record private too when orgs get a health view
 			return
@@ -328,11 +330,13 @@ func (g *Gateway) settle(snap *Snapshot, m store.Model, ts []store.Target, serve
 	}
 	for _, t := range ts {
 		if !failed && t.ProviderID == servedID {
-			g.br.result(targetID(t), true)
+			g.rt.br.result(targetID(t), true)
+			g.rt.observe(t, true, time.Since(start)) // shortcut: whole-request latency (streams too), not time to first token
 			health(t, true)
 			break
 		}
-		g.br.result(targetID(t), false)
+		g.rt.br.result(targetID(t), false)
+		g.rt.observe(t, false, 0)
 		health(t, false)
 	}
 	return snap.Providers[servedID].Name
@@ -340,7 +344,7 @@ func (g *Gateway) settle(snap *Snapshot, m store.Model, ts []store.Target, serve
 
 // TargetOpen reports whether the circuit breaker currently skips this provider target.
 func (g *Gateway) TargetOpen(providerID, model string) bool {
-	return !g.br.ok(targetID(store.Target{ProviderID: providerID, Model: model}))
+	return !g.rt.br.ok(targetID(store.Target{ProviderID: providerID, Model: model}))
 }
 
 func cost(m store.Model, in, out int) int64 {
@@ -408,7 +412,13 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errf(400, "invalid_request_error", "bad_request", "body must be a chat completion request with model and messages"))
 		return
 	}
-	m, ts, e := g.resolve(p, req.Model, "chat")
+	m, ts, e := g.resolve(p, req.Model, "chat", func() string {
+		i := slices.IndexFunc(req.Messages, func(m openai.OpenAIMessage) bool { return m.Role == schemas.ChatMessageRoleUser })
+		if i < 0 {
+			i = 0
+		}
+		return affinityKey(req.PromptCacheKey, req.Messages[:i], req.Tools)
+	})
 	if e != nil {
 		writeError(w, e)
 		return
@@ -457,10 +467,12 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	done := g.rt.begin(ts[0])
 	resp, berr := g.BF.ChatCompletionRequest(bctx, breq)
+	done()
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settle(snap, m, ts, "", targetFault(ae.status), start, 0)
+		g.settleErr(snap, m, ts, berr, start)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)
 		return
@@ -483,7 +495,13 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	g.record(p, m, l, start)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("x-gateway-provider", provName)
+	w.Header().Set("X-GW-Route", routeHeader(m, provName, resp.ExtraFields.RoutingInfo.Model))
 	_, _ = w.Write(out)
+}
+
+// routeHeader is the X-GW-Route value: "<strategy>; <provider name>/<upstream model>".
+func routeHeader(m store.Model, provName, upstream string) string {
+	return strategyName(m) + "; " + provName + "/" + upstream
 }
 
 func cacheTTL(r *http.Request) time.Duration {
@@ -496,10 +514,11 @@ func cacheTTL(r *http.Request) time.Duration {
 
 func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *principal, m store.Model, ts []store.Target, breq *schemas.BifrostChatRequest, start time.Time) {
 	snap := g.snap.Load()
+	defer g.rt.begin(ts[0])()
 	ch, berr := g.BF.ChatCompletionStreamRequest(ctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settle(snap, m, ts, "", targetFault(ae.status), start, 0)
+		g.settleErr(snap, m, ts, berr, start)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg, Stream: true}, start)
 		writeError(w, ae)
 		return
@@ -523,7 +542,9 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 			data, _ = json.Marshal(map[string]any{"error": map[string]any{"message": ae.msg, "type": ae.typ, "code": ae.code}})
 		} else if c := chunk.BifrostChatResponse; c != nil {
 			if served == "" { // headers are still unsent before the first chunk
-				w.Header().Set("x-gateway-provider", snap.Providers[snap.byBifrost[c.ExtraFields.RoutingInfo.Provider]].Name)
+				name := snap.Providers[snap.byBifrost[c.ExtraFields.RoutingInfo.Provider]].Name
+				w.Header().Set("x-gateway-provider", name)
+				w.Header().Set("X-GW-Route", routeHeader(m, name, c.ExtraFields.RoutingInfo.Model))
 			}
 			served = c.ExtraFields.RoutingInfo.Provider
 			if c.Usage != nil {
@@ -575,7 +596,7 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errf(400, "invalid_request_error", "bad_request", "body must be an embeddings request with model and input"))
 		return
 	}
-	m, ts, e := g.resolve(p, req.Model, "embedding")
+	m, ts, e := g.resolve(p, req.Model, "embedding", nil)
 	if e != nil {
 		writeError(w, e)
 		return
@@ -607,7 +628,7 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 	resp, berr := g.BF.EmbeddingRequest(bctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settle(snap, m, ts, "", targetFault(ae.status), start, 0)
+		g.settleErr(snap, m, ts, berr, start)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)
 		return

@@ -24,6 +24,10 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `PROVIDER_CONCURRENCY` | `64` | Concurrent upstream requests per provider (Bifrost workers). |
 | `PROVIDER_BUFFER` | `256` | Queued requests per provider before callers wait. |
 | `WEBHOOK_QUEUE` | `1000` | Webhook events buffered before new events are dropped (`gateway_webhook_deliveries_total{result="dropped"}`). |
+| `KB_WORKERS` | `1` | Knowledge-base ingestion goroutines per node (chunk + embed queued documents). |
+| `KB_INDEX_MB` | `256` | Memory for in-memory KB search indexes per node (LRU across KBs; ~1.6 KB per 512-dim chunk). |
+| `KB_MAX_ORG_CHUNKS` | `300000` | Chunks one org may store across its knowledge bases. |
+| `KB_MAX_DOC_MB` | `10` | Largest knowledge-base document upload. |
 | `USAGE_QUEUE` | `10000` | Request-log rows buffered before rows are dropped (billing counters are never dropped). |
 | `METRICS_TOKEN` | – | If set, `/metrics` requires `Authorization: Bearer <token>`. |
 | `LOG_LEVEL` | `info` | `debug` for more. |
@@ -42,6 +46,7 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `x-goog-api-key` or `?key=` | API key on `/genai/*` (what the Google GenAI SDKs send). |
 | `anthropic-version`, `anthropic-beta` | Accepted (and allowed by CORS) on `/anthropic/v1/*`, ignored. |
 | `x-gateway-cache: <seconds>` | Serve an identical earlier non-stream request from cache (max 86400). Cache hits cost nothing. |
+| `X-GW-KB: vs_a,vs_b` or `off` | Ground the request on these knowledge bases (max 3) or turn off the key's `kb_ids` (docs/API.md "Knowledge bases"). |
 | `x-gateway-mcp-clients: name1,name2` or `*` | Inject tools from these MCP servers (only servers granted to your org and, if the key has `mcp_servers`, listed there). |
 
 SDK base URLs: OpenAI SDKs use `https://<host>/v1` or the alias `https://<host>/openai/v1`;
@@ -50,4 +55,5 @@ Anthropic SDKs use `https://<host>/anthropic`; Google GenAI SDKs use `https://<h
 JS `new GoogleGenAI({apiKey: "sk-gw-…", httpOptions: {baseUrl: "https://<host>/genai"}})`) and catalog
 ids as model names (`model="vendor/name"`).
 
-Response headers: `x-gateway-provider` (provider that served), `x-gateway-request-id`, `x-gateway-cache-hit`.
+Response headers: `x-gateway-provider` (provider that served), `x-gateway-request-id`, `x-gateway-cache-hit`,
+and on grounded requests `X-GW-KB` (KBs used, `empty` or `error`) and `X-GW-KB-Sources` (`doc#chunk` list).

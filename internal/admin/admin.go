@@ -137,6 +137,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/mcp", a.operator(a.putMCP))
 	mux.HandleFunc("PUT /api/admin/mcp/{id}", a.operator(a.putMCP))
 	mux.HandleFunc("DELETE /api/admin/mcp/{id}", a.operator(a.deleteMCP))
+	a.registerKB(mux)
+
+	// Unknown API paths answer JSON 404 instead of falling through to the UI's index.html.
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, http.StatusNotFound, "not found") })
 }
 
 // ---- middleware ----
@@ -714,6 +718,7 @@ type keyInput struct {
 	MCPServers       *[]string `json:"mcp_servers"`
 	ExpiresInDays    *int      `json:"expires_in_days"`
 	Revoked          *bool     `json:"revoked"`
+	KBIDs            *[]string `json:"kb_ids"` // admin only; validated by checkKBIDs
 }
 
 func (in keyInput) apply(k *store.APIKey) {
@@ -735,6 +740,9 @@ func (in keyInput) apply(k *store.APIKey) {
 	if in.MCPServers != nil {
 		k.MCPServers = *in.MCPServers
 	}
+	if in.KBIDs != nil {
+		k.KBIDs = *in.KBIDs
+	}
 	if in.ExpiresInDays != nil && *in.ExpiresInDays > 0 {
 		t := time.Now().UTC().AddDate(0, 0, *in.ExpiresInDays)
 		k.ExpiresAt = &t
@@ -754,6 +762,9 @@ func (a *API) createKey(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	if !a.keyKBs(w, r, &in) {
+		return
+	}
 	secret := gateway.KeyPrefix + base64.RawURLEncoding.EncodeToString(b)
 	k := &store.APIKey{OrgID: r.PathValue("org"), CreatedBy: user(r).ID, Prefix: secret[:12]}
 	in.Revoked = nil
@@ -765,6 +776,7 @@ func (a *API) createKey(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	a.G.InvalidateAuth()
 	a.audit(r, k.OrgID, "key.create", k.ID, k.Name)
 	a.emit(k.OrgID, webhook.KeyCreated, map[string]any{"key_id": k.ID, "name": k.Name, "prefix": k.Prefix})
 	writeJSON(w, http.StatusCreated, map[string]any{"key": k, "secret": secret})
@@ -783,10 +795,13 @@ func (a *API) patchKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if role(r).Rank() < store.RoleAdmin.Rank() {
 		// members may rename or revoke their own keys, not lift limits an admin set
-		if cur.CreatedBy != user(r).ID || in.RPM != nil || in.TPM != nil || in.MonthlyBudgetUSD != nil || in.Models != nil || in.MCPServers != nil || in.ExpiresInDays != nil {
+		if cur.CreatedBy != user(r).ID || in.RPM != nil || in.TPM != nil || in.MonthlyBudgetUSD != nil || in.Models != nil || in.MCPServers != nil || in.ExpiresInDays != nil || in.KBIDs != nil {
 			fail(w, errForbidden)
 			return
 		}
+	}
+	if !a.keyKBs(w, r, &in) {
+		return
 	}
 	k, err := a.S.UpdateKey(r.Context(), org, id, func(k *store.APIKey) error { in.apply(k); return nil })
 	if err != nil {
@@ -794,7 +809,7 @@ func (a *API) patchKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.G.InvalidateAuth() // revocation and new limits apply on this node immediately
-	a.audit(r, org, "key.update", id, fmt.Sprintf("revoked=%v rpm=%d tpm=%d", k.Revoked, k.RPM, k.TPM))
+	a.audit(r, org, "key.update", id, fmt.Sprintf("revoked=%v rpm=%d tpm=%d kb_ids=%v", k.Revoked, k.RPM, k.TPM, k.KBIDs))
 	if k.Revoked && !cur.Revoked {
 		a.emit(org, webhook.KeyRevoked, map[string]any{"key_id": k.ID, "name": k.Name, "prefix": k.Prefix})
 	}

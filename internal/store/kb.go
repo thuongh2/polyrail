@@ -32,24 +32,25 @@ var errNoBox = errors.New("knowledge bases need MASTER_KEY")
 
 // KB is a knowledge base: an org's searchable document collection. Key: kb/<org>/<id>.
 type KB struct {
-	ID               string    `json:"id"`
-	OrgID            string    `json:"org_id"`
-	Name             string    `json:"name"`
-	Description      string    `json:"description,omitempty"`
-	EmbedModel       string    `json:"embedding_model"`      // org-visible kind=embedding model id
-	Dimensions       int       `json:"dimensions,omitempty"` // requested embedding size; 0 = native
-	ChunkChars       int       `json:"chunk_chars"`
-	OverlapChars     int       `json:"overlap_chars"`
-	TopK             int       `json:"top_k"`
-	MinScore         float64   `json:"min_score"` // cosine floor of the vector leg
-	MaxContextTokens int       `json:"max_context_tokens"`
-	Rev              int64     `json:"rev"` // bumped whenever the searchable set changes
-	Docs             int       `json:"docs"`
-	Chunks           int       `json:"chunks"`
-	Bytes            int64     `json:"bytes"`
-	CreatedByKey     string    `json:"created_by_key,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID               string            `json:"id"`
+	OrgID            string            `json:"org_id"`
+	Name             string            `json:"name"`
+	Description      string            `json:"description,omitempty"`
+	EmbedModel       string            `json:"embedding_model"`      // org-visible kind=embedding model id
+	Dimensions       int               `json:"dimensions,omitempty"` // requested embedding size; 0 = native
+	ChunkChars       int               `json:"chunk_chars"`
+	OverlapChars     int               `json:"overlap_chars"`
+	TopK             int               `json:"top_k"`
+	MinScore         float64           `json:"min_score"` // cosine floor of the vector leg
+	MaxContextTokens int               `json:"max_context_tokens"`
+	Rev              int64             `json:"rev"` // bumped whenever the searchable set changes
+	Docs             int               `json:"docs"`
+	Chunks           int               `json:"chunks"`
+	Bytes            int64             `json:"bytes"`
+	CreatedByKey     string            `json:"created_by_key,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"` // OpenAI vector-store metadata (≤16 pairs)
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
 // KBDoc is one document of a KB. Key: kbdoc/<org>/<kb>/<id>.

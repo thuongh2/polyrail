@@ -123,6 +123,7 @@ func (s *Service) process(ctx context.Context, owner string, job *store.KBJob, d
 			return
 		}
 		if err != nil || len(vecs) != end-start {
+			slog.Warn("kb embedding failed", "org", job.OrgID, "doc", doc.ID, "err", err)
 			fail("embedding failed", false)
 			return
 		}

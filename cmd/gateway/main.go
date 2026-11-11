@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,6 +23,7 @@ import (
 	"github.com/agent-gateway/agent-gateway/internal/admin"
 	"github.com/agent-gateway/agent-gateway/internal/catalog"
 	"github.com/agent-gateway/agent-gateway/internal/gateway"
+	"github.com/agent-gateway/agent-gateway/internal/kb"
 	"github.com/agent-gateway/agent-gateway/internal/limits"
 	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/agent-gateway/agent-gateway/internal/usage"
@@ -138,6 +140,22 @@ func run() error {
 		return err
 	}
 
+	// knowledge bases (docs/KB.md): URL ingestion only reaches public hosts unless private
+	// provider URLs are allowed
+	checkURL, dialer := gateway.CheckPublicURL, gateway.PublicDialer(15*time.Second)
+	if allowPrivate {
+		checkURL, dialer = func(string) error { return nil }, &net.Dialer{Timeout: 15 * time.Second}
+	}
+	g.KB = kb.New(s, g, kb.Config{
+		Workers:      envInt("KB_WORKERS", 1),
+		IndexMB:      envInt("KB_INDEX_MB", 256),
+		MaxOrgChunks: envInt("KB_MAX_ORG_CHUNKS", 300000),
+		MaxDocMB:     envInt("KB_MAX_DOC_MB", 10),
+		CheckURL:     checkURL,
+		DialContext:  dialer.DialContext,
+	})
+	g.KB.Start(ctx)
+
 	publicURL := strings.TrimRight(env("PUBLIC_URL", "http://localhost"+listenPort()), "/")
 	acfg := admin.Config{
 		MasterKey:        masterKey,
@@ -192,6 +210,15 @@ func run() error {
 	mux.HandleFunc("GET /v1/videos/{id}", g.GetVideo)
 	mux.HandleFunc("GET /v1/videos/{id}/content", g.VideoContent)
 	mux.HandleFunc("DELETE /v1/videos/{id}", g.DeleteVideo)
+	mux.HandleFunc("POST /v1/vector_stores", g.CreateVectorStore)
+	mux.HandleFunc("GET /v1/vector_stores", g.ListVectorStores)
+	mux.HandleFunc("GET /v1/vector_stores/{id}", g.GetVectorStore)
+	mux.HandleFunc("DELETE /v1/vector_stores/{id}", g.DeleteVectorStore)
+	mux.HandleFunc("POST /v1/vector_stores/{id}/files", g.CreateVectorStoreFile)
+	mux.HandleFunc("GET /v1/vector_stores/{id}/files", g.ListVectorStoreFiles)
+	mux.HandleFunc("GET /v1/vector_stores/{id}/files/{file_id}", g.GetVectorStoreFile)
+	mux.HandleFunc("DELETE /v1/vector_stores/{id}/files/{file_id}", g.DeleteVectorStoreFile)
+	mux.HandleFunc("POST /v1/vector_stores/{id}/search", g.SearchVectorStore)
 	mux.HandleFunc("POST /v1/completions", g.Completions)
 	mux.HandleFunc("POST /v1/responses", g.Idempotent(g.Responses))
 	mux.HandleFunc("POST /v1/audio/speech", g.Speech)
@@ -285,8 +312,8 @@ func withCORS(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if p := r.URL.Path; strings.HasPrefix(p, "/v1/") || strings.HasPrefix(p, "/openai/v1/") || strings.HasPrefix(p, "/anthropic/v1/") || strings.HasPrefix(p, "/genai/") {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, anthropic-version, anthropic-beta, x-goog-api-key, x-goog-api-client, x-gateway-cache, x-gateway-mcp-clients, Idempotency-Key")
-			w.Header().Set("Access-Control-Expose-Headers", "x-gateway-provider, x-gateway-request-id, x-gateway-cache-hit, X-GW-Cost-Micros, Idempotent-Replayed, X-GW-Cache, X-GW-Cache-Score, X-GW-Route, X-GW-Guardrail, X-GW-Compressed-Chars")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, anthropic-version, anthropic-beta, x-goog-api-key, x-goog-api-client, x-gateway-cache, x-gateway-mcp-clients, Idempotency-Key, X-GW-KB")
+			w.Header().Set("Access-Control-Expose-Headers", "x-gateway-provider, x-gateway-request-id, x-gateway-cache-hit, X-GW-Cost-Micros, Idempotent-Replayed, X-GW-Cache, X-GW-Cache-Score, X-GW-Route, X-GW-Guardrail, X-GW-Compressed-Chars, X-GW-KB, X-GW-KB-Sources")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return

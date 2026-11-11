@@ -364,7 +364,7 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 	}
 	bctx := newBifrostCtx(r)
 	breq := req.ToBifrostResponsesRequest(bctx)
-	if !g.prepareResponses(w, p, m, ts, snap, breq, start) {
+	if p = g.prepareResponses(w, r, p, m, ts, snap, breq, start); p == nil {
 		return
 	}
 	defer g.rt.begin(ts[0])()
@@ -405,9 +405,10 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 	writeJSONHidden(w, l.Provider, resp)
 }
 
-// prepareResponses applies guardrails, the org's max-token cap and the route plan to a Responses
-// request; false means the error response was already written.
-func (g *Gateway) prepareResponses(w http.ResponseWriter, p *principal, m store.Model, ts []store.Target, snap *Snapshot, breq *schemas.BifrostResponsesRequest, start time.Time) bool {
+// prepareResponses applies guardrails, knowledge-base grounding (when r is set), the org's
+// max-token cap and the route plan to a Responses request. It returns the principal to bill
+// (carrying the grounding excerpt count), or nil when the error response was already written.
+func (g *Gateway) prepareResponses(w http.ResponseWriter, r *http.Request, p *principal, m store.Model, ts []store.Target, snap *Snapshot, breq *schemas.BifrostResponsesRequest, start time.Time) *principal {
 	var in guardInput
 	for i := range breq.Input {
 		c := breq.Input[i].Content
@@ -432,7 +433,15 @@ func (g *Gateway) prepareResponses(w http.ResponseWriter, p *principal, m store.
 		}
 	}
 	if !g.guardIn(w, p, m, in, start) {
-		return false
+		return nil
+	}
+	sel, e := g.kbSelect(w, r, p)
+	if e != nil {
+		writeError(w, e)
+		return nil
+	}
+	if sel != nil {
+		p = g.groundResponses(r.Context(), w, p, sel, breq)
 	}
 	if breq.Params == nil {
 		breq.Params = &schemas.ResponsesParameters{}
@@ -441,7 +450,7 @@ func (g *Gateway) prepareResponses(w http.ResponseWriter, p *principal, m store.
 		breq.Params.MaxOutputTokens = &c
 	}
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
-	return true
+	return p
 }
 
 // ---- shared SSE pump ----

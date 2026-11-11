@@ -59,7 +59,7 @@ func (g *Gateway) AnthropicMessages(rw http.ResponseWriter, r *http.Request) {
 	}
 	bctx := newBifrostCtx(r)
 	breq := req.ToBifrostResponsesRequest(bctx)
-	if !g.prepareResponses(w, p, m, ts, snap, breq, start) {
+	if p = g.prepareResponses(w, r, p, m, ts, snap, breq, start); p == nil {
 		return
 	}
 	if req.Stream != nil && *req.Stream {

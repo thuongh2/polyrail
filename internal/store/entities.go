@@ -284,6 +284,7 @@ type RequestLog struct {
 	LatencyMs int64     `json:"latency_ms"`
 	Cached    bool      `json:"cached,omitempty"`
 	Stream    bool      `json:"stream,omitempty"`
+	KBChunks  int       `json:"kb_chunks,omitempty"` // knowledge-base excerpts injected (docs/KB.md §4)
 	At        time.Time `json:"at"`
 }
 

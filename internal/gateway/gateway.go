@@ -89,7 +89,8 @@ type Gateway struct {
 type principal struct {
 	Key      store.APIKey
 	Org      store.Org
-	kbChunks int // knowledge-base excerpts injected into this request (request log)
+	kbChunks int       // knowledge-base excerpts injected into this request (request log)
+	rr       *reqRoute // request routing options (reqroute.go); nil = none
 }
 
 // HashKey is how API key secrets are stored and looked up.
@@ -377,7 +378,8 @@ func (g *Gateway) settle(bctx *schemas.BifrostContext, snap *Snapshot, m store.M
 	}
 	g.settleKeys(bctx, snap, !failed, nil, start, inTokens, outTokens)
 	health := func(t store.Target, ok bool) {
-		if m.OrgID != "" { // shortcut: only public health is shown; record private too when orgs get a health view
+		o := ownerOf(m, t)
+		if o.OrgID != "" { // shortcut: only public health is shown; record private too when orgs get a health view
 			return
 		}
 		var lat int64
@@ -385,12 +387,13 @@ func (g *Gateway) settle(bctx *schemas.BifrostContext, snap *Snapshot, m store.M
 		if ok {
 			lat, out = time.Since(start).Milliseconds(), outTokens
 		}
-		g.Usage.RecordHealth(m.ID, t.ProviderID, ok, lat, out, start)
+		g.Usage.RecordHealth(o.ID, t.ProviderID, ok, lat, out, start)
 	}
 	for _, t := range ts {
 		if !failed && t.ProviderID == servedID {
 			g.rt.br.result(targetID(t), true)
 			g.rt.observe(t, true, time.Since(start)) // shortcut: whole-request latency (streams too), not time to first token
+			g.rt.observeTPS(t, outTokens, time.Since(start))
 			health(t, true)
 			break
 		}
@@ -415,6 +418,9 @@ func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start 
 	l.ID, l.OrgID, l.KeyID, l.Model, l.At = store.NewID(), p.Org.ID, p.Key.ID, m.ID, start.UTC()
 	if l.KBChunks == 0 {
 		l.KBChunks = p.kbChunks
+	}
+	if p.rr != nil {
+		l.EndUser = p.rr.endUser
 	}
 	l.LatencyMs = time.Since(start).Milliseconds()
 	if !l.Cached && l.Cost == 0 { // callers may price by something other than tokens (audio minutes)
@@ -480,12 +486,18 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
+	body, rr, e := g.routeBody(p, body, "chat")
+	if e != nil {
+		writeError(w, e)
+		return
+	}
+	p = p.withRoute(rr)
 	var req openai.OpenAIChatRequest
 	if err := sonic.Unmarshal(body, &req); err != nil || req.Model == "" || len(req.Messages) == 0 {
 		writeError(w, errf(400, "invalid_request_error", "bad_request", "body must be a chat completion request with model and messages"))
 		return
 	}
-	m, ts, e := g.resolve(p, req.Model, "chat", func() string {
+	m, ts, e := g.resolveRoute(p, req.Model, "chat", func() string {
 		i := slices.IndexFunc(req.Messages, func(m openai.OpenAIMessage) bool { return m.Role == schemas.ChatMessageRoleUser })
 		if i < 0 {
 			i = 0
@@ -541,10 +553,11 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		cacheKey = hex.EncodeToString(h[:])
 		if out, ok := g.resp.Get(cacheKey); ok {
 			mCacheHits.Inc()
-			setCost(w, g.record(p, m, store.RequestLog{Status: 200, Cached: true, Provider: "cache"}, start))
+			micros := g.record(p, m, store.RequestLog{Status: 200, Cached: true, Provider: "cache"}, start)
+			setCost(w, micros)
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("x-gateway-cache-hit", "true")
-			_, _ = w.Write(out)
+			_, _ = w.Write(p.withCost(out, micros))
 			return
 		}
 	}
@@ -564,7 +577,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	resp, berr := g.BF.ChatCompletionRequest(bctx, breq)
 	done()
 	if berr != nil {
-		ae := fromBifrost(berr, m.OrgID != "")
+		ae := fromBifrost(berr, privateRoute(m, ts))
 		g.settleErr(bctx, snap, m, ts, berr, start)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)
@@ -576,7 +589,8 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
 	l.Provider = provName
-	resp.Model = m.ID
+	used := usedModel(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, resp.ExtraFields.RoutingInfo.Model)
+	resp.Model = used.ID
 	out, err := hideExtra(chatOut{BifrostChatResponse: resp, Provider: provName})
 	if err != nil {
 		writeError(w, errf(500, "api_error", "encode", "cannot encode response"))
@@ -586,11 +600,12 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		g.resp.Set(cacheKey, out, len(out), ttl)
 	}
 	g.semStore(sem, out)
-	setCost(w, g.record(p, m, l, start))
+	micros := g.record(p, used, l, start)
+	setCost(w, micros)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("x-gateway-provider", provName)
-	w.Header().Set("X-GW-Route", routeHeader(m, provName, resp.ExtraFields.RoutingInfo.Model))
-	_, _ = w.Write(out)
+	w.Header().Set("X-GW-Route", routeHeader(used, provName, resp.ExtraFields.RoutingInfo.Model))
+	_, _ = w.Write(p.withCost(out, micros))
 }
 
 // routeHeader is the X-GW-Route value: "<strategy>; <provider name>/<upstream model>".
@@ -611,7 +626,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 	defer g.rt.begin(ts[0])()
 	ch, berr := g.BF.ChatCompletionStreamRequest(ctx, breq)
 	if berr != nil {
-		ae := fromBifrost(berr, m.OrgID != "")
+		ae := fromBifrost(berr, privateRoute(m, ts))
 		g.settleErr(ctx, snap, m, ts, berr, start)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg, Stream: true}, start)
 		writeError(w, ae)
@@ -624,6 +639,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 	l := store.RequestLog{Status: 200, Stream: true}
 	var served schemas.ModelProvider
 	var chars int
+	used := m
 	clientGone := false
 	for chunk := range ch { // always drain: Bifrost owns the channel
 		if clientGone {
@@ -631,14 +647,15 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 		}
 		var data []byte
 		if chunk.BifrostError != nil {
-			ae := fromBifrost(chunk.BifrostError, m.OrgID != "")
+			ae := fromBifrost(chunk.BifrostError, privateRoute(m, ts))
 			l.Status, l.Error = ae.status, ae.msg
 			data, _ = json.Marshal(map[string]any{"error": map[string]any{"message": ae.msg, "type": ae.typ, "code": ae.code}})
 		} else if c := chunk.BifrostChatResponse; c != nil {
 			if served == "" { // headers are still unsent before the first chunk
 				name := snap.Providers[snap.byBifrost[c.ExtraFields.RoutingInfo.Provider]].Name
+				used = usedModel(snap, m, ts, c.ExtraFields.RoutingInfo.Provider, c.ExtraFields.RoutingInfo.Model)
 				w.Header().Set("x-gateway-provider", name)
-				w.Header().Set("X-GW-Route", routeHeader(m, name, c.ExtraFields.RoutingInfo.Model))
+				w.Header().Set("X-GW-Route", routeHeader(used, name, c.ExtraFields.RoutingInfo.Model))
 			}
 			served = c.ExtraFields.RoutingInfo.Provider
 			if c.Usage != nil {
@@ -649,8 +666,11 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 					chars += len(*ch.Delta.Content)
 				}
 			}
-			c.Model = m.ID
+			c.Model = used.ID
 			data, _ = hideExtra(chatOut{BifrostChatResponse: c})
+			if c.Usage != nil {
+				data = p.withCost(data, billed(used, l.InTokens, l.OutTokens))
+			}
 		} else {
 			continue
 		}
@@ -669,7 +689,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 		l.OutTokens = (chars + 3) / 4 // shortcut: estimate when the provider sends no usage
 	}
 	l.Provider = g.settle(ctx, snap, m, ts, served, targetFault(l.Status), start, l.InTokens, l.OutTokens)
-	g.record(p, m, l, start)
+	g.record(p, used, l, start)
 }
 
 func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
@@ -716,7 +736,7 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.EmbeddingRequest(bctx, breq)
 	if berr != nil {
-		ae := fromBifrost(berr, m.OrgID != "")
+		ae := fromBifrost(berr, privateRoute(m, ts))
 		g.settleErr(bctx, snap, m, ts, berr, start)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)

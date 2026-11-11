@@ -48,8 +48,8 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 
 | OpenRouter | Polyrail | Notes |
 |---|---|---|
-| ZDR enforcement (account / guardrail / request `provider.zdr`, OR-ed) | gap · W1 | provider metadata `zdr`, `retention`, `trains_on_data`; routing filters |
-| `data_collection: deny` | gap · W1 | same metadata |
+| ZDR enforcement (account / guardrail / request `provider.zdr`, OR-ed) | partial · W1 | request `provider.zdr` have (D27); account / policy level with the policy engine | provider metadata `zdr`, `retention`, `trains_on_data`; routing filters |
+| `data_collection: deny` | have (request) | `Provider.Privacy`; policy level with the policy engine |
 | Data regions (`allowed_data_regions`: global / europe / us), regional endpoints | gap · W2 | provider `region` tag + policy; regional hostnames are a deploy concern |
 | Prompt / response logging off by default, opt-in per workspace | partial · W1 | we store metadata only; add opt-in content logging with TTL + encryption |
 | BYOK with declared ZDR | partial | org providers = BYOK; add the declaration |
@@ -58,13 +58,13 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 
 | OpenRouter | Polyrail | Notes |
 |---|---|---|
-| `models: [...]` fallback array | gap · W1 | try other gateway models in order |
-| `provider` object: `order`, `only`, `ignore`, `allow_fallbacks`, `require_parameters`, `sort` (price / throughput / latency), `max_price`, `preferred_min_throughput`, `preferred_max_latency`, `quantizations`, `data_collection`, `zdr` | partial · W1 | we have per-model strategies (cost, latency, …); add per-request overrides on the same router |
-| `:nitro` / `:floor` shortcuts | gap · W1 | aliases for `sort: throughput` / `price` |
-| Presets `@preset/<slug>` (saved model + params + routing) | gap · W1 | org-scoped |
+| `models: [...]` fallback array | have | one failover chain across models, billed on the model used (D27) |
+| `provider` object: `order`, `only`, `ignore`, `allow_fallbacks`, `require_parameters`, `sort` (price / throughput / latency), `max_price`, `preferred_min_throughput`, `preferred_max_latency`, `quantizations`, `data_collection`, `zdr` | have | every field; `quantizations` ignored and `require_parameters` modalities-only (no metadata), percentiles use p50 (D27) |
+| `:nitro` / `:floor` shortcuts | have | `sort: throughput` / `price` |
+| Presets `@preset/<slug>` (saved model + params + routing) | have | org-scoped, `/api/orgs/{org}/presets` |
 | Auto router (`openrouter/auto`) | gap · later | needs a classifier model; can reuse routing scores |
-| Usage accounting in body (`usage.cost`, cached + reasoning tokens) | partial · W1 | we send `X-GW-Cost-Micros`; add to body when `usage: {include: true}` |
-| `user` field for per-end-user analytics + sticky routing | gap · W1 | |
+| Usage accounting in body (`usage.cost`, cached + reasoning tokens) | have | with `usage: {include: true}`, streams too |
+| `user` field for per-end-user analytics + sticky routing | have | `end_user` on logs, `usage?group=end_user`, cache-affinity key |
 
 ## Observability
 

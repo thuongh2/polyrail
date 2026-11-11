@@ -19,6 +19,7 @@ type Snapshot struct {
 	Providers map[string]store.Provider // by provider id (keys decrypted)
 	Models    map[string]store.Model    // by owner + "|" + model id ("_" = public)
 	Pools     []store.ProxyPool         // operator proxy pools (member passwords decrypted)
+	Presets   map[string]store.Preset   // by org id + "|" + slug
 	byBifrost map[schemas.ModelProvider]string
 	keyOwner  map[string]string // provider key id -> provider id (loaded providers)
 }
@@ -90,8 +91,15 @@ func loadSnapshot(ctx context.Context, s *store.Store) (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	presets, err := s.ListPresets(ctx, "*")
+	if err != nil {
+		return nil, err
+	}
 	snap := &Snapshot{Version: ver, Providers: map[string]store.Provider{}, Models: map[string]store.Model{},
-		Pools: pools, byBifrost: map[schemas.ModelProvider]string{}, keyOwner: map[string]string{}}
+		Pools: pools, Presets: make(map[string]store.Preset, len(presets)), byBifrost: map[schemas.ModelProvider]string{}, keyOwner: map[string]string{}}
+	for _, p := range presets {
+		snap.Presets[p.OrgID+"|"+p.Slug] = p
+	}
 	sort.Slice(ps, func(i, j int) bool { return ps[i].CreatedAt.Before(ps[j].CreatedAt) })
 	for _, p := range ps {
 		if !p.Enabled {

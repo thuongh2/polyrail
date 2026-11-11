@@ -44,6 +44,13 @@ with sync_playwright() as p:
     if not pg.get_by_role("dialog").get_by_text("request.failed").count():
         failures.append("webhooks: create dialog has no event choices")
     pg.keyboard.press("Escape")
+    for scope in ["models", "platform/models"]:  # model name links open the public model page
+        pg.goto(f"{base}/app/{scope}"); pg.wait_for_load_state("networkidle")
+        link = pg.locator('main a[href*="/models/"]').first
+        if link.count():
+            link.click(); pg.wait_for_timeout(500); check(pg, f"click model in /app/{scope}")
+            if "/app/" in pg.url:
+                failures.append(f"click model in /app/{scope}: url is {pg.url[len(base):]}")
     pg.get_by_role("link", name="Models").first.click(); pg.wait_for_timeout(300); check(pg, "click header Models")
     b.close()
 

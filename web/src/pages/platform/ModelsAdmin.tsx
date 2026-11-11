@@ -127,7 +127,7 @@ export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
                     <TableRow key={m.id}>
                       <TableCell className="min-w-48">
                         {m.owner === "platform" && m.enabled ? (
-                          <Link href={modelHref(m.id)} className="font-medium underline-offset-4 hover:underline">
+                          <Link href={"~" + modelHref(m.id)} /* "~" escapes the nested /app router */ className="font-medium underline-offset-4 hover:underline">
                             {m.name}
                           </Link>
                         ) : (

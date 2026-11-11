@@ -79,6 +79,52 @@ platform-wide operator pages into an Admin area group. Never add a new top-level
 without an owner decision. Give the item `min`/`ws` for role gating and `keywords` for the palette; the
 breadcrumb and palette follow from it. Add the path to the matching click-through list in `scripts/ui-smoke.py`.
 
+## Playground (`/app/playground`, binding)
+
+`pages/console/Playground.tsx` is the lazy page shell (mode tabs in `?mode=`); panels live in
+`pages/console/playground/`: `media.tsx` (text to speech, speech to text, image, rerank), `shared.tsx`
+(model picker, `Meta`, helpers) and `chat/` (`ChatPanel`, `Controls`, `Composer`, `Message`, `Markdown`,
+`JsonView`, `dialogs`, `lib.ts` with the request builder, SSE reader, schema check, snippets and storage).
+
+- API key: tab memory only, never stored; Inspect and View code show it as `[redacted]` / `$POLYRAIL_API_KEY`.
+- Settings column (lg and up; below lg a bottom Sheet opened by "Settings"): model picker (chat models plus
+  `@preset/<slug>` from the org's presets), key, system prompt, then collapsible `<details>` groups:
+  Routing (fallback `models`, at most 5; `provider.sort` price/latency/throughput; `provider.zdr`),
+  Parameters (temperature, top_p, max_tokens, seed, stop ×4, frequency/presence penalty, `reasoning_effort`,
+  stream switch; empty = not sent; invalid values block Send with the reason), Response format (text,
+  `json_object`, `json_schema` with name, strict and a validated schema editor + example), Tools (JSON array
+  of function tools + sample, `tool_choice`), then the KB picker (`X-GW-KB`). Every request sends
+  `usage: {include: true}` (and `stream_options.include_usage` when streaming).
+- Answers render as Markdown through `react-markdown` 10.1.0 + `remark-gfm` 4.0.1 (D33), in their own chunk
+  loaded with the first answer (plain text until then). Raw HTML is dropped (`skipHtml`), links keep only
+  http(s)/mailto and open with `rel="noopener noreferrer nofollow"`, images load only from https and only
+  after a click ("Load image from host"), code blocks get a language label, copy button and horizontal scroll,
+  tables scroll inside their border. `[n]` becomes a chip linking to source n when `X-GW-KB-Sources` came back.
+  Tokens are applied once per animation frame; finished messages are memoized, so streaming re-renders only
+  the growing answer. Per answer: Copy, Raw/Formatted, Regenerate (last), Inspect.
+- JSON modes: the answer shows as a folding tree with a badge: Valid JSON, Matches schema or Schema mismatch
+  (n), from `checkSchema` (type, enum, required, properties, additionalProperties false, items; no library).
+- Vision: images by picker, paste, drop or https URL become `image_url` parts (`detail` select). Only when the
+  model (or the preset's model) lists `image` in `modalities`; otherwise the buttons explain why. Limits:
+  PNG/JPEG/WebP/GIF, 5 MB each, at most 5 and 5 MB together (the default 8 MB body limit after base64).
+  Text files up to 200 KB are inserted into the message as a fenced block.
+- Tool calls render as cards (pretty arguments, call id). Calls for tools not in the Tools list are marked
+  MCP (gateway-injected) and can be run with "Run on the gateway" (`POST /v1/mcp/tool/execute`); each pending
+  call gets a result box, and "Send tool result" appends `tool` messages and continues.
+- Metadata per answer: model, `X-GW-Route` (else provider), time to first token, total, tokens in (cached) /
+  out (reasoning), cost (`usage.cost_micros` / `usage.cost`, else `X-GW-Cost-Micros`), cache hit
+  (`X-GW-Cache` / `x-gateway-cache-hit`), guardrail (`X-GW-Guardrail`), KB state and sources. Inspect (Sheet)
+  shows the redacted request and the response headers + body (streams: the assembled completion and chunk count).
+- Errors stay in the thread: status, `error.code`, message, policy name, a hint for common codes, and Retry
+  (disabled with a countdown while a 429 `Retry-After` runs).
+- Conversation: edit and resend a user message (later turns are dropped), regenerate, Stop / Esc (AbortController),
+  New chat, Export (JSON download), History (last 20 chats per org in `localStorage["playground.chats.<org>"]`,
+  saved after each answer, without the key, image data or Inspect payloads), View code (curl, Python openai SDK
+  with `extra_body` / `extra_headers`, TypeScript openai SDK) for the request Send would make now.
+- Keyboard: Enter or Ctrl/Cmd+Enter sends (Ctrl/Cmd+Enter also saves an edited message), Shift+Enter is a newline, Esc stops streaming.
+- Not built: compare mode (two models side by side) and syntax highlighting (no highlighter under ~15 KB gzip
+  that covers enough languages).
+
 ## Routes
 
 Public: `/`, `/models`, `/models/<vendor>/<name>`, `/status`, `/docs`, `/login`, `/signup`.

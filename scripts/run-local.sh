@@ -82,7 +82,9 @@ if [ "$DEMO" = 1 ]; then
              "demo/voice-tts:Demo Voice (text to speech):speech:15000000:0:0" "demo/whisper-stt:Demo Whisper (speech to text):transcription:0:0:6000" \
              "demo/embed:Demo Embed:embedding:20000:0:0" "demo/image:Demo Image:image:0:0:0" "demo/rerank:Demo Rerank:rerank:0:0:0"; do
       IFS=: read -r mid name kind pin pout pmin <<< "$m"
-      curl "${H[@]}" -X POST "$B/api/admin/models" -d "{\"id\":\"$mid\",\"name\":\"$name\",\"kind\":\"$kind\",\"description\":\"Answers from the local mock provider\",\"input_price_micros\":$pin,\"output_price_micros\":$pout,\"audio_minute_price_micros\":$pmin,\"targets\":[{\"provider_id\":\"$PROV\",\"model\":\"mock\"}],\"enabled\":true}" >/dev/null
+      MODS="" # demo/large takes image input, so the Playground's vision attach can be tried
+      [ "$mid" = demo/large ] && MODS='"modalities":["text","image"],'
+      curl "${H[@]}" -X POST "$B/api/admin/models" -d "{$MODS\"id\":\"$mid\",\"name\":\"$name\",\"kind\":\"$kind\",\"description\":\"Answers from the local mock provider\",\"input_price_micros\":$pin,\"output_price_micros\":$pout,\"audio_minute_price_micros\":$pmin,\"targets\":[{\"provider_id\":\"$PROV\",\"model\":\"mock\"}],\"enabled\":true}" >/dev/null
     done
     ORG=$(curl "${H[@]}" "$B/api/auth/me" | id)
     SECRET=$(curl "${H[@]}" -X POST "$B/api/orgs/$ORG/keys" -d '{"name":"demo"}' | grep -o '"secret":"[^"]*"' | cut -d'"' -f4)

@@ -119,9 +119,9 @@ function useNow(fast: boolean) {
 const clock = (t: string) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 export default function ProviderDetail({ scope = "org", id }: { scope?: Scope; id: string }) {
-  const { org, can, user } = useSession();
+  const { org, wsCan, user } = useSession();
   const base = providersPath(scope, org?.id);
-  const allowed = scope === "platform" ? !!user?.operator : can("admin");
+  const allowed = scope === "platform" ? !!user?.operator : wsCan("admin");
   const back = scope === "platform" ? "/platform/providers" : "/providers";
 
   if (!allowed || !base)

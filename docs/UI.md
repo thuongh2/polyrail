@@ -34,7 +34,8 @@ charts are small SVG components. No new runtime dependency without a reason in d
 `components/layout/ConsoleLayout.tsx`, modeled on GitLab's current frame. The browser page never scrolls:
 the frame is `h-dvh overflow-hidden` on the muted `--frame` surface (token on `:root` and `.dark`).
 
-- Top bar (no border, on the frame): wordmark, org switcher, then Models, theme toggle, account, sign out.
+- Top bar (no border, on the frame): wordmark (sm and up), org switcher, workspace switcher, then Models, theme
+  toggle, account, sign out.
 - Sidebar (md and up, on the frame, no border): nav groups from the `groups` config with plain small
   muted headings; active item is a `--frame-active` pill, bold, with a thin `bg-signal` left mark. The nav
   scrolls internally (`no-scrollbar`); Account, Docs and "Collapse sidebar" are pinned below it.
@@ -43,6 +44,12 @@ the frame is `h-dvh overflow-hidden` on the muted `--frame` surface (token on `:
   It is the only scroll container (`<main tabIndex=0>`, `no-scrollbar`, keyboard/wheel/touch scroll
   still work) and resets to the top on navigation. Pages must not rely on window scroll. Inside: a
   breadcrumb derived from the nav config ("Organization / API keys"), then the page, max width 1200px.
+- Workspaces (D31): `useSession()` exposes `workspaces`, `ws` (null = "All workspaces", org owners/admins only),
+  `wsCan(min)` (role in the current workspace), `wsList(path)` (adds `?workspace=`) and `wsBody` (`{workspace_id}` for
+  create bodies). The choice is stored per org in `localStorage["console.ws.<org>"]` and mirrored in `?ws=` (absent
+  for the default). Workspace-scoped pages (API keys, Providers, Models, Policies, Presets, Knowledge bases,
+  Observability, Logs, Activity, Playground) list with `wsList` and create with `wsBody`; under "All workspaces" they
+  add a Workspace column and create in the default workspace. The layout remounts the page on a switch, so lists reload.
 - Below md the sidebar is the Sheet drawer and the panel is full width without the rounded inset.
 - Scrollbars: `no-scrollbar` (hidden, still scrollable) and `scrollbar-thin` (thin, border-colored) are
   utilities in index.css. Wide tables (`TableFrame`) and dialogs use `scrollbar-thin`.
@@ -52,8 +59,8 @@ the frame is `h-dvh overflow-hidden` on the muted `--frame` surface (token on `:
 Public: `/`, `/models`, `/models/<vendor>/<name>`, `/status`, `/docs`, `/login`, `/signup`.
 Sign-in is email first: `GET /api/auth/sso?email=` decides between "Continue with SSO" and the password field;
 an `sso_required` login error switches to the SSO button.
-Console: `/app/activity|logs|playground|keys|credits|models|presets|kbs|providers|members|policies|settings|webhooks|alerts|observability|sso|audit|account`
+Console: `/app/activity|logs|playground|keys|credits|models|presets|kbs|providers|workspaces|members|policies|settings|webhooks|alerts|observability|sso|audit|account`
 (`/app/sso` Security & SSO is owners only; `/app/observability` trace exports, admins)
-(`/app/keys?tab=tokens` is the management tokens tab, admins only),
+(`/app/keys?tab=tokens` is the management tokens tab, admins only; `/app/workspaces?tab=members&w=<id>` a workspace's members),
 `/app/kbs/<id>`, `/app/providers/<id>` (provider detail: keys, docs/KEYS.md),
 operators: `/app/platform/activity|orgs|providers|proxies|models|users|mcp|alerts|observability|audit`, `/app/platform/providers/<id>`.

@@ -26,6 +26,7 @@ const sections = [
   ["kb", "Knowledge bases"],
   ["keys", "Provider keys and alerts"],
   ["policies", "Policies"],
+  ["workspaces", "Workspaces"],
   ["regions", "Data regions"],
   ["mgmt", "Management tokens"],
   ["sso", "SSO & SCIM"],
@@ -456,6 +457,27 @@ curl ${base}/chat/completions \
             </p>
           </Section>
 
+          <Section id="workspaces" title="Workspaces">
+            <p>
+              An organization splits its work into workspaces (Organization → Workspaces). Every organization has a default workspace; org
+              owners and admins create more and are admins of all of them. Pick the workspace in the switcher next to the organization in
+              the console's top bar.
+            </p>
+            <HeaderTable
+              rows={[
+                ["Scoped", "API keys, private providers, private models, policies, presets, knowledge bases and trace exports belong to one workspace. A key reaches public models plus the private models, presets and knowledge bases of its own workspace."],
+                ["Organization-wide", "Credits, members, webhooks, alerts, guardrails, content logging and SSO. Usage and logs can be filtered by workspace; admins also group activity by workspace."],
+                ["Members", "Every org member is in the default workspace with their org role. Other workspaces have their own admins, members and viewers, added by hand or through SSO group mappings."],
+                ["Sharing", "An org admin can share a provider with all workspaces so every workspace's models may route to it."],
+                ["Budgets", "A policy marked as the workspace default applies to every key of the workspace, and its budget is one limit for all of them."],
+              ]}
+            />
+            <p>
+              In the API, create bodies take <C>workspace_id</C> and lists take <C>?workspace=</C>; the default workspace's id is{" "}
+              <C>default</C>. A workspace that still holds anything cannot be deleted (409 with what is left).
+            </p>
+          </Section>
+
           <Section id="regions" title="Data regions">
             <p>
               Each provider declares where it processes prompts: <C>global</C>, <C>europe</C>, <C>us</C> or another region name (provider
@@ -474,7 +496,8 @@ curl ${base}/chat/completions \
               Org admins create management tokens under API keys → Management tokens, for scripts and CI that call the admin API. Send the
               token as a bearer token to any <C>/api/orgs/{"{org}"}/…</C> route of its own organization; no cookie or CSRF header is needed.
               A token acts with its role (admin, member or viewer), never above its creator's current role, and cannot call <C>/v1</C>,
-              platform routes or the token routes themselves.
+              platform routes or the token routes themselves. A token limited to a workspace reaches only that workspace's keys,
+              providers, models, policies, presets and trace exports.
             </p>
             <CodeBlock
               code={`curl ${location.origin}/api/orgs/$ORG/usage?days=7 \\
@@ -492,7 +515,7 @@ curl ${base}/chat/completions \
                 ["SAML", "Create a SAML app in Okta, Entra ID or Google Workspace with the entity ID and ACS URL shown on the page, then give Polyrail the IdP metadata URL or XML. People at your verified domains get “Continue with SSO” on the sign-in page; new users get an account on first sign-in."],
                 ["Require SSO", "Refuses password sign-in and sign-up for emails at your verified domains (error sso_required). Needs SAML on and a verified domain. Platform operators can still use their password."],
                 ["SCIM 2.0", "Generate a token (shown once) and enter it with the base URL /scim/v2/{org} in your IdP. The IdP creates, updates and deprovisions users and groups; deprovisioning removes the membership and revokes the keys the person created in the organization."],
-                ["Group mappings", "Map an IdP group name (SCIM group or the SAML groups attribute) to viewer, member or admin. The highest mapped role wins; owners keep their role."],
+                ["Group mappings", "Map an IdP group name (SCIM group or the SAML groups attribute) to viewer, member or admin. The highest mapped role wins; owners keep their role. A mapping with a workspace gives that role in the workspace only."],
               ]}
             />
             <p>The IdP can only sign in or provision emails at domains the organization verified.</p>

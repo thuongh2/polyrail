@@ -3,18 +3,19 @@ import { Link, useLocation } from "wouter";
 import {
   Activity, BarChart3, LockKeyhole, Telescope, Bell, BookOpen, Boxes, Building2, CircleUserRound, CreditCard, FileText, KeyRound, LogOut, Menu,
   MessageSquare, Network, PanelLeftClose, PanelLeftOpen, Plug, Scale, ScrollText, Server, Settings, ShieldCheck, SlidersHorizontal, UserRound,
-  Users, Webhook, Wrench,
+  Users, Webhook, Wrench, FolderKanban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { authApi, type Role } from "@/lib/api";
-import { useSession } from "@/lib/session";
+import { ALL_WS, syncWsQuery, useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
 import { Wordmark } from "./PublicLayout";
 
-type Item = { href: string; label: string; icon: typeof Activity; min?: Role };
+/** ws: the page is workspace-scoped, so `min` is checked against the role in the current workspace. */
+type Item = { href: string; label: string; icon: typeof Activity; min?: Role; ws?: boolean };
 const groups: { label: string; items: Item[]; operator?: boolean }[] = [
   {
     label: "Usage",
@@ -32,13 +33,14 @@ const groups: { label: string; items: Item[]; operator?: boolean }[] = [
       { href: "/app/models", label: "Models", icon: Boxes },
       { href: "/app/presets", label: "Presets", icon: SlidersHorizontal },
       { href: "/app/kbs", label: "Knowledge bases", icon: BookOpen },
-      { href: "/app/providers", label: "Providers", icon: Plug, min: "admin" },
+      { href: "/app/providers", label: "Providers", icon: Plug, min: "admin", ws: true },
+      { href: "/app/workspaces", label: "Workspaces", icon: FolderKanban },
       { href: "/app/members", label: "Members", icon: Users },
-      { href: "/app/policies", label: "Policies", icon: Scale, min: "admin" },
+      { href: "/app/policies", label: "Policies", icon: Scale, min: "admin", ws: true },
       { href: "/app/settings", label: "Settings", icon: Settings },
       { href: "/app/webhooks", label: "Webhooks", icon: Webhook, min: "admin" },
       { href: "/app/alerts", label: "Alerts", icon: Bell, min: "admin" },
-      { href: "/app/observability", label: "Observability", icon: Telescope, min: "admin" },
+      { href: "/app/observability", label: "Observability", icon: Telescope, min: "admin", ws: true },
       { href: "/app/sso", label: "Security & SSO", icon: LockKeyhole, min: "owner" },
       { href: "/app/audit", label: "Audit log", icon: ShieldCheck, min: "admin" },
     ],
@@ -116,7 +118,7 @@ function NavLink({ href, label, icon: Icon, collapsed, onNavigate, active }: {
 
 function Nav({ onNavigate, collapsed }: { onNavigate?: () => void; collapsed?: boolean }) {
   const [loc] = useLocation();
-  const { user, org, can } = useSession();
+  const { user, org, can, wsCan } = useSession();
   const current = crumbFor(loc)?.item.href;
   return (
     <nav aria-label="Console" className="flex flex-col gap-4 p-2 text-sm">
@@ -130,7 +132,7 @@ function Nav({ onNavigate, collapsed }: { onNavigate?: () => void; collapsed?: b
               <p className="px-2 pb-1 text-xs text-muted-foreground">{g.label}</p>
             )}
             {g.items
-              .filter((i) => !i.min || can(i.min))
+              .filter((i) => !i.min || (i.ws ? wsCan(i.min) : can(i.min)))
               .map((i) => (
                 <NavLink key={i.href} {...i} collapsed={collapsed} onNavigate={onNavigate} active={current === i.href} />
               ))}
@@ -205,8 +207,44 @@ function Breadcrumb() {
  * content lives in a raised panel that is the only scroll container (scrollbar hidden, still
  * scrollable by wheel, touch and keyboard since the panel is focusable).
  */
+/** Workspace switcher (GitLab/OpenRouter style): the workspaces the user is in; org admins also get "All workspaces". */
+function WorkspaceSwitcher() {
+  const { workspaces, wsId, setWs, canAllWs } = useSession();
+  if (!workspaces.length) return null;
+  return (
+    <>
+    <span aria-hidden className="hidden text-muted-foreground/60 sm:inline">
+      /
+    </span>
+    <Select value={wsId} onValueChange={setWs}>
+      <SelectTrigger size="sm" className="w-28 bg-background sm:w-44" aria-label="Workspace">
+        <span className="flex min-w-0 items-center gap-2">
+          <FolderKanban className="hidden shrink-0 text-muted-foreground sm:block" aria-hidden />
+          <span className="truncate">
+            <SelectValue />
+          </span>
+        </span>
+      </SelectTrigger>
+      <SelectContent position="popper" align="start">
+        {workspaces.map((w) => (
+          <SelectItem key={w.id} value={w.id}>
+            {w.name}
+          </SelectItem>
+        ))}
+        {canAllWs && (
+          <>
+            <SelectSeparator />
+            <SelectItem value={ALL_WS}>All workspaces</SelectItem>
+          </>
+        )}
+      </SelectContent>
+    </Select>
+    </>
+  );
+}
+
 export function ConsoleLayout({ children }: { children: ReactNode }) {
-  const { user, orgs, org, setOrg, refresh, loading } = useSession();
+  const { user, orgs, org, setOrg, refresh, loading, wsId } = useSession();
   const [loc, navigate] = useLocation();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(readCollapsed);
@@ -219,6 +257,10 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     panel.current?.scrollTo({ top: 0 });
   }, [loc]);
+  // Keep ?ws= on the URL so a link to a page opens it in the same workspace.
+  useEffect(() => {
+    if (org) syncWsQuery(wsId);
+  }, [loc, org, wsId]);
   if (!user) return null;
 
   const toggle = () => {
@@ -232,12 +274,12 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
         <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open menu" onClick={() => setOpen(true)}>
           <Menu />
         </Button>
-        <div className="px-1">
+        <div className="hidden px-1 sm:block">
           <Wordmark />
         </div>
         {orgs.length > 0 && (
           <Select value={org?.id} onValueChange={setOrg}>
-            <SelectTrigger size="sm" className="ml-1 w-32 bg-background sm:ml-2 sm:w-48" aria-label="Organization">
+            <SelectTrigger size="sm" className="w-28 bg-background sm:ml-2 sm:w-48" aria-label="Organization">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -249,6 +291,7 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
             </SelectContent>
           </Select>
         )}
+        <WorkspaceSwitcher />
         <div className="ml-auto flex items-center gap-1">
           <Button variant="ghost" size="sm" className="hidden sm:inline-flex" asChild>
             <Link href="/models">Models</Link>
@@ -300,7 +343,8 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
         >
           <div className="mx-auto max-w-[1200px] px-4 pt-4 pb-10 md:px-8 md:pt-5">
             <Breadcrumb />
-            {children}
+            {/* Pages remount on an org or workspace switch, so every list reloads in the new scope. */}
+            <Fragment key={`${org?.id ?? ""}/${wsId}`}>{children}</Fragment>
           </div>
         </main>
       </div>

@@ -32,10 +32,13 @@ export const providerHref = (scope: Scope, id: string) =>
 const STD_REGIONS = ["global", "europe", "us"];
 
 export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
-  const { org, can, user } = useSession();
+  const { org, wsCan, user, ws, wsList, wsName } = useSession();
   const base = providersPath(scope, org?.id);
-  const allowed = scope === "platform" ? !!user?.operator : can("admin");
-  const state = useAsync(() => (base && allowed ? get<Provider[]>(base) : Promise.resolve([] as Provider[])), [base, allowed]);
+  const allowed = scope === "platform" ? !!user?.operator : wsCan("admin");
+  const state = useAsync(
+    () => (base && allowed ? get<Provider[]>(scope === "org" ? wsList(base) : base) : Promise.resolve([] as Provider[])),
+    [base, allowed],
+  );
   const [editing, setEditing] = useState<Provider | "new" | null>(null);
   const [deleting, setDeleting] = useState<Provider | null>(null);
   const [discovering, setDiscovering] = useState<Provider | null>(null);
@@ -45,13 +48,15 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
   const description =
     scope === "platform"
       ? "Upstream providers serving public models. Every organization can route to them; their keys are the platform's."
-      : `Private providers for ${org?.name ?? "this organization"}. Their keys and models are visible only to this organization.`;
+      : ws
+        ? `Private providers of the ${ws.name} workspace. Only its keys and models use them, unless an org admin shares one with all workspaces.`
+        : `Private providers of every workspace of ${org?.name ?? "this organization"}.`;
 
   if (!allowed || !base) {
     return (
       <>
         <PageHeader title={title} />
-        <NoAccess>{scope === "platform" ? "Only operators manage public providers." : "Only organization admins manage providers."}</NoAccess>
+        <NoAccess>{scope === "platform" ? "Only operators manage public providers." : "Only workspace admins manage providers."}</NoAccess>
       </>
     );
   }
@@ -107,6 +112,12 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
                         {p.proxy?.url && (
                           <Badge variant="outline" title={`Upstream calls go through ${p.proxy.url}`}>
                             via proxy
+                          </Badge>
+                        )}
+                        {scope === "org" && !ws && <Badge variant="outline">{wsName(p.workspace_id)}</Badge>}
+                        {p.shared_across_workspaces && (
+                          <Badge variant="outline" title="Models of every workspace may route to it">
+                            shared
                           </Badge>
                         )}
                         {p.proxy_pool && (
@@ -272,7 +283,8 @@ function cloudKey(type: Cloud, f: CloudForm, prev?: ProviderKey): ProviderKey {
 export function ProviderDialog({
   scope, base, provider, onClose, onSaved,
 }: { scope: Scope; base: string; provider?: Provider; onClose: () => void; onSaved: () => void }) {
-  const { config } = useSession();
+  const { config, can, wsBody } = useSession();
+  const [shared, setShared] = useState(provider?.shared_across_workspaces ?? false);
   const types = config?.provider_types[scope === "platform" ? "platform" : "org"] ?? ["openai"];
   // Org providers of these types run on the vendor's fixed API URL; the server refuses a base URL.
   const fixedURL = (t: string) => scope !== "platform" && !!config?.provider_types.org_fixed_url?.includes(t);
@@ -335,6 +347,9 @@ export function ProviderDialog({
         ? { zdr, trains_on_data: trains, retention_days: zdr || !retention ? undefined : Number(retention), region: regionValue || undefined }
         : undefined,
       enabled,
+      // Only org admins may change sharing; PUT replaces, so others send the stored value back.
+      ...(scope === "org" ? { shared_across_workspaces: can("admin") ? shared : (provider?.shared_across_workspaces ?? false) } : {}),
+      ...(scope === "org" && !provider ? wsBody : {}),
       // Cloud types: the form edits the first key; other stored keys are kept as they are.
       // Otherwise new values replace every stored key; none entered keeps the stored ones (by id).
       keys: isCloud(type)
@@ -356,7 +371,7 @@ export function ProviderDialog({
         if (!o) onClose();
       }}
       title={provider ? `Edit ${provider.name}` : "Add provider"}
-      description={scope === "platform" ? "A public provider: every organization's models may route to it." : "A private provider: only this organization can use it."}
+      description={scope === "platform" ? "A public provider: every organization's models may route to it." : "A private provider: only its workspace's models can use it, unless shared with all workspaces."}
       submitLabel={provider ? "Save changes" : "Add provider"}
       success={provider ? "Provider saved" : "Provider added"}
       onSubmit={save}
@@ -437,6 +452,17 @@ export function ProviderDialog({
           <Label htmlFor="provider-enabled">Enabled</Label>
         </div>
       </div>
+      {scope === "org" && can("admin") && (
+        <div className="grid gap-1">
+          <div className="flex items-center gap-3">
+            <Switch id="provider-shared" checked={shared} onCheckedChange={setShared} aria-describedby="provider-shared-hint" />
+            <Label htmlFor="provider-shared">Share with all workspaces</Label>
+          </div>
+          <p id="provider-shared-hint" className="text-xs text-muted-foreground">
+            Models of every workspace may route to it. Its keys and settings stay managed here.
+          </p>
+        </div>
+      )}
       <details className="rounded-md border px-3 py-2" open={!!pv}>
         <summary className="cursor-pointer rounded-sm text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
           Privacy

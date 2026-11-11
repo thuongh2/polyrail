@@ -41,10 +41,12 @@ const testText = (r: TestResult) =>
   r.ok ? `Test span accepted${r.status ? ` (HTTP ${r.status})` : ""}` : `Test failed${r.status ? ` (HTTP ${r.status})` : ""}${r.error ? `: ${r.error}` : ""}`;
 
 export default function Observability({ scope = "org" }: { scope?: Scope }) {
-  const { org, can, user } = useSession();
-  const allowed = scope === "platform" ? !!user?.operator : can("admin");
+  const { org, wsCan, user, wsList, wsBody, ws } = useSession();
+  const allowed = scope === "platform" ? !!user?.operator : wsCan("admin");
   const base = scope === "platform" ? PLATFORM : org ? orgBase(org.id) : "";
-  const t = useMemo(() => traceExportsApi(base), [base]);
+  // The layout remounts the page on a workspace switch, so wsList is current for this page's life.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const t = useMemo(() => traceExportsApi(base, scope === "org" ? wsList : undefined), [base, scope]);
   const list = useAsync(() => (allowed && base ? t.list() : Promise.resolve([] as TraceExport[])), [t, allowed]);
   // Content needs org content logging on (org scope); keys feed the key filter.
   const orgInfo = useAsync(() => (scope === "org" && allowed && base ? get<Org>(base) : Promise.resolve(null)), [base, allowed, scope]);
@@ -56,7 +58,9 @@ export default function Observability({ scope = "org" }: { scope?: Scope }) {
   const description =
     scope === "platform"
       ? "Send one OpenTelemetry span per request of every organization to an OTLP collector or Langfuse."
-      : "Send one OpenTelemetry span per request of this organization to an OTLP collector (Grafana Tempo, Datadog, Jaeger…) or Langfuse.";
+      : ws && !ws.is_default
+        ? `Send one OpenTelemetry span per request of the ${ws.name} workspace to an OTLP collector (Grafana Tempo, Datadog, Jaeger…) or Langfuse.`
+        : "Send one OpenTelemetry span per request to an OTLP collector (Grafana Tempo, Datadog, Jaeger…) or Langfuse. Exports of the default workspace receive every workspace's requests.";
   if (scope === "org" && !org) return <EmptyState title="You are not in an organization yet" />;
   if (!allowed)
     return (
@@ -186,7 +190,7 @@ export default function Observability({ scope = "org" }: { scope?: Scope }) {
           exp={editing === "new" ? undefined : editing}
           contentLogging={contentLogging}
           onClose={() => setEditing(null)}
-          save={(body) => (editing === "new" ? t.create(body) : t.update(editing.id, body))}
+          save={(body) => (editing === "new" ? t.create(scope === "org" ? { ...body, ...wsBody } : body) : t.update(editing.id, body))}
           test={(id) => t.test(id)}
           onSaved={list.reload}
         />
@@ -276,7 +280,8 @@ function ExportDialog({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [result, setResult] = useState<TestResult | null>(null);
-  const keys = useAsync(() => (scope === "org" ? get<APIKey[]>(`${base}/keys`) : Promise.resolve([] as APIKey[])), [base, scope]);
+  const { wsList } = useSession();
+  const keys = useAsync(() => (scope === "org" ? get<APIKey[]>(wsList(`${base}/keys`)) : Promise.resolve([] as APIKey[])), [base, scope]);
   const keyOpts = keys.data?.filter((k) => !k.revoked).map((k) => ({ value: k.id, label: k.name, hint: k.prefix + "…" }));
 
   const applyPreset = (p: Preset) => {

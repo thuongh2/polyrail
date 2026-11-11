@@ -54,10 +54,10 @@ const snippet = (slug: string) => `curl ${apiBase()}/chat/completions \\
   }'`;
 
 export default function Presets() {
-  const { org, can } = useSession();
-  const admin = can("admin");
+  const { org, wsCan, wsList, ws, wsName } = useSession();
+  const admin = wsCan("admin");
   const base = org ? orgBase(org.id) : "";
-  const presets = useAsync(() => (base ? get<Preset[]>(`${base}/presets`) : Promise.resolve([] as Preset[])), [base]);
+  const presets = useAsync(() => (base ? get<Preset[]>(wsList(`${base}/presets`)) : Promise.resolve([] as Preset[])), [base]);
   const [editing, setEditing] = useState<Preset | "new" | null>(null);
   const [deleting, setDeleting] = useState<Preset | null>(null);
   const [shown, setShown] = useQueryParam("preset", "");
@@ -101,6 +101,7 @@ export default function Presets() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Preset</TableHead>
+                      {!ws && <TableHead>Workspace</TableHead>}
                       <TableHead>Models</TableHead>
                       <TableHead>Provider routing</TableHead>
                       <TableHead>Parameters</TableHead>
@@ -115,6 +116,7 @@ export default function Presets() {
                     {list.map((p) => (
                       <TableRow key={p.slug}>
                         <TableCell className="font-mono text-xs whitespace-nowrap">@preset/{p.slug}</TableCell>
+                        {!ws && <TableCell className="whitespace-nowrap">{wsName(p.workspace_id)}</TableCell>}
                         <TableCell className="max-w-72">
                           <span className="block truncate font-mono text-xs" title={[p.model, ...(p.models ?? [])].filter(Boolean).join(", ")}>
                             {p.model || p.models?.[0]}
@@ -204,7 +206,8 @@ const str = (n?: number) => (n === undefined ? "" : String(n));
 
 function PresetDialog({ base, preset, onClose, onSaved }: { base: string; preset?: Preset; onClose: () => void; onSaved: () => void }) {
   const [open, setOpen] = useState(true);
-  const models = useAsync(() => get<ModelView[]>(`${base}/models`), [base]);
+  const { wsList, wsBody } = useSession();
+  const models = useAsync(() => get<ModelView[]>(wsList(`${base}/models`)), [base]);
   const providers = useAsync(() => providerOptions(base), [base]);
   const pp = preset?.provider ?? {};
   const [slug, setSlug] = useState(preset?.slug ?? "");
@@ -255,7 +258,7 @@ function PresetDialog({ base, preset, onClose, onSaved }: { base: string; preset
       params: Object.values(params).some((v) => v !== undefined) ? params : undefined,
     };
     if (preset) await api("PUT", `${base}/presets/${encodeURIComponent(preset.slug)}`, body);
-    else await api("POST", `${base}/presets`, body);
+    else await api("POST", `${base}/presets`, { ...body, ...wsBody });
     onSaved();
   };
 

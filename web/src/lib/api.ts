@@ -100,7 +100,11 @@ export const publicApi = {
 
 export type Role = "viewer" | "member" | "admin" | "owner";
 export type User = { id: string; email: string; name: string; operator: boolean; disabled?: boolean; created_at: string };
-export type OrgRef = { id: string; name: string; role: Role };
+/** A workspace the caller is in, with their role there (docs/API.md "Workspaces"). The default one has id "default". */
+export type Workspace = { id: string; org_id?: string; name: string; slug: string; is_default: boolean; created_at?: string; role: Role };
+export type OrgRef = { id: string; name: string; role: Role; workspaces?: Workspace[] };
+/** GET …/workspaces/{ws}/members; via: org_role (org owners/admins, everyone in the default), member (added) or idp (group mapping). */
+export type WorkspaceMember = { user_id: string; email: string; name: string; role: Role; via: "org_role" | "member" | "idp" };
 export type AuthConfig = { signup: boolean; sso: boolean; tenant_proxy?: boolean; provider_types: { platform: string[]; org: string[]; org_fixed_url?: string[] };
   /** Alert channel services this build offers per scope (smtp and generic need -tags alertsfull). */
   alert_services?: { platform: string[]; org: string[] };
@@ -166,6 +170,7 @@ export type APIKey = {
   expires_at?: string;
   revoked: boolean;
   created_at: string;
+  workspace_id?: string; // absent = the default workspace
   kb_ids?: string[]; // knowledge bases that ground this key's chat requests (docs/KB.md §4)
 };
 
@@ -214,6 +219,9 @@ export type Provider = {
   privacy?: ProviderPrivacy;
   enabled: boolean;
   created_at: string;
+  workspace_id?: string; // org providers; absent = the default workspace
+  /** Org providers: every workspace's models may target it (org admins set it). */
+  shared_across_workspaces?: boolean;
 };
 
 export type ProviderProxy = { url: string; username?: string; password?: string; ca_cert_pem?: string };
@@ -307,7 +315,7 @@ export type UsageRow = {
   avg_latency_ms: number;
   cache_hits: number;
 };
-export type UsageReport = { total: UsageRow; daily: UsageRow[]; models: UsageRow[]; keys: UsageRow[]; end_users?: UsageRow[] };
+export type UsageReport = { total: UsageRow; daily: UsageRow[]; models: UsageRow[]; keys: UsageRow[]; end_users?: UsageRow[]; workspaces?: UsageRow[] };
 
 export type RequestLog = {
   id: string;
@@ -341,6 +349,9 @@ export type Policy = {
   name: string;
   description?: string;
   is_org_default: boolean;
+  workspace_id?: string; // absent = the default workspace
+  /** Applies to every key of its workspace; its budget is one workspace-wide counter. */
+  is_workspace_default?: boolean;
   member_ids?: string[];
   key_ids?: string[];
   opted_out_member_ids?: string[];
@@ -362,7 +373,7 @@ export type PolicyInput = Omit<Policy, "id" | "org_id" | "created_at" | "updated
 export type EffectiveBudget = {
   policy_id: string;
   policy: string;
-  scope: "member" | "key";
+  scope: "member" | "key" | "workspace";
   subject: string;
   limit_micros: number;
   interval: BudgetInterval;
@@ -371,7 +382,7 @@ export type EffectiveBudget = {
   resets_at?: string; // absent for lifetime
 };
 export type EffectivePolicy = {
-  policies: { id: string; name: string; via: ("org_default" | "member" | "key")[] }[];
+  policies: { id: string; name: string; via: ("org_default" | "workspace_default" | "member" | "key")[] }[];
   allowed_models?: string[][];
   allowed_providers?: string[][];
   allowed_regions?: string[][];
@@ -402,6 +413,7 @@ export type Preset = {
   provider?: ProviderPrefs;
   params?: PresetParams;
   created_at: string;
+  workspace_id?: string; // absent = the default workspace
 };
 
 export type MgmtToken = {
@@ -410,6 +422,7 @@ export type MgmtToken = {
   name: string;
   prefix: string;
   role: Exclude<Role, "owner">;
+  workspace_id?: string; // limited to this workspace ("default" included); absent = whole org
   created_by: string;
   expires_at?: string;
   last_used_at?: string;
@@ -452,11 +465,13 @@ export type KB = {
   created_by_key?: string;
   created_at: string;
   updated_at: string;
+  workspace_id?: string; // absent = the default workspace
 };
 /** Fields accepted by POST/PATCH …/kbs. */
 export type KBInput = Pick<KB, "name" | "embedding_model" | "chunk_chars" | "overlap_chars" | "top_k" | "min_score" | "max_context_tokens"> & {
   description?: string;
   dimensions?: number;
+  workspace_id?: string; // create only
 };
 export type KBDocStatus = "queued" | "processing" | "ready" | "failed";
 export type KBDoc = {
@@ -514,11 +529,12 @@ const hitOf = (h: Record<string, unknown>): KBHit => ({
   text: String(h.text ?? ""),
 });
 
-export function kbApi(org: string) {
+/** Knowledge bases of an org; `wsList` (from useSession) limits the list to the current workspace. */
+export function kbApi(org: string, wsList: (path: string) => string = (p) => p) {
   const b = `${orgBase(org)}/kbs`;
   const kb = (id: string) => `${b}/${encodeURIComponent(id)}`;
   return {
-    list: () => get<unknown>(b).then(listOf<KB>),
+    list: () => get<unknown>(wsList(b)).then(listOf<KB>),
     get: (id: string) =>
       get<KB>(kb(id)).then((r) => {
         if (!r?.id) throw noKB();
@@ -706,8 +722,10 @@ export type TraceExport = {
   enabled: boolean;
   failures: number;
   created_at: string;
+  workspace_id?: string; // org exports; absent = the default workspace
 };
 export type TraceExportInput = {
+  workspace_id?: string; // create only
   name?: string;
   type?: TraceExportType;
   endpoint?: string;
@@ -720,11 +738,11 @@ export type TraceExportInput = {
 };
 
 /** Trace exports of a scope: PLATFORM or orgBase(org). */
-export function traceExportsApi(scopeBase: string) {
+export function traceExportsApi(scopeBase: string, wsList: (path: string) => string = (p) => p) {
   const b = `${scopeBase}/trace-exports`;
   const t = (id: string) => `${b}/${encodeURIComponent(id)}`;
   return {
-    list: () => get<unknown>(b).then(listOr<TraceExport>("Trace exports are")),
+    list: () => get<unknown>(wsList(b)).then(listOr<TraceExport>("Trace exports are")),
     create: (body: TraceExportInput) => api<TraceExport>("POST", b, body),
     update: (id: string, body: TraceExportInput) => api<TraceExport>("PATCH", t(id), body),
     remove: (id: string) => api("DELETE", t(id)),

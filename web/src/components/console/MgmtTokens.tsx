@@ -29,7 +29,7 @@ function tokenStatus(t: MgmtToken) {
 
 /** Org management tokens (admin): bearer tokens for the org admin API, for scripts and CI. */
 export function MgmtTokens({ base }: { base: string }) {
-  const { can } = useSession();
+  const { can, wsName } = useSession();
   const tokens = useAsync(() => get<MgmtToken[] | null>(`${base}/mgmt-tokens`).then((r) => r ?? []), [base]);
   const [creating, setCreating] = useState(false);
   const [secret, setSecret] = useState<{ name: string; secret: string } | null>(null);
@@ -68,6 +68,7 @@ export function MgmtTokens({ base }: { base: string }) {
                   <TableHead>Name</TableHead>
                   <TableHead>Token</TableHead>
                   <TableHead>Role</TableHead>
+                  <TableHead>Workspace</TableHead>
                   <TableHead>Expires</TableHead>
                   <TableHead>Last used</TableHead>
                   <TableHead>Status</TableHead>
@@ -84,6 +85,7 @@ export function MgmtTokens({ base }: { base: string }) {
                       <TableCell className="font-medium">{t.name}</TableCell>
                       <TableCell className="font-mono text-xs whitespace-nowrap">{t.prefix}…</TableCell>
                       <TableCell>{roleLabel[t.role] ?? t.role}</TableCell>
+                      <TableCell className="whitespace-nowrap">{t.workspace_id ? wsName(t.workspace_id) : <span className="text-muted-foreground">Whole organization</span>}</TableCell>
                       <TableCell className="whitespace-nowrap">{t.expires_at ? <span title={when(t.expires_at)}>{new Date(t.expires_at).toLocaleDateString()}</span> : <span className="text-muted-foreground">Never</span>}</TableCell>
                       <TableCell className="whitespace-nowrap">{t.last_used_at ? <span title={when(t.last_used_at)}>{ago(t.last_used_at)}</span> : <span className="text-muted-foreground">Never</span>}</TableCell>
                       <TableCell>
@@ -148,6 +150,8 @@ function CreateTokenDialog({ base, maxAdmin, onClose, onCreated }: { base: strin
   const [name, setName] = useState("");
   const [role, setRole] = useState("viewer");
   const [days, setDays] = useState("90");
+  const { workspaces } = useSession();
+  const [limit, setLimit] = useState("org"); // "org" = whole organization, else a workspace id
   return (
     <FormDialog
       open={open}
@@ -160,7 +164,12 @@ function CreateTokenDialog({ base, maxAdmin, onClose, onCreated }: { base: strin
       submitLabel="Create token"
       success="Token created"
       onSubmit={async () => {
-        const r = await api<{ token: MgmtToken; secret: string }>("POST", `${base}/mgmt-tokens`, { name: name.trim(), role, expires_in_days: Number(days) });
+        const r = await api<{ token: MgmtToken; secret: string }>("POST", `${base}/mgmt-tokens`, {
+          name: name.trim(),
+          role,
+          expires_in_days: Number(days),
+          workspace_id: limit === "org" ? undefined : limit,
+        });
         onCreated(r.token.name, r.secret);
       }}
     >
@@ -197,6 +206,23 @@ function CreateTokenDialog({ base, maxAdmin, onClose, onCreated }: { base: strin
           )}
         </Field>
       </div>
+      <Field label="Limit to workspace" hint="A limited token only reaches that workspace's keys, providers, models, policies, presets and trace exports; org routes such as usage and members answer 403.">
+        {(id, hint) => (
+          <Select value={limit} onValueChange={setLimit}>
+            <SelectTrigger id={id} aria-describedby={hint} className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="org">No limit (whole organization)</SelectItem>
+              {workspaces.map((w) => (
+                <SelectItem key={w.id} value={w.id}>
+                  {w.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </Field>
     </FormDialog>
   );
 }

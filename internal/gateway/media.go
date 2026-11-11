@@ -32,7 +32,7 @@ func (g *Gateway) imageDone(w http.ResponseWriter, snap *Snapshot, p *principal,
 		l.InTokens, l.OutTokens = u.InputTokens, u.OutputTokens
 	}
 	l.Cost = int64(len(resp.Data))*m.ImagePrice + cost(m, l.InTokens, l.OutTokens)
-	g.record(p, m, l, start)
+	setCost(w, g.record(p, m, l, start))
 	resp.Model = m.ID
 	writeJSONHidden(w, provName, resp)
 }

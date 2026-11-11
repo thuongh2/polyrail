@@ -70,3 +70,14 @@ Bedrock/Vertex credentials mean the host's cloud identity (IAM), which only oper
 admin API rejects it for org providers and the Account drops such tenant keys. Regions and project
 ids are checked against `^[a-z0-9][a-z0-9-]{0,62}$` because Bifrost formats them into upstream
 hostnames. Not tested against real Azure/AWS/GCP in the sandbox (no cloud accounts).
+
+**D14 Idempotency keys in node memory; cost as a response header.** `Idempotency-Key` (OmniRoute
+parity) wraps the non-stream JSON POST handlers (`Gateway.Idempotent`, applied at route
+registration): scope = API key id + method + path + key, body compared by SHA-256, only 2xx stored
+(24 h, bounded `ttlCache`), replays are not billed, 422 on body mismatch, 409 while in flight.
+Streams ignore it (a replay cannot reproduce timing, and the response is not buffered). Storage is
+per node; a multi-node deployment needs Redis to make retries exact across nodes (shortcut noted in
+code). `X-GW-Cost-Micros` is the value `record()` billed, set before the body is written; streams
+cannot carry it because headers go out before usage arrives (a trailer would be invisible to most
+SDKs). Model discovery `POST /v1/models/query` reuses `Snapshot.Visible` and the key's model list,
+so it can never show more than `GET /v1/models`; prices in the query are USD per 1M as numbers.

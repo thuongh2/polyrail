@@ -20,7 +20,7 @@ const sections = [
   ["tokens", "Token counting"],
   ["files", "Files and batches"],
   ["videos", "Videos"],
-  ["models", "List models"],
+  ["models", "List and query models"],
   ["mcp", "MCP tools"],
   ["headers", "Gateway headers"],
   ["errors", "Errors"],
@@ -33,6 +33,10 @@ const errors: [string, string, string][] = [
   ["model_not_found", "404", "No model with this id is visible to your org."],
   ["wrong_model_kind", "400", "The model's kind does not match the endpoint, such as a chat model on /v1/embeddings."],
   ["guardrail_blocked", "400", "The org's guardrails rejected the input."],
+  ["prompt_injection", "400", "The org blocks prompts that look like jailbreak attempts."],
+  ["invalid_idempotency_key", "400", "The Idempotency-Key header is longer than 255 characters."],
+  ["idempotency_key_in_progress", "409", "A request with this Idempotency-Key is still running."],
+  ["idempotency_key_reuse", "422", "This Idempotency-Key was used with a different body."],
   ["insufficient_credits", "402", "The prepaid org is out of credits."],
   ["key_budget_exceeded", "402", "The key reached its monthly budget."],
   ["rpm_exceeded, tpm_exceeded", "429", "The key's requests or tokens per minute limit."],
@@ -270,7 +274,7 @@ curl ${base}/batches \\
             <CodeTabs samples={requestSamples(base, "vendor/video-model", "video")} />
           </Section>
 
-          <Section id="models" title="List models">
+          <Section id="models" title="List and query models">
             <Endpoint method="GET" path="/v1/models" />
             <p>
               Models visible to the key, each with <C>kind</C> (chat, embedding, speech, transcription, image, rerank, ocr
@@ -278,6 +282,16 @@ curl ${base}/batches \\
               <C>pricing.audio_minute</C> (per audio minute), <C>pricing.image</C> (per image), <C>pricing.request</C>{" "}
               (per request), <C>pricing.video_second</C> (per second of video), plus <C>context_length</C>. The public catalog is also browsable on the <Link href="/models">models page</Link>.
             </p>
+            <Endpoint method="POST" path="/v1/models/query" />
+            <p>
+              The same models, filtered by an optional JSON body: <C>q</C> (substring of id, name or description), <C>kind</C>,{" "}
+              <C>modalities</C>, <C>min_context</C>, <C>min_output</C>, <C>max_input_price</C> and <C>max_output_price</C> (USD
+              per 1M tokens), <C>owned_by</C>, <C>exclude</C>, <C>sort</C> (<C>id</C>, <C>price</C> or <C>context</C>) and{" "}
+              <C>limit</C> (default 50, max 100).
+            </p>
+            <CodeBlock code={`curl ${base}/v1/models/query \\
+  -H "Authorization: Bearer $GATEWAY_KEY" \\
+  -d '{"kind":"chat","min_context":100000,"sort":"price","limit":5}'`} />
           </Section>
 
           <Section id="mcp" title="MCP tools">
@@ -295,6 +309,7 @@ curl ${base}/batches \\
               rows={[
                 ["x-gateway-cache: <seconds>", "Serve an identical earlier non-stream request from cache (max 86400). Cache hits cost nothing."],
                 ["x-gateway-mcp-clients: name1,name2 or *", "Inject tools from these MCP servers (only servers granted to your org)."],
+                ["Idempotency-Key: <up to 255 chars>", "Non-stream chat, embeddings, responses and image requests: a retry with the same key and body within 24 h returns the stored response without billing again (Idempotent-Replayed: true). Kept per node."],
               ]}
             />
             <h3 className="pt-2 font-medium text-foreground">Response</h3>
@@ -303,6 +318,8 @@ curl ${base}/batches \\
                 ["x-gateway-provider", "The provider that served the request."],
                 ["x-gateway-request-id", "A unique id for this request."],
                 ["x-gateway-cache-hit", "true when the response came from the cache."],
+                ["X-GW-Cost-Micros", "Micro-USD billed for this request (non-stream responses only; 0 for cache hits)."],
+                ["X-GW-Route", "Chat completions: the routing strategy and the route that served the request, as <strategy>; <provider>/<upstream model>."],
               ]}
             />
           </Section>

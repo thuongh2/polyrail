@@ -22,6 +22,7 @@ const Credits = lazy(() => import("@/pages/console/Credits"));
 const Members = lazy(() => import("@/pages/console/Members"));
 const Settings = lazy(() => import("@/pages/console/Settings"));
 const Audit = lazy(() => import("@/pages/console/Audit"));
+const Webhooks = lazy(() => import("@/pages/console/Webhooks"));
 const Account = lazy(() => import("@/pages/console/Account"));
 const ModelsAdmin = lazy(() => import("@/pages/platform/ModelsAdmin"));
 const ProvidersAdmin = lazy(() => import("@/pages/platform/ProvidersAdmin"));
@@ -66,6 +67,7 @@ export function App() {
                       <Route path="/providers" component={page(ProvidersAdmin, "org")} />
                       <Route path="/members" component={page(Members)} />
                       <Route path="/settings" component={page(Settings)} />
+                      <Route path="/webhooks" component={page(Webhooks)} />
                       <Route path="/audit" component={page(Audit, "org")} />
                       <Route path="/account" component={page(Account)} />
                       <Route path="/platform/activity" component={page(Activity, "platform")} />

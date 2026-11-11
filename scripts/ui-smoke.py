@@ -9,7 +9,7 @@ from playwright.sync_api import sync_playwright
 base, email, password = sys.argv[1].rstrip("/"), sys.argv[2], sys.argv[3]
 public = ["/", "/models", "/status", "/docs"]
 console = ["activity", "logs", "playground", "keys", "credits", "models", "providers", "members",
-           "settings", "audit", "account", "platform/activity", "platform/orgs", "platform/providers",
+           "settings", "webhooks", "audit", "account", "platform/activity", "platform/orgs", "platform/providers",
            "platform/models", "platform/users", "platform/mcp", "platform/audit"]
 failures, errors = [], []
 
@@ -37,6 +37,13 @@ with sync_playwright() as p:
         link.click(); pg.wait_for_timeout(300); check(pg, "click sidebar " + path)
         if not pg.url.endswith("/app/" + path):
             failures.append(f"click sidebar {path}: url is {pg.url[len(base):]}")
+    pg.goto(base + "/app/webhooks"); pg.wait_for_load_state("networkidle")
+    if not pg.get_by_role("heading", name="Webhooks").count():
+        failures.append("webhooks: no page heading")
+    pg.get_by_role("button", name="Add webhook").first.click()
+    if not pg.get_by_role("dialog").get_by_text("request.failed").count():
+        failures.append("webhooks: create dialog has no event choices")
+    pg.keyboard.press("Escape")
     pg.get_by_role("link", name="Models").first.click(); pg.wait_for_timeout(300); check(pg, "click header Models")
     b.close()
 

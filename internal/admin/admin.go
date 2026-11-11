@@ -1215,6 +1215,20 @@ func (a *API) putProvider(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	if p.OrgID != "" && !orgWide(r) {
+		// Org policies (require_zdr, deny_data_collection, allowed_regions) trust the declared
+		// privacy, so a workspace admin keeps what an org admin declared (none for a new provider).
+		var was *store.ProviderPrivacy
+		if old != nil {
+			was = old.Privacy
+		}
+		if p.Privacy == nil {
+			p.Privacy = was
+		} else if was == nil || *p.Privacy != *was {
+			fail(w, errForbidden)
+			return
+		}
+	}
 	if err := a.S.PutProvider(r.Context(), &p); err != nil {
 		fail(w, err)
 		return

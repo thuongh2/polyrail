@@ -203,7 +203,9 @@ compression). Embeddings, rerank, image, audio and video prompts get the same se
 Guardrail policies (D26) are org-scoped and managed by admins. A policy applies to a key when it is
 the org default (`is_org_default`, unless the key or its creator is in `opted_out_key_ids` /
 `opted_out_member_ids`), when the key's creator is in `member_ids`, or when the key is in `key_ids`.
-All policies that apply to a key combine:
+`member_ids` of a policy in a non-default workspace reach only the member's keys in that workspace;
+default-workspace policies reach the member's keys in every workspace. All policies that apply to a
+key combine:
 
 | Field | Combination and effect |
 |---|---|
@@ -250,7 +252,9 @@ POST/PUT: what the provider's admin declares about prompt data. `retention_days`
 `zdr: true`), `region` lowercase letters, digits and `-`, stored normalized (`eu`, `eu-west-1`,
 `europe-west4` → `europe`; `us`, `usa`, `us-east-1` → `us`; `global`; others as given, e.g. `apac`;
 empty = `global`). It is returned with the provider and per provider in
-`GET /api/public/models/{id}`.
+`GET /api/public/models/{id}`. Org policies trust it, so on org providers only org owners and admins
+set or change it: a workspace admin's write without `privacy` keeps the stored declaration (none on
+create), and one with a different `privacy` is 403.
 
 ### Semantic cache
 
@@ -260,7 +264,7 @@ Opt-in per org (`PATCH /api/orgs/{org}` with `semantic_cache`, below). A non-str
 system/developer text plus the last user message (first 8,000 characters) with the org's embedding
 model through the normal Bifrost embeddings path; that call is logged and billed to the key like an
 `/v1/embeddings` request (the key's `models` allowlist does not apply to it). If a previous answer of
-the same chat model and org has cosine similarity ≥ `threshold`, it is returned with headers
+the same chat model, org and workspace has cosine similarity ≥ `threshold`, it is returned with headers
 `X-GW-Cache: semantic` and `X-GW-Cache-Score: 0.9501`, logged as a cache hit (cost 0). Otherwise the
 upstream answer is stored for `ttl_seconds`. Embedding errors fail open (the request goes upstream).
 Entries live in the node's memory: at most 1,000 per org (least recently used evicted), all orgs
@@ -852,12 +856,14 @@ Same routes under `/api/orgs/{org}/trace-exports` (the org's requests, admin) an
 Body: `name` (1–100, required), `type` (`otlp` \| `langfuse`, required), `endpoint` (required;
 `otlp`: the full OTLP/HTTP traces URL, e.g. `https://otlp.example.com/v1/traces`; `langfuse`: the
 Langfuse base URL, e.g. `https://cloud.langfuse.com`, spans go to `<base>/api/public/otel/v1/traces`),
-`headers` (object, write-only, at most 20; replaces all headers when sent; `Host`, `Content-Type`,
+`headers` (object, write-only, at most 20; replaces all headers when sent; a changed `endpoint`
+drops the stored headers unless `headers` or `langfuse` are sent with it; `Host`, `Content-Type`,
 `Content-Length`, `Transfer-Encoding`, `Connection`, `User-Agent` refused), `langfuse:
 {public_key, secret_key}` (type `langfuse`: becomes the `Authorization: Basic` header, required on
 create), `sample_rate` (0–1, default 1; the decision is a hash of the request id), `key_ids` (only
 these API keys' requests; org exports: keys of the org, else 400; empty = all), `include_content`
-(default false), `enabled` (default true; re-enabling resets `failures`).
+(default false; org owners and admins only: workspace admins get 403 creating or changing an export
+that includes content, and may delete it), `enabled` (default true; re-enabling resets `failures`).
 
 Response: `{id, org_id, name, type, endpoint, header_names, sample_rate, key_ids?, include_content,
 enabled, failures, created_at}`. Header values are encrypted at rest and never returned. At most 5

@@ -207,6 +207,9 @@ func (g *Gateway) semanticCache(w http.ResponseWriter, r *http.Request, p *princ
 		return nil, false
 	}
 	emb := sc.Model
+	if ws := p.ws(); ws != "" { // answers stay in their workspace (D31)
+		emb += "|ws:" + ws
+	}
 	if kbSig != "" {
 		emb += "|" + kbSig
 	}

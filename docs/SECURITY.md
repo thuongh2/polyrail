@@ -469,3 +469,44 @@ TestCheckURLTenantServices, TestSendNtfyHTTP, TestDispatcherDedupeScopeAndAutoDi
 - **Linking.** SAML and SCIM link an existing account with the same email (the org proved control
   of the domain, so of the mailbox). That account then reaches its other orgs through this IdP too;
   this is the usual email-domain trust model.
+
+## Review: OpenRouter enterprise waves W1–W3 (D26–D31) (2026-11-11)
+
+Scope: `git diff 467cf55..HEAD -- internal cmd tools` (policies and provider privacy, request
+routing and presets, key visibility/rotation, management tokens, CSV exports, content logging,
+domains/SAML/SCIM/enforced SSO, data regions, OTLP/Langfuse trace export, workspaces). Verified by
+`gofmt -l`, `go vet ./...` and `go test -race -count=1 ./...` with Postgres and Redis.
+
+Checked and fine: every new org route goes through `org`/`ws` (non-members 404, CSRF for cookie
+sessions, `pr-mgmt-` bearers refused by `authed`, so never on platform, auth, operator or `/v1`
+routes); management tokens are capped by role ≤ admin and by the creator's current org/workspace
+role on every request, workspace-limited tokens pass only `a.ws` routes and see only their
+workspace, tokens cannot reach token or owner (identity) routes; every workspace-aware handler
+checks `wsCan` on the stored record before acting, workspaces cannot be changed by update
+(`keepWS`), sharing a provider is org-wide only; KBs, presets, private models and BYOK providers are
+filtered per key workspace at request time (`liveIn`, `UsableIn`, `Preset`, `kbs`, `vsAuth`);
+`models` fallbacks each pass `resolve` (key allowlist, policy model allowlist, privacy/region
+filters, `REGION_LOCK`), request `provider` and preset preferences only filter or reorder targets
+after the policy filter, `:nitro`/`:floor` only reorder, preset params are a whitelist; policy
+budgets have the D7 bounded overshoot; rotation grace is enforced through `expires_at`; content is
+sealed, admin-only (audited), purged by retention, not in ClickHouse rows; CSV cells are defused and
+log exports streamed and capped; domain TXT match is exact with one verified claim per domain and
+claims released on delete; SAML uses crewjam signature/audience/destination/time/InResponseTo
+checks with a KV replay cache, IdP-initiated off by default, JIT only on verified domains, operators
+refused, metadata fetch SSRF-guarded and size-capped; SCIM tokens are hashed and compared in
+constant time, all users/groups are org-scoped, filters run in memory; trace endpoints are checked at
+save and per batch with a pinned public dialer, no redirects, CR/LF refused in headers, per-org
+buffer share.
+
+| ID | Severity | Finding | Resolution |
+|---|---|---|---|
+| M15 | medium | **Caches crossed workspaces.** The response cache key was org + KB signature + body and semantic-cache entries were per org and model, so a key of workspace B received answers produced for workspace A's prompts (exactly for the response cache, by similarity for the semantic cache). | Fixed. Both caches include the key's workspace. [TestCachesArePerWorkspace] |
+| M16 | medium | **Workspace policies reached other workspaces.** A workspace admin (not an org admin) could create a policy in their workspace with `member_ids` naming any org member, including owners; `compilePolicy` applied it to that member's keys in every workspace (block filters, zero budgets, model allowlists), letting one workspace's admin deny service elsewhere. | Fixed. `member_ids` of a non-default-workspace policy reach only keys in that workspace; default-workspace (org-admin) policies are unchanged. [TestMemberPolicyStaysInItsWorkspace] |
+| M17 | medium | **Workspace admins could declare provider privacy.** Org policies (`require_zdr`, `deny_data_collection`, `allowed_regions`) trust a provider's declared `privacy`. A workspace admin could add a BYOK provider pointing anywhere and declare it ZDR / non-training / in an allowed region, so their workspace's keys passed the org admins' privacy and region policies. | Fixed. On org providers only org owners/admins set or change `privacy`; a workspace admin's write keeps the stored declaration (none on create) and a different one is 403. [TestWorkspaceAdminCannotDeclareProviderPrivacy] |
+| M18 | medium | **Workspace admins could export content.** Content (prompts and completions) is readable by org admins only, but a workspace admin could create a trace export with `include_content` (or redirect an org admin's content export to their endpoint) and receive the bodies of every request in the workspace, including other members'. | Fixed. Creating or changing an export that includes content needs an org owner/admin (403 otherwise); workspace admins may still delete it. [TestTraceExportContentAndHeaders] |
+| L26 | low | Changing a trace export's endpoint kept its stored headers, so a second admin of the scope (e.g. a workspace admin on an export an org admin set up) could send the bearer token or Langfuse secret key to their own endpoint (L21 pattern). | Fixed. A changed endpoint drops the stored headers unless new ones are sent with it (Langfuse then needs its keys again). [TestTraceExportContentAndHeaders] |
+| L27 | low | SCIM can provision an operator account whose email is on the org's verified domain as an org member, and deprovisioning then revokes that operator's keys in the org. Operators already act as owners; no privilege is gained. | Accepted. |
+| L28 | low | SCIM deprovisioning revokes keys the user created and their management tokens, but not keys created through those tokens (`created_by` = `token:<id>`); the tokens themselves stop at once. | Accepted (such keys are org automation keys, visible to admins). |
+| L29 | low | A verified domain is never re-checked; if the domain lapses, its new owner cannot claim it while the old org keeps the claim, and the old org's IdP keeps vouching for addresses there. | Accepted (delete the domain to release it; periodic re-verification is a later change). |
+| L30 | low | The SCIM rate limit (1,200/min) is counted per org before authentication, so anyone can spend a victim org's SCIM budget; the 5-export cap is per org, so a workspace admin can use all export slots. | Accepted (availability only, bounded). |
+| L31 | low | Logs, log exports and usage stay org-level (D31): an org viewer sees request metadata and end-user ids of every workspace. | Accepted (documented design). |

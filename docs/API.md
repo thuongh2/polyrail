@@ -365,10 +365,10 @@ Attempts are recorded by the gateway per target: targets it failed over from (or
 failed everywhere, each target whose status was a target fault, see Routing) count as errors with latency 0; the serving target counts the request latency and output tokens.
 Hourly counters are kept 30 days.
 
-## Admin (session cookie)
+## Admin (session cookie or management token)
 
-Sign in with `POST /api/auth/login {email, password}`. Every non-GET request needs the header
-`X-GW-CSRF: 1`. `{org}` is an org id; operators may act on any org.
+Sign in with `POST /api/auth/login {email, password}`. Every non-GET request with the session cookie
+needs the header `X-GW-CSRF: 1`. Org routes also accept a management token (below) instead. `{org}` is an org id; operators may act on any org.
 
 | Method | Path | Minimum role |
 |---|---|---|
@@ -380,14 +380,23 @@ Sign in with `POST /api/auth/login {email, password}`. Every non-GET request nee
 | POST | `/api/orgs/{org}/credits {usd, note}` | operator |
 | GET/POST | `/api/orgs/{org}/members` | viewer / admin |
 | PUT/DELETE | `/api/orgs/{org}/members/{user}` | admin (owners only change owners) |
-| GET/POST | `/api/orgs/{org}/keys` | viewer / member (secret returned once) |
+| GET/POST | `/api/orgs/{org}/keys` | viewer / member (secret returned once); members and viewers list only keys they created, admins and owners all |
 | PATCH | `/api/orgs/{org}/keys/{id}` | admin, or the member who created it (rename/revoke only) |
+| POST | `/api/orgs/{org}/keys/{id}/rotate {grace_seconds?}` | admin, or the member who created it → `{key, secret}` (new secret shown once) |
+| GET/POST | `/api/orgs/{org}/mgmt-tokens` | admin, session only (management tokens, below; secret returned once) |
+| PATCH/DELETE | `/api/orgs/{org}/mgmt-tokens/{id}` | admin, session only (`{name?, revoked?}`; revocation is one-way) |
 
 Key bodies: `name`, `rpm`, `tpm`, `monthly_budget_usd`, `models` (allowlist), `mcp_servers` (MCP server
 names the key may use, intersected with the org grant; empty or absent = every granted server),
 `kb_ids` (knowledge bases that ground the key's requests: KBs of the org, at most 3; admins only, on
 create too), `expires_in_days`, `revoked`. On PATCH only admins may change limits, `models`,
 `mcp_servers` or `kb_ids`.
+
+Key rotation keeps the key id and every setting (name, limits, `models`, `mcp_servers`, `kb_ids`,
+expiry, spend, and anything assigned to the key id) and returns a new secret once. The old secret
+keeps working for `grace_seconds` (0–86400, default 0 = stops at once) and is then rejected
+(`401 expired_api_key`); a secret from an earlier rotation stops at once. The key gains `rotated_at`
+and `prev_valid_until`. A revoked key cannot be rotated (400). Audited as `key.rotate`.
 
 | GET/POST/PUT/DELETE | `/api/orgs/{org}/providers[/{id}]` | admin |
 | POST | `/api/orgs/{org}/providers/{id}/discover`, `/import` | admin (org-owned providers only) |
@@ -418,7 +427,8 @@ create too), `expires_in_days`, `revoked`. On PATCH only admins may change limit
 | * | `/api/admin/providers`, `/api/admin/models`, `/api/admin/usage`, `/api/admin/audit`, `/api/admin/users`, `/api/admin/mcp` | operator |
 | * | `/api/admin/providers/{id}/keys…`, `/api/admin/alerts…` | operator (the same key and alert routes for platform providers and platform channels) |
 
-Org PATCH body: `name`, `guardrails`, `max_tokens_cap`, `prepaid`, `mcp_servers`, and
+Org PATCH body: `name`, `guardrails`, `max_tokens_cap`, `prepaid`, `mcp_servers`,
+`content_logging: {enabled, retention_days}` (see Content logging), and
 `semantic_cache: {model, threshold, ttl_seconds}`: `model` must be an embedding model the org can use,
 `threshold` 0.5–0.999 (default 0.92), `ttl_seconds` 1–86400 (default 3600). `{"model": ""}` turns it off.
 
@@ -446,6 +456,49 @@ model, dimensions or chunking re-embeds every document. Search returns a bare ar
 value or a list of values. Mutations are audited (`kb.create`, `kb.update`, `kb.delete`,
 `kb.reindex`, `kb.doc.add`, `kb.doc.delete`). Unknown `/api/…` paths answer JSON 404
 `{"error":{"message":"not found"}}`.
+
+### Management tokens
+
+Org-scoped bearer tokens for scripts and CI (OpenRouter "management keys"). Create with
+`POST /api/orgs/{org}/mgmt-tokens {name, role: "admin"|"member"|"viewer", expires_in_days?}` →
+`{token: {id, org_id, name, prefix, role, created_by, expires_at?, last_used_at?, revoked, created_at},
+secret: "pr-mgmt-…"}`; the secret is shown once and stored as SHA-256 only. Send it as
+`Authorization: Bearer pr-mgmt-…` to any `/api/orgs/{org}/…` route of the token's own org; no cookie
+and no `X-GW-CSRF` header are needed. The token acts with its role, capped by its creator's current
+role in the org (a demoted creator narrows it; a removed or disabled creator ends it). Another org
+answers 404; `/api/admin/…`, `/api/auth/…`, `GET /api/orgs`, operator routes and `/v1/…` answer
+401; the `mgmt-tokens` routes themselves refuse tokens (403), so a leaked token cannot mint more.
+Audit entries name the actor `token:<name>`. Keys created by a token have `created_by: "token:<id>"`.
+Mutations audited as `mgmt_token.create`, `mgmt_token.update`, `mgmt_token.delete`.
+
+### Exports
+
+| Method | Path | Role |
+|---|---|---|
+| GET | `/api/orgs/{org}/usage/export.csv?from=&to=&group=model\|key\|creator\|day` | viewer |
+| GET | `/api/admin/usage/export.csv?from=&to=&group=model\|day` | operator (platform rollups) |
+| GET | `/api/orgs/{org}/logs/export.csv?from=&to=` | viewer |
+
+`from` / `to` are `YYYY-MM-DD` (UTC; a `to` date includes that day) or RFC 3339; `from` is
+inclusive, `to` exclusive, at most 366 days apart. Defaults: usage the last 30 days, logs the last 7.
+Usage rows are daily: `date,<group>,requests,errors,in_tokens,out_tokens,cost_usd,avg_latency_ms,cache_hits`
+(`group=day` has no group column); `creator` is the email of the user who created the key (or
+`token:<id>` for keys made by a management token). Log rows, newest first, at most 100,000
+(`X-GW-Row-Cap`): `id,at,key_id,model,provider,upstream_model,status,error,in_tokens,out_tokens,cost_usd,latency_ms,cached,stream,kb_chunks`.
+Files are RFC 4180 CSV streamed as they are read; a cell starting with `=`, `+`, `-`, `@`, tab or CR
+gets a leading `'` so spreadsheets do not run it as a formula.
+
+### Content logging
+
+Off by default. An admin turns it on with org PATCH `{"content_logging": {"enabled": true,
+"retention_days": 30}}` (1–90, default 30). While on, `/v1/chat/completions` stores the request
+body and the response (the JSON body; for streams the assembled text of the content deltas), each cut
+at 64 KB (`request_truncated` / `response_truncated`), sealed with AES-GCM under `MASTER_KEY`, keyed
+by request-log id and day. Other endpoints store nothing. `GET /api/orgs/{org}/logs/{id}/content`
+(admin) → `{log_id, at, request, response, request_truncated?, response_truncated?}` or 404; each read
+is audited as `log.content.read`. The retention job deletes days older than `retention_days` every
+6 hours. Bodies never go to the ClickHouse sink. Writes run in the background; when 64 are pending,
+new ones are skipped and counted in `gateway_content_log_dropped_total`.
 
 ### Webhooks
 

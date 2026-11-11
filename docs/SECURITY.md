@@ -359,3 +359,38 @@ are off by default and checked public at save and per request.
   failures; at most 20 channels per scope.
 [TestProviderKeysAPI, TestAlertChannelsCRUDSecretsAndTest, TestAlertTenantCustomHostWithPrivateURLsAllowed,
 TestCheckURLTenantServices, TestSendNtfyHTTP, TestDispatcherDedupeScopeAndAutoDisable, TestAlertURLSealedAndOrgDelete]
+
+## Keys, management tokens, exports, content logging (2026-11-11, W1-C, D28, developer notes for review)
+
+- **Key visibility.** Members and viewers list only keys they created; admins, owners and operators
+  see all. Rotate and PATCH check `created_by` for non-admins (403). [TestKeyVisibilityByRole]
+- **Rotation.** The new secret is returned once; only its SHA-256 is stored. The replaced hash stays
+  indexed only for `grace_seconds` (≤ 24 h): `KeyByHash` returns it with `expires_at` capped at the
+  grace end, so the gateway's existing expiry check rejects it on time even from the 30 s auth cache.
+  A second rotation drops the earlier hash at once; org delete removes both. `InvalidateAuth` runs on
+  every rotation. [TestKeyRotateGraceAndSettings, TestRotateKeyGraceAndOrgDelete]
+- **Management tokens.** `pr-mgmt-` + 32 random bytes, SHA-256 at rest, shown once, never listed.
+  Accepted only by the org middleware for the token's own org (other orgs 404, like non-members);
+  the session middleware answers 401 to any `pr-mgmt-` bearer, so platform, auth, operator and org
+  listing routes never accept one, and `/v1` only accepts `sk-gw-` keys. Role ≤ admin and capped on
+  every request by the creator's current role (removal or disablement ends the token). Tokens cannot
+  manage tokens. CSRF is not required for bearer auth (a cross-site page cannot set
+  `Authorization`); cookie sessions still need `X-GW-CSRF`. `last_used_at` is written at most once a
+  minute. Audit actor `token:<name>`. [TestMgmtTokens]
+- **Exports.** Same roles as the screens they mirror (viewer). CSV via `encoding/csv` (RFC 4180
+  quoting); cells starting with `= + - @`, tab or CR are prefixed with `'` against spreadsheet
+  formula injection. Log export is capped at 100,000 rows and streamed in 1,000-row pages, so memory
+  stays flat. Members can see per-key and per-creator usage and log key ids of other members' keys,
+  as on the usage and logs screens (key ids are not secrets). [TestUsageAndLogExport]
+- **Content logging privacy.** Off by default; only an admin turns it on, per org, and the change is
+  audited. Prompts and completions can hold personal data and secrets: bodies (≤ 64 KB each) are
+  sealed with AES-256-GCM under `MASTER_KEY` before they are written, keyed
+  `logc/<org>/<day>/<log id>`, never sent to the ClickHouse sink, readable only by org admins through
+  `GET …/logs/{id}/content` (each read audited), purged every 6 hours past `retention_days` (≤ 90),
+  and deleted with the org. Guardrail masking (`mask_pii`, `mask_secrets`) runs on the request sent
+  upstream, not on the stored request body, which is the raw client body. Writes run off the request
+  path in at most 64 concurrent goroutines and are dropped when all are busy
+  (`gateway_content_log_dropped_total`). Operators can
+  read any org's content (they act as owners). Only `/v1/chat/completions` is captured.
+  [TestContentSealedPurgedAndOrgDelete, TestContentLoggingOptIn, TestContentLoggingStream,
+  TestContentLoggingSettingAndRead]

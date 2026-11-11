@@ -421,6 +421,9 @@ func retention(ctx context.Context, s *store.Store, days int) {
 		if err := s.PruneHealth(ctx, 30); err != nil { // public provider health keeps 30 days
 			slog.Error("health retention", "err", err)
 		}
+		if err := s.PurgeContent(ctx); err != nil { // opt-in content logs: each org's retention_days
+			slog.Error("content log retention", "err", err)
+		}
 		select {
 		case <-ctx.Done():
 			return

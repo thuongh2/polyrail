@@ -308,3 +308,21 @@ it and log retention prunes it by range; ClickHouse gains an `end_user` column (
 EXISTS`). It is also the cache-affinity key when the request has no prompt key or prefix.
 If wrong: a per-model upstream loop would allow different request params per model (presets per
 fallback); end-user rollups may need a cap per org if tenants send unbounded distinct ids.
+
+**D28 Key visibility, rotation, management tokens, exports, content logging (W1-C).** OpenRouter
+enterprise parity (docs/OPENROUTER_ENTERPRISE.md). Rulings: (1) members and viewers list only keys
+they created; admins/owners all; rotate/revoke of others' keys is admin-only. (2) Rotation keeps the
+key id, so limits, allowlists, KBs, spend counters and anything assigned by key id stay; the old
+hash stays indexed for an optional grace (≤ 24 h) and `KeyByHash` caps its `expires_at` at the grace
+end, which reuses the gateway's expiry check with no gateway change. (3) Management tokens are a
+separate entity (`mgmt/`, `mhash/`), not API keys with a flag: different prefix (`pr-mgmt-`),
+different surface (org admin API only), so a leak of one kind never opens the other. They act with
+min(token role, creator's current role); they cannot manage tokens; CSRF is skipped for bearer auth
+only. (4) Exports stream CSV from the existing daily rollups and day-partitioned logs (no new
+indexes); creator grouping resolves `APIKey.CreatedBy` at export time. (5) Content logging is an
+org setting (admin), stored sealed under `logc/<org>/<day>/<log id>` (org first, so each org's
+retention is one range delete), with a `logcorg/` index the purge job walks instead of all orgs;
+capture is a per-request copy of the principal (`withContent`) plus one call in `record`, for
+`/v1/chat/completions` only (streams store the assembled delta text). If wrong: other endpoints
+add the same `withContent` line; a per-member visibility exception would be a policy field (agent A's
+policy engine).

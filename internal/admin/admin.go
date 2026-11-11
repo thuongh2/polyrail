@@ -23,6 +23,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/mcp"
 	"github.com/polyrail/polyrail/internal/alert"
+	"github.com/polyrail/polyrail/internal/broadcast"
 	"github.com/polyrail/polyrail/internal/gateway"
 	"github.com/polyrail/polyrail/internal/limits"
 	"github.com/polyrail/polyrail/internal/store"
@@ -49,6 +50,8 @@ type API struct {
 	// Alerts sends alert channel tests (nil: tests answer 503). Events reach channels through the
 	// gateway's Events fan-out.
 	Alerts *alert.Dispatcher
+	// Traces sends trace export tests and reloads exports after writes (nil: tests answer 503).
+	Traces *broadcast.Exporter
 	cfg    Config
 	sign   signer
 	oidc   *oidcClient
@@ -154,6 +157,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerProxyPools(mux)
 	a.registerKeys(mux)
 	a.registerAlerts(mux)
+	a.registerTraceExports(mux)
 	a.registerPolicies(mux)
 	a.registerPresets(mux)
 	a.registerMgmt(mux)

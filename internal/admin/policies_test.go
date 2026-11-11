@@ -127,7 +127,7 @@ func TestProviderPrivacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = f.do(t, "", "GET", "/api/public/models/acme/m1", "")
-	if r.code != 200 || !strings.Contains(r.body, `"privacy":{"zdr":true,"trains_on_data":false,"region":"eu"}`) {
+	if r.code != 200 || !strings.Contains(r.body, `"privacy":{"zdr":true,"trains_on_data":false,"region":"europe"}`) { // eu is stored as europe
 		t.Fatalf("public model privacy: %d %s", r.code, r.body)
 	}
 }

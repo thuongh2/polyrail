@@ -183,5 +183,8 @@ func checkPrivacy(pv *store.ProviderPrivacy) error {
 	case !rePrivacyRegion.MatchString(pv.Region):
 		return fmt.Errorf("%w: privacy.region: lowercase letters, digits and - (e.g. us, eu)", store.ErrInvalid)
 	}
+	if pv.Region != "" {
+		pv.Region = store.NormalizeRegion(pv.Region) // eu-west-1 → europe, us-east-1 → us
+	}
 	return nil
 }

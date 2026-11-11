@@ -22,6 +22,7 @@ import (
 
 	"github.com/polyrail/polyrail/internal/admin"
 	"github.com/polyrail/polyrail/internal/alert"
+	"github.com/polyrail/polyrail/internal/broadcast"
 	"github.com/polyrail/polyrail/internal/catalog"
 	"github.com/polyrail/polyrail/internal/gateway"
 	"github.com/polyrail/polyrail/internal/kb"
@@ -163,6 +164,13 @@ func run() error {
 	if pool := env("UPSTREAM_PROXY_POOL", ""); pool != "" {
 		slog.Info("upstream proxy pool", "pool", pool)
 	}
+	regionLock := env("REGION_LOCK", "")
+	if regionLock != "" {
+		if regionLock = store.NormalizeRegion(regionLock); regionLock == "global" {
+			return errors.New("REGION_LOCK must name a region (europe, us, ...); leave it unset for no lock")
+		}
+		slog.Info("region lock: requests only reach providers of this data region", "region", regionLock)
+	}
 	g, err := gateway.New(ctx, s, lim, up, gateway.Config{
 		MaxBodyBytes: int64(envInt("MAX_BODY_MB", 8)) << 20,
 		Concurrency:  envInt("PROVIDER_CONCURRENCY", 64),
@@ -177,6 +185,7 @@ func run() error {
 		ProxyPool:           env("UPSTREAM_PROXY_POOL", ""),
 		ProxyNoProxy:        env("UPSTREAM_NO_PROXY", ""),
 		ProxyHealthInterval: probeEvery,
+		RegionLock:          regionLock,
 	})
 	if err != nil {
 		return err
@@ -229,6 +238,9 @@ func run() error {
 	alerts := alert.New(s, allowPrivate, envInt("ALERT_QUEUE", 1000))
 	alerts.Start(ctx, 2)
 	g.Hooks, api.Hooks, api.Alerts = gateway.Fanout{hooks, alerts}, hooks, alerts
+	traces := broadcast.New(s, allowPrivate, envInt("TRACE_QUEUE", 10000))
+	traces.Start(ctx, 2)
+	g.Traces, api.Traces = traces, traces
 	if err := bootstrap(ctx, s); err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}

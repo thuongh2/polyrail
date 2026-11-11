@@ -5,7 +5,11 @@ export GOFLAGS ?= -mod=mod
 export GOTOOLCHAIN ?= local
 export CGO_ENABLED ?= 0
 
-.PHONY: build test check run
+.PHONY: build test check run ui
+# ui rebuilds the embedded web UI (needs Node 20+); the built files are committed, so Go builds without Node.
+ui:
+	cd web && npm ci && npm run build
+
 build:
 	go build -trimpath -ldflags="-s -w" -o bin/gateway ./cmd/gateway
 test:

@@ -1,4 +1,4 @@
-module github.com/agent-gateway/agent-gateway
+module github.com/polyrail/polyrail
 
 go 1.27.3
 

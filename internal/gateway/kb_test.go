@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/kb"
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/kb"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 var reTestWord = regexp.MustCompile(`[a-z0-9]+`)

@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/agent-gateway/agent-gateway/internal/gateway"
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/gateway"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 func (a *API) registerProxyPools(mux *http.ServeMux) {

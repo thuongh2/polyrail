@@ -39,7 +39,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 var (

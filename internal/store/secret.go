@@ -16,6 +16,7 @@ func NewBox(masterKey string) (*Box, error) {
 	if len(masterKey) < 16 {
 		return nil, errors.New("MASTER_KEY must be at least 16 characters")
 	}
+	// The label keeps the pre-rename name on purpose: changing it would make stored secrets unreadable (D24).
 	k := sha256.Sum256([]byte("agent-gateway/secret/v1:" + masterKey))
 	block, err := aes.NewCipher(k[:])
 	if err != nil {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
-	"github.com/agent-gateway/agent-gateway/internal/usage"
+	"github.com/polyrail/polyrail/internal/store"
+	"github.com/polyrail/polyrail/internal/usage"
 )
 
 func (f *fixture) idemServer(t *testing.T, extra http.HandlerFunc) *httptest.Server {

@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/gateway"
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/gateway"
+	"github.com/polyrail/polyrail/internal/store"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -320,7 +320,7 @@ func (d *Dispatcher) post(ctx context.Context, h store.Webhook, ev Event, body [
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "agent-gateway-webhook/1")
+	req.Header.Set("User-Agent", "Polyrail-Webhook/1")
 	req.Header.Set("X-GW-Event", ev.Type)
 	req.Header.Set("X-GW-Delivery", ev.ID) // same across retries, so receivers can dedupe
 	req.Header.Set("X-GW-Signature", Sign(h.Secret, time.Now().Unix(), body))

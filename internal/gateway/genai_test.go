@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
-	"github.com/agent-gateway/agent-gateway/internal/usage"
+	"github.com/polyrail/polyrail/internal/store"
+	"github.com/polyrail/polyrail/internal/usage"
 )
 
 // genaiUpstream is an OpenAI-compatible provider answering Responses (JSON and SSE), input token

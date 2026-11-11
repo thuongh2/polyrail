@@ -1,4 +1,4 @@
-# Architecture — agent-gateway
+# Architecture — Polyrail
 
 Owner: Tech Lead agent. Decisions referenced as D-n live in docs/DECISIONS.md.
 

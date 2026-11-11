@@ -25,10 +25,11 @@ export default function Home() {
       <section className="grid gap-10 pt-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] lg:items-center">
         <div className="min-w-0">
           <h1 className="max-w-2xl text-4xl font-semibold tracking-tight text-balance [overflow-wrap:break-word] md:text-5xl">
-            One API for every model you run
+            One API for every model.
           </h1>
           <p className="mt-4 max-w-xl text-lg text-muted-foreground">
-            An OpenAI-compatible endpoint with routing, failover and per-key budgets, self-hosted as a single binary.
+            Self-hosted, light, open. Polyrail is an OpenAI-compatible endpoint with routing, failover and per-key
+            budgets in a single binary.
           </p>
           <form
             role="search"

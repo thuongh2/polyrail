@@ -7,9 +7,9 @@ import (
 	"net/url"
 	"slices"
 
-	"github.com/agent-gateway/agent-gateway/internal/gateway"
-	"github.com/agent-gateway/agent-gateway/internal/store"
-	"github.com/agent-gateway/agent-gateway/internal/webhook"
+	"github.com/polyrail/polyrail/internal/gateway"
+	"github.com/polyrail/polyrail/internal/store"
+	"github.com/polyrail/polyrail/internal/webhook"
 )
 
 func (a *API) emit(org, typ string, data map[string]any) {

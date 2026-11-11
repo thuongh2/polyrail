@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/agent-gateway/agent-gateway/internal/catalog"
+	"github.com/polyrail/polyrail/internal/catalog"
 )
 
 // POST /api/admin/catalog/sync adds the embedded catalog's missing providers (disabled, no keys)

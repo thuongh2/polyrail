@@ -6,12 +6,12 @@ Plain binary with systemd:
 
 ```sh
 make build                                   # on a machine with Go 1.27+
-scp bin/gateway server:/usr/local/bin/agent-gateway
+scp bin/polyrail server:/usr/local/bin/polyrail
 # on the server
-sudo useradd --system --no-create-home gateway
-sudo cp deploy/agent-gateway.service /etc/systemd/system/
-sudo install -m 600 /dev/null /etc/agent-gateway.env   # fill it from deploy/.env.example
-sudo systemctl enable --now agent-gateway
+sudo useradd --system --no-create-home polyrail
+sudo cp deploy/polyrail.service /etc/systemd/system/
+sudo install -m 600 /dev/null /etc/polyrail.env   # fill it from deploy/.env.example
+sudo systemctl enable --now polyrail
 ```
 
 Or Docker:
@@ -38,7 +38,7 @@ by filesystem snapshot. Keep `MASTER_KEY` with the backup: without it, provider 
 ## Scale mode: several nodes
 
 ```sh
-docker compose -f deploy/docker-compose.scale.yml up -d --scale gateway=3
+docker compose -f deploy/docker-compose.scale.yml up -d --scale polyrail=3
 ```
 
 - `STORE=postgres`: control plane, usage counters and request logs in Postgres. Every node reads the
@@ -101,6 +101,21 @@ errors (429, 5xx) travel inside the tunnel and never change the selection. Watch
 every Bifrost model client tunnels `http://` targets too, but a provider whose SDK uses net/http
 (Bedrock) must use an `https://` endpoint. Through a pool, org providers' targets are checked public
 and pinned to the checked address by the gateway itself.
+
+## Upgrading from agent-gateway
+
+Polyrail was called agent-gateway until 2026-11-11 (docs/DECISIONS.md D24). The data format, env vars,
+headers, cookies, metric names and API paths are unchanged, so an existing `DATA_DIR`, Postgres
+database, `.env` and `MASTER_KEY` work as they are; only the binary, image and unit names changed.
+
+- systemd: either keep the old unit and replace `/usr/local/bin/agent-gateway` with the new binary,
+  or install `deploy/polyrail.service` and point it at the old data with
+  `Environment=DATA_DIR=/var/lib/agent-gateway` and `EnvironmentFile=/etc/agent-gateway.env`
+  (or move both to the new paths while the service is stopped).
+- Docker Compose: the service is now `polyrail` (image `polyrail:latest`); the volume names
+  (`gateway-data`, `pg-data`, `ch-data`) and the Postgres credentials are unchanged, so
+  `docker compose up -d --remove-orphans` attaches the existing data.
+- Sessions and stored provider keys stay valid: the key-derivation labels kept their old values.
 
 ## Upgrading Bifrost core
 

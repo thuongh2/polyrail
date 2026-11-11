@@ -5,7 +5,7 @@ We port the gateway ideas that fit a 1 vCPU / 2 GB Go binary on Bifrost core, an
 that depends on reusing consumer subscription logins, pooling free accounts, or client
 impersonation (provider-terms risk; OmniRoute's own stealth guide calls them ban risks).
 
-Status: **have** = already in agent-gateway, **wave 1** = in progress / shipped this wave,
+Status: **have** = already in Polyrail, **wave 1** = in progress / shipped this wave,
 **later** = fits, not scheduled, **skip** = out of scope (reason given).
 
 ## Routing

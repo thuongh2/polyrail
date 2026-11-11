@@ -1,0 +1,22 @@
+# systemd unit for a plain-binary install (no Docker). See docs/DEPLOY.md.
+# Upgrading an agent-gateway install: keep your old paths or move them (docs/DEPLOY.md "Upgrading from agent-gateway").
+[Unit]
+Description=Polyrail
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=polyrail
+EnvironmentFile=/etc/polyrail.env
+Environment=DATA_DIR=/var/lib/polyrail
+ExecStart=/usr/local/bin/polyrail
+Restart=on-failure
+StateDirectory=polyrail
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=768M
+
+[Install]
+WantedBy=multi-user.target

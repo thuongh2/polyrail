@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/kb"
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/kb"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // setupKB adds an embedding model (one fixed vector per input: ranking falls to BM25) and the

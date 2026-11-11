@@ -20,12 +20,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/gateway"
-	"github.com/agent-gateway/agent-gateway/internal/limits"
-	"github.com/agent-gateway/agent-gateway/internal/store"
-	"github.com/agent-gateway/agent-gateway/internal/usage"
-	"github.com/agent-gateway/agent-gateway/internal/webhook"
 	"github.com/maximhq/bifrost/core/mcp"
+	"github.com/polyrail/polyrail/internal/gateway"
+	"github.com/polyrail/polyrail/internal/limits"
+	"github.com/polyrail/polyrail/internal/store"
+	"github.com/polyrail/polyrail/internal/usage"
+	"github.com/polyrail/polyrail/internal/webhook"
 )
 
 type Config struct {

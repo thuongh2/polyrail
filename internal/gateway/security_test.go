@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 func TestBlockedIPRanges(t *testing.T) {

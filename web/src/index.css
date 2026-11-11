@@ -29,6 +29,9 @@
   --warning: oklch(0.75 0.15 75);
   --danger: oklch(0.53 0.2 27);
   --nodata: oklch(0.9 0 0);
+  /* Polyrail mark (components/Logo.tsx); the same values are hard-coded in public/favicon.svg. */
+  --brand: #1f6feb;
+  --brand-foreground: #fff;
   /* Console frame: the muted surface behind the top bar, sidebar and the raised content panel. */
   --frame: oklch(0.967 0 0);
   --frame-active: oklch(0.915 0 0);
@@ -60,6 +63,7 @@
   --warning: oklch(0.8 0.14 80);
   --danger: oklch(0.68 0.19 25);
   --nodata: oklch(0.3 0 0);
+  --brand: #5b9bff;
   --frame: oklch(0.115 0 0);
   --frame-active: oklch(0.235 0 0);
 }
@@ -90,6 +94,8 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-signal: var(--signal);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);

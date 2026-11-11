@@ -2,13 +2,13 @@
 #   cp deploy/.env.example deploy/.env  # then edit it
 #   docker compose -f deploy/docker-compose.yml up -d
 services:
-  gateway:
+  polyrail:
     build: ..
-    image: agent-gateway:latest
+    image: polyrail:latest
     restart: unless-stopped
     env_file: .env
     ports: ["8080:8080"]
-    volumes: ["gateway-data:/data"]
+    volumes: ["gateway-data:/data"] # pre-rename volume name kept so existing data stays attached (D24)
     mem_limit: 512m
 volumes:
   gateway-data:

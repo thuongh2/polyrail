@@ -447,5 +447,5 @@ prices are used only by the `cost` strategy.
 
 `GET /healthz` and its Bifrost-compatible alias `GET /health` (process up), `GET /readyz` (store
 reachable), `GET /metrics` (Prometheus; `METRICS_TOKEN` if set), `GET /api/version`
-(`{"version": "<build version>", "bifrost_core": "v1.15.2"}`; the version is set at build time with
+(`{"name": "polyrail", "version": "<build version>", "bifrost_core": "v1.15.2"}`; the version is set at build time with
 `-ldflags "-X main.version=…"`, which `make build` does from `git describe`, else `dev`).

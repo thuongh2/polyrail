@@ -1,11 +1,11 @@
 # Bifrost feature parity
 
-What agent-gateway covers from Bifrost's documented feature set (docs.getbifrost.ai, read
+What Polyrail covers from Bifrost's documented feature set (docs.getbifrost.ai, read
 2026-11-11), built on Bifrost core v1.15.2. "Core" marks features the pinned core supports.
 
 ## Supported
 
-| Bifrost feature | agent-gateway |
+| Bifrost feature | Polyrail |
 |---|---|
 | OpenAI-compatible API | `/v1/chat/completions` (stream), `/v1/completions` (stream), `/v1/responses` (stream), `/v1/embeddings`, `/v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/models` |
 | Drop-in replacement, OpenAI SDK | base URL `http://host/openai/v1` or `http://host/v1` |

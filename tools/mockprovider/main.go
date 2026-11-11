@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/agent-gateway/agent-gateway/tools/mockprovider/asyncmock"
+	"github.com/polyrail/polyrail/tools/mockprovider/asyncmock"
 )
 
 func writeJSON(w http.ResponseWriter, v any) {

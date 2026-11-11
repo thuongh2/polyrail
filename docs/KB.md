@@ -74,7 +74,7 @@ counts, `Rev++`; delete KB = DeleteRange all prefixes; `DeleteOrg` adds `kb*/<or
 - URL ingest (synchronous in `AddDoc`): `kb.Config.CheckURL` at save and on every redirect,
   connections through `kb.Config.DialContext`; the gateway injects `gateway.CheckPublicURL` and
   `PublicDialer` (kb never imports gateway; both nil = URL ingest disabled). 15 s timeout, ≤3
-  redirects, 5 MB cap, allowed content types only, UA `agent-gateway`, errors never echo bodies;
+  redirects, 5 MB cap, allowed content types only, UA `Polyrail`, errors never echo bodies;
   only `ALLOW_PRIVATE_PROVIDER_URLS` relaxes it.
 - Chunker (`chunk.go`): split into sections at `#`–`###` keeping the heading path (`A > B > C`);
   pack paragraphs up to `chunk_chars`; oversize paragraphs split at sentence ends, then hard cut on a

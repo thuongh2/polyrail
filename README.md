@@ -1,6 +1,10 @@
-# agent-gateway
+<p align="center"><img src="docs/assets/polyrail.svg" width="96" height="96" alt="Polyrail logo"></p>
 
-An open-source, self-hosted AI model gateway: one OpenAI-compatible API in front of many providers,
+# Polyrail
+
+**One API for every model. Self-hosted, light, open.**
+
+Polyrail is an open-source, self-hosted AI model gateway: one OpenAI-compatible API in front of many providers,
 with per-model pricing, credits, routing and failover, API keys, rate limits, usage analytics,
 multi-tenancy, RBAC, SSO, audit logs, guardrails, MCP tools and Prometheus metrics.
 A self-hosted take on OpenRouter, built on [Bifrost core](https://github.com/maximhq/bifrost) for
@@ -15,7 +19,7 @@ stateless replicas on Postgres + Valkey + ClickHouse when you need it.
 ./scripts/run-local.sh
 ```
 
-It starts the gateway, which loads the built-in model catalog (generated from
+It starts Polyrail, which loads the built-in model catalog (generated from
 [models.dev](https://models.dev)): every vendor provider is added disabled and without keys. Sign in
 with the credentials it prints (kept in `.env.local`), open Platform → Providers, paste an API key
 into a provider and enable it; its models then appear in the catalog and the API. Prebuilt binaries
@@ -26,9 +30,9 @@ dashboards have data; `PORT=9090` changes the port.
 ## Quick start
 
 ```sh
-make build                       # or: docker build -t agent-gateway .
+make build                       # builds bin/polyrail; or: docker build -t polyrail .
 export MASTER_KEY=$(openssl rand -hex 32) ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='choose-a-long-one'
-./bin/gateway                    # listens on :8080, stores data in ./data
+./bin/polyrail                   # listens on :8080, stores data in ./data
 ```
 
 Open `http://localhost:8080/app/`, sign in, then:
@@ -48,6 +52,10 @@ curl http://localhost:8080/v1/chat/completions \
 
 Any OpenAI SDK works by setting its base URL to `http://localhost:8080/v1`.
 The public model catalog with prices is at `http://localhost:8080/`.
+
+Coming from agent-gateway (the former name)? Data dirs, env vars, API paths, `X-GW-*` /
+`x-gateway-*` headers, `sk-gw-` keys and metric names are unchanged; see
+[docs/DEPLOY.md](docs/DEPLOY.md#upgrading-from-agent-gateway).
 
 ## Screens
 

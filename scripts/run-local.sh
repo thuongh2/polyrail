@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run agent-gateway on this machine. A fresh data dir gets the production model catalog (disabled
+# Run Polyrail on this machine. A fresh data dir gets the production model catalog (disabled
 # providers, no keys); add a key to a provider in the console and enable it to use its models.
 #   ./scripts/run-local.sh            # production catalog, no demo data
 #   DEMO=1 ./scripts/run-local.sh     # also a local mock provider + demo models + an API key
@@ -18,12 +18,12 @@ case "$(uname -s)-$(uname -m)" in
   Linux-aarch64 | Linux-arm64) SUFFIX=linux-arm64 ;;
   *) echo "unsupported platform $(uname -s)-$(uname -m); build with: make build" >&2; exit 1 ;;
 esac
-GW=bin/gateway-$SUFFIX
+GW=bin/polyrail-$SUFFIX
 MOCK=bin/mockprovider-$SUFFIX
 if [ ! -x "$GW" ]; then
   if command -v go >/dev/null; then
     echo "building $GW"
-    GOFLAGS=-mod=mod CGO_ENABLED=0 go build -o "$GW" ./cmd/gateway
+    GOFLAGS=-mod=mod CGO_ENABLED=0 go build -o "$GW" ./cmd/polyrail
     CGO_ENABLED=0 go build -o "$MOCK" ./tools/mockprovider
   else
     echo "missing $GW and no Go toolchain to build it" >&2; exit 1
@@ -64,9 +64,9 @@ trap cleanup EXIT INT TERM
 if [ "$DEMO" = 1 ]; then
   "$MOCK" & MOCK_PID=$!
 fi
-"$GW" > gateway.log 2>&1 & GW_PID=$!
+"$GW" > polyrail.log 2>&1 & GW_PID=$!
 for _ in $(seq 1 50); do curl -fs "$B/healthz" >/dev/null 2>&1 && break; sleep 0.2; done
-curl -fs "$B/healthz" >/dev/null || { echo "gateway did not start; see gateway.log" >&2; tail -20 gateway.log >&2; exit 1; }
+curl -fs "$B/healthz" >/dev/null || { echo "polyrail did not start; see polyrail.log" >&2; tail -20 polyrail.log >&2; exit 1; }
 
 KEY_LINE=""
 if [ "$DEMO" = 1 ]; then
@@ -99,7 +99,7 @@ MODEL=openai/gpt-4o-mini
 
 cat <<EOF
 
-  agent-gateway is running.
+  Polyrail is running.
 
   Console:   http://localhost:$PORT/app/
   Catalog:   http://localhost:$PORT/
@@ -114,6 +114,6 @@ cat <<EOF
   Try it:    curl http://localhost:$PORT/v1/chat/completions -H "Authorization: Bearer <key>" \\
                -d '{"model":"$MODEL","messages":[{"role":"user","content":"hi"}]}'
 
-  Logs in gateway.log. Press Ctrl-C to stop.
+  Logs in polyrail.log. Press Ctrl-C to stop.
 EOF
 wait $GW_PID

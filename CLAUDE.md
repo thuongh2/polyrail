@@ -5,6 +5,9 @@ Update the **Decisions** and **Status** sections whenever something changes. `AG
 
 ## Mission (verbatim intent from the owner)
 
+Product name: **Polyrail** — "One API for every model. Self-hosted, light, open." (renamed from
+agent-gateway on 2026-11-11, D24; compatibility identifiers such as `X-GW-*` headers stay).
+
 Build a production-ready, fully open-source **Unified AI Model Platform** — an OSS alternative to
 OpenRouter with Bifrost-inspired capabilities — that is **lightweight and easy to self-host**.
 
@@ -66,7 +69,7 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
   - Credits/budgets: stored spend + this node's unflushed spend, refreshed each 1 s flush (D7).
 - D4 HTTP: stdlib `net/http` (Go 1.22 patterns). UI: plain HTML/CSS/JS embedded via `go:embed`, no build step.
 - D5 Provider secrets encrypted at rest with AES-GCM using `MASTER_KEY`. API keys stored as SHA-256 hash only.
-- D6–D23 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding, UI, cloud providers, routing strategies, guardrails, idempotency + cost header, webhooks, semantic cache, models.dev catalog seed + visibility rule, org OpenAI-compatible types, knowledge bases / gateway RAG, upstream proxy, proxy pools).
+- D6–D24 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding, UI, cloud providers, routing strategies, guardrails, idempotency + cost header, webhooks, semantic cache, models.dev catalog seed + visibility rule, org OpenAI-compatible types, knowledge bases / gateway RAG, upstream proxy, proxy pools, rename to Polyrail).
 
 ## Lessons (do not repeat)
 
@@ -82,6 +85,8 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
 
 - Cloud workspace: `/home/claude/agent-gateway` (git repo). Owner's folder (Mac):
   `/Users/lap17656/code-by-hand/agent-gateway` — sync deliverables there with device_commit_files.
+  Both folders keep the old name after the rename to Polyrail (D24); they are paths, not the product name.
+- Build: `make build` → `bin/polyrail`; `make dist` → `bin/polyrail-<os>-<arch>` + `bin/mockprovider-<os>-<arch>`.
 - Owner's local VM has no Go and no internet beyond allowlist; build/test in the cloud workspace.
 - Go 1.27.3 (built from source, owner-approved) lives at `/opt/gosrc/go127/bin`; always
   `export PATH=/opt/gosrc/go127/bin:$PATH GOPROXY=direct GOSUMDB=off GOFLAGS=-mod=mod GOTOOLCHAIN=local`.

@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 // hashEmbed is the test embedder of docs/KB.md §9: hashed bag of words, L2-normalized.
@@ -474,7 +474,7 @@ func TestFetchURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/page.html":
-			if r.UserAgent() != "agent-gateway" {
+			if r.UserAgent() != "Polyrail" {
 				t.Errorf("ua %q", r.UserAgent())
 			}
 			w.Header().Set("Content-Type", "text/html")

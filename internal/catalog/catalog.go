@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/agent-gateway/agent-gateway/internal/store"
+	"github.com/polyrail/polyrail/internal/store"
 )
 
 //go:embed catalog.json

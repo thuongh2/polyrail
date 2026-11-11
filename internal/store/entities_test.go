@@ -111,6 +111,17 @@ func TestProviderSecretsAndModelIsolation(t *testing.T) {
 		t.Fatalf("cross-org target: %v", err)
 	}
 	m.OrgID = "orgA"
+	for _, bad := range []Model{{Strategy: "fastest"}, {Targets: []Target{{ProviderID: p.ID, Model: "gpt", InputPrice: -1}}}} {
+		b := *m
+		b.Strategy = bad.Strategy
+		if bad.Targets != nil {
+			b.Targets = bad.Targets
+		}
+		if err := s.PutModel(ctx, &b); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid routing config accepted: %+v %v", bad, err)
+		}
+	}
+	m.Strategy = "cache-affinity"
 	if err := s.PutModel(ctx, m); err != nil {
 		t.Fatal(err)
 	}

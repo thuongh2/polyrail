@@ -172,6 +172,9 @@ func TestChatFailoverPricingAndBreaker(t *testing.T) {
 	if got := resp.Header.Get("x-gateway-provider"); got != "ok" || m["provider"] != "ok" {
 		t.Fatalf("serving provider: header %q body %v", got, m["provider"])
 	}
+	if got := resp.Header.Get("X-GW-Route"); got != "weighted; ok/up" {
+		t.Fatalf("X-GW-Route = %q", got)
+	}
 	// after 3 failures the bad target's circuit opens and it is no longer tried first
 	f.post(t, "/v1/chat/completions", f.key, chatBody).Body.Close()
 	f.post(t, "/v1/chat/completions", f.key, chatBody).Body.Close()
@@ -217,6 +220,9 @@ func TestStreaming(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
 		t.Fatalf("status %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	if got := resp.Header.Get("X-GW-Route"); got != "weighted; ok/up" {
+		t.Fatalf("stream X-GW-Route = %q", got)
 	}
 	var text strings.Builder
 	var done bool

@@ -206,6 +206,10 @@ type Target struct {
 	ProviderID string  `json:"provider_id"`
 	Model      string  `json:"model"` // upstream model name
 	Weight     float64 `json:"weight"`
+	// InputPrice/OutputPrice (micro-USD per 1M tokens) override the model price for the cost
+	// routing strategy only; billing always uses the model price.
+	InputPrice  int64 `json:"input_price_micros,omitempty"`
+	OutputPrice int64 `json:"output_price_micros,omitempty"`
 }
 
 type Model struct {
@@ -226,6 +230,7 @@ type Model struct {
 	RequestPrice     int64     `json:"request_price_micros,omitempty"`      // micro-USD per successful request, any kind
 	VideoSecondPrice int64     `json:"video_second_price_micros,omitempty"` // micro-USD per second of generated video
 	Targets          []Target  `json:"targets"`
+	Strategy         string    `json:"strategy,omitempty"` // one of RoutingStrategies; "" = weighted
 	Enabled          bool      `json:"enabled"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -710,6 +715,9 @@ func modelKey(orgID, id string) string {
 	return "model/" + orgID + "/" + id
 }
 
+// RoutingStrategies order a model's targets (see gateway/routing.go); "" means weighted.
+var RoutingStrategies = []string{"", "weighted", "priority", "round-robin", "random", "p2c", "least-used", "latency", "cost", "cache-affinity"}
+
 // ModelKinds are the model kinds; each API endpoint serves one kind (count tokens: chat).
 var ModelKinds = []string{"chat", "embedding", "speech", "transcription", "image", "rerank", "ocr", "video"}
 
@@ -722,6 +730,14 @@ func (s *Store) PutModel(ctx context.Context, m *Model) error {
 	}
 	if !slices.Contains(ModelKinds, m.Kind) {
 		return fmt.Errorf("%w: kind must be one of %s", ErrInvalid, strings.Join(ModelKinds, ", "))
+	}
+	if !slices.Contains(RoutingStrategies, m.Strategy) {
+		return fmt.Errorf("%w: strategy must be one of %s", ErrInvalid, strings.Join(RoutingStrategies[1:], ", "))
+	}
+	for _, t := range m.Targets {
+		if t.InputPrice < 0 || t.OutputPrice < 0 {
+			return fmt.Errorf("%w: prices must be >= 0", ErrInvalid)
+		}
 	}
 	if m.InputPrice < 0 || m.OutputPrice < 0 || m.AudioMinutePrice < 0 || m.ImagePrice < 0 || m.RequestPrice < 0 || m.VideoSecondPrice < 0 {
 		return fmt.Errorf("%w: prices must be >= 0", ErrInvalid)

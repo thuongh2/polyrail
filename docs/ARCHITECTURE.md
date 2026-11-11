@@ -72,8 +72,9 @@ Never waits on a synchronous DB write; reads are cached.
 5. **Cache** — exact match, opt-in by header, bounded TTL cache (entries + bytes, random eviction),
    key = sha256(org + raw request body). Skipped for streams and MCP requests.
 6. **Router** — resolve model (org-private first, then public) from the in-memory catalog snapshot
-   (rebuilt when `meta/version` changes; polled every 2 s across nodes). Pick primary target by
-   weight among targets whose circuit is closed; remaining targets become Bifrost fallbacks.
+   (rebuilt when `meta/version` changes; polled every 2 s across nodes). Order the targets whose
+   circuit is closed by the model's routing strategy (`internal/gateway/routing.go`, D14); the first
+   is the primary, the rest and then open-circuit targets become Bifrost fallbacks.
 7. **Bifrost core** executes the call (provider adapters, key weights, retries, fallbacks, streaming, MCP tools).
 8. **Usage event** → bounded channel → batcher (1 s / 512 events) → `AddAgg` + request logs
    (+ ClickHouse). On a full channel the event is accounted in-memory (counters) and only the log row

@@ -87,10 +87,11 @@ func TestCostMicros(t *testing.T) {
 func TestPlanWeightedSplitAndBreakerOrder(t *testing.T) {
 	snap := &Snapshot{Providers: map[string]store.Provider{"a": {ID: "a"}, "b": {ID: "b"}}}
 	m := store.Model{Targets: []store.Target{{ProviderID: "a", Model: "x", Weight: 3}, {ProviderID: "b", Model: "x", Weight: 1}}}
-	br := newBreaker()
+	rt := newRouter()
+	br := rt.br
 	first := map[string]int{}
 	for i := 0; i < 4000; i++ {
-		ts := plan(m, snap, br)
+		ts := plan(m, snap, rt, nil)
 		if len(ts) != 2 {
 			t.Fatalf("plan dropped a target: %v", ts)
 		}
@@ -102,7 +103,7 @@ func TestPlanWeightedSplitAndBreakerOrder(t *testing.T) {
 	for i := 0; i < br.threshold; i++ {
 		br.result(targetID(m.Targets[0]), false)
 	}
-	if ts := plan(m, snap, br); ts[0].ProviderID != "b" || ts[1].ProviderID != "a" {
+	if ts := plan(m, snap, rt, nil); ts[0].ProviderID != "b" || ts[1].ProviderID != "a" {
 		t.Fatalf("open circuit must move a to the end: %v", ts)
 	}
 }

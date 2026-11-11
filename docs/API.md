@@ -34,6 +34,21 @@ accepts one kind (else 400 `wrong_model_kind`). Model prices (micro-USD): `input
 image, `video_second_price_micros` per second of generated video, and `request_price_micros`, added to every successful, non-cached request of any kind
 (token counting excepted).
 
+Routing: a model's `strategy` orders its targets; the first is the primary, the rest are failover
+fallbacks in that order, and targets whose circuit is open (3 target faults in a row → 30 s, or an
+upstream `429` with `Retry-After`, capped at 5 min) go last. Target faults are 5xx, 408, 429, network
+errors and timeouts, and upstream 401/403 (the provider key is wrong); other 4xx are request errors and
+do not count. Strategies: `weighted` (default, `""`: weighted-random primary), `priority` (declared
+order), `round-robin` (per model), `random`, `p2c` (two random targets, the one with the higher
+success rate + 1/log10(latency ms + 10) first), `least-used` (fewest in-flight requests), `latency`
+(lowest average latency + error rate × 1000 ms; unmeasured targets first), `cost` (lowest target
+`input_price_micros + output_price_micros`, which default to the model's; billing always uses the
+model price), `cache-affinity` (rendezvous hash of the request's `prompt_cache_key`, else of the
+prompt prefix: chat messages before the first user message plus `tools`, or Responses `instructions`
+plus `tools`; weighted when there is neither). Latency, error rate and in-flight counts are per node,
+in memory; in-flight is counted for `/v1/chat/completions` and `/v1/responses`. Chat completions
+(stream and non-stream) answer with `X-GW-Route: <strategy>; <provider name>/<upstream model>`.
+
 Anthropic SDK: `Anthropic(base_url="https://gw.example.com/anthropic", api_key="sk-gw-…")`.
 Google GenAI SDK: `genai.Client(api_key="sk-gw-…", http_options={"base_url": "https://gw.example.com/genai"})`,
 then `client.models.generate_content(model="vendor/name", contents="hi")`.
@@ -106,8 +121,8 @@ Stats (last 24 h of provider attempts): `{"requests","errors","uptime" (0..1, nu
 "avg_latency_ms" (over successful attempts),"throughput_tps" (output tokens / successful latency seconds, null without latency)}`.
 Status: `no_data` (no attempts in 24 h), `down` (circuit breaker open on this node for the target, or for a
 provider every one of its public targets; or uptime < 0.9), `degraded` (uptime < 0.99), else `operational`.
-Attempts are recorded by the gateway per target: targets it failed over from (or all, when the request
-failed) count as errors with latency 0; the serving target counts the request latency and output tokens.
+Attempts are recorded by the gateway per target: targets it failed over from (or, when the request
+failed everywhere, each target whose status was a target fault, see Routing) count as errors with latency 0; the serving target counts the request latency and output tokens.
 Hourly counters are kept 30 days.
 
 ## Admin (session cookie)
@@ -189,7 +204,9 @@ a store error rolls back the models already created. Each model gets a `model.im
 ```
 
 Prices in model bodies are `input_price_micros` / `output_price_micros`: micro-USD per 1M tokens
-(`$0.15` → `150000`).
+(`$0.15` → `150000`). Model bodies also take `strategy` (one of the routing strategies above, else
+400) and `targets: [{provider_id, model, weight, input_price_micros?, output_price_micros?}]`; target
+prices are used only by the `cost` strategy.
 
 ## Ops
 

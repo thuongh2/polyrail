@@ -3,10 +3,8 @@ package gateway
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/agent-gateway/agent-gateway/internal/store"
@@ -245,79 +243,4 @@ func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.Provid
 		}
 	}
 	return cfg, nil
-}
-
-// ---- routing ----
-
-// breaker skips targets that failed repeatedly, for a cool-down period.
-type breaker struct {
-	mu        sync.Mutex
-	fails     map[string]int
-	openUntil map[string]time.Time
-	threshold int
-	cooldown  time.Duration
-}
-
-func newBreaker() *breaker {
-	return &breaker{fails: map[string]int{}, openUntil: map[string]time.Time{}, threshold: 3, cooldown: 30 * time.Second}
-}
-
-func (b *breaker) ok(id string) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return time.Now().After(b.openUntil[id])
-}
-
-func (b *breaker) result(id string, success bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if success {
-		delete(b.fails, id)
-		return
-	}
-	b.fails[id]++
-	if b.fails[id] >= b.threshold {
-		b.openUntil[id] = time.Now().Add(b.cooldown)
-		b.fails[id] = 0
-	}
-}
-
-func targetID(t store.Target) string { return t.ProviderID + "|" + t.Model }
-
-// plan orders a model's targets: primary picked by weight among healthy targets, then the other
-// healthy targets by weight, then open-circuit targets as a last resort.
-func plan(m store.Model, snap *Snapshot, br *breaker) []store.Target {
-	var healthy, sick []store.Target
-	for _, t := range m.Targets {
-		if _, ok := snap.Providers[t.ProviderID]; !ok {
-			continue
-		}
-		if br.ok(targetID(t)) {
-			healthy = append(healthy, t)
-		} else {
-			sick = append(sick, t)
-		}
-	}
-	sort.SliceStable(healthy, func(i, j int) bool { return healthy[i].Weight > healthy[j].Weight })
-	if len(healthy) > 1 {
-		var total float64
-		for _, t := range healthy {
-			total += weight(t)
-		}
-		r := rand.Float64() * total
-		for i, t := range healthy {
-			if r -= weight(t); r < 0 {
-				healthy[0], healthy[i] = healthy[i], healthy[0]
-				break
-			}
-		}
-	}
-	return append(healthy, sick...)
-}
-
-func weight(t store.Target) float64 {
-	if t.Weight <= 0 {
-		return 1
-	}
-	return t.Weight
 }

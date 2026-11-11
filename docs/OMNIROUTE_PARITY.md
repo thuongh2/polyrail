@@ -13,21 +13,21 @@ Status: **have** = already in agent-gateway, **wave 1** = in progress / shipped 
 | OmniRoute | Status | Notes |
 |---|---|---|
 | weighted + failover chain | have | `plan()`; Bifrost `Fallbacks` |
-| priority / fill-first | wave 1 | declared order |
-| round-robin | wave 1 | per-model counter |
-| p2c (power of two choices) | wave 1 | success rate + latency score |
-| least-used (in-flight) | wave 1 | per-target in-flight counter |
-| latency / SLA-aware | wave 1 | EWMA latency + error penalty |
-| cost-optimized | wave 1 | per-target price override, else model price |
-| cache-affinity (prompt-cache prefix) | wave 1 | rendezvous hash of `prompt_cache_key` or prefix hash |
-| random / strict-random | wave 1 | |
+| priority / fill-first | have | declared order |
+| round-robin | have | per-model counter |
+| p2c (power of two choices) | have | success rate + latency score |
+| least-used (in-flight) | have | per-target in-flight counter |
+| latency / SLA-aware | have | EWMA latency + error penalty |
+| cost-optimized | have | per-target price override, else model price |
+| cache-affinity (prompt-cache prefix) | have | rendezvous hash of `prompt_cache_key` or prefix hash |
+| random / strict-random | have | |
 | lkgp (last known good) | later | sticky is close to cache-affinity |
 | auto-combo 16-factor engine | later | subset covered by latency/p2c |
 | fusion (panel + judge), pipeline | later | M each, high token cost |
 | quota / reset / headroom strategies | skip | need per-account plan windows (subscription accounts) |
 | context-relay | skip | same |
-| 3-layer resilience (breaker 5xx only, per-key `Retry-After` cooldown) | wave 1 | breaker no longer opens on 4xx |
-| routing decision header | wave 1 | `X-GW-Route` |
+| 3-layer resilience (breaker 5xx only, per-key `Retry-After` cooldown) | have | breaker counts 5xx/408/429/401/403/network only; 429 `Retry-After` opens the target (per target, not per key) |
+| routing decision header | have | `X-GW-Route` |
 | first-output timeout, pre-content stream retry | later | |
 
 ## Request handling

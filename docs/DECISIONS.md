@@ -70,3 +70,23 @@ Bedrock/Vertex credentials mean the host's cloud identity (IAM), which only oper
 admin API rejects it for org providers and the Account drops such tenant keys. Regions and project
 ids are checked against `^[a-z0-9][a-z0-9-]{0,62}$` because Bifrost formats them into upstream
 hostnames. Not tested against real Azure/AWS/GCP in the sandbox (no cloud accounts).
+
+**D14 Routing strategies.** `store.Model.strategy` picks how `plan()` orders healthy targets
+(`internal/gateway/routing.go`): weighted (default), priority, round-robin, random, p2c, least-used,
+latency, cost, cache-affinity (OmniRoute parity, wave 1). Open-circuit targets always go last, so
+every strategy keeps the failover chain. Stats (in-flight, EWMA latency and error rate, alpha 0.2,
+round-robin counters) are per node and in memory, keyed by `provider|upstream model`, so bounded by
+the catalog; no cross-node sharing (each node balances its own traffic). In-flight is counted only
+around the chat completions and Responses upstream calls, the hot paths; latency is whole-request
+time (streams included) recorded in `settle`, not time to first token. Cache-affinity uses
+rendezvous hashing of `prompt_cache_key` (else SHA-256 of the system/tools prefix) × target id, so
+the same key keeps its primary on every node and removing a target moves only its keys; the key is
+computed lazily (a func passed to `plan`) so other strategies never hash prompts. The `cost`
+strategy may use per-target price overrides; billing stays on the model price. Breaker rule: only
+target faults count (5xx, 408, 429, network errors/timeouts, and upstream 401/403, because the
+gateway has already authenticated the caller so those mean the provider key is wrong); 400/404/413/
+422 are request errors and no longer open circuits. When everything failed, each fallback's status
+comes from Bifrost's `FallbackAttempts` (skipped attempts are not counted). A 429 carrying
+Retry-After (Bifrost's `ExtraFields.RetryAfter`, already clamped 1 s..5 min) opens the primary
+until then, capped at 5 min. `X-GW-Route: <strategy>; <provider name>/<upstream model>` on chat
+completions names the decision; the provider name is already in `x-gateway-provider`.

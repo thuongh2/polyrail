@@ -23,7 +23,12 @@ import (
 
 // target resolves and admits a request for model id of the given kind.
 func (g *Gateway) target(w http.ResponseWriter, p *principal, id, kind string) (store.Model, []store.Target, *Snapshot, bool) {
-	m, ts, e := g.resolve(p, id, kind)
+	return g.targetFor(w, p, id, kind, nil)
+}
+
+// targetFor is target with a cache-affinity key source (see plan).
+func (g *Gateway) targetFor(w http.ResponseWriter, p *principal, id, kind string, affinity func() string) (store.Model, []store.Target, *Snapshot, bool) {
+	m, ts, e := g.resolve(p, id, kind, affinity)
 	if e == nil {
 		e = g.admit(context.Background(), p)
 	}
@@ -52,7 +57,7 @@ func (g *Gateway) guard(w http.ResponseWriter, p *principal, m store.Model, segs
 // upstreamFailed settles, records and writes a Bifrost error.
 func (g *Gateway) upstreamFailed(w http.ResponseWriter, snap *Snapshot, p *principal, m store.Model, ts []store.Target, berr *schemas.BifrostError, start time.Time) {
 	ae := fromBifrost(berr, m.OrgID != "")
-	g.settle(snap, m, ts, "", targetFault(ae.status), start, 0)
+	g.settleErr(snap, m, ts, berr, start)
 	g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 	writeError(w, ae)
 }
@@ -331,7 +336,9 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errf(400, "invalid_request_error", "bad_request", "body must be a responses request with model and input"))
 		return
 	}
-	m, ts, snap, ok := g.target(w, p, req.Model, "chat")
+	m, ts, snap, ok := g.targetFor(w, p, req.Model, "chat", func() string {
+		return affinityKey(req.PromptCacheKey, req.Instructions, req.Tools)
+	})
 	if !ok {
 		return
 	}
@@ -340,6 +347,7 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 	if !g.prepareResponses(w, p, m, ts, snap, breq, start) {
 		return
 	}
+	defer g.rt.begin(ts[0])()
 	if req.Stream != nil && *req.Stream {
 		ch, berr := g.BF.ResponsesStreamRequest(bctx, breq)
 		if berr != nil {

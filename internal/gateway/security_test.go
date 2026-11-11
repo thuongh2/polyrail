@@ -177,11 +177,11 @@ func TestBatchFileGuardrailsAndTokenCap(t *testing.T) {
 	line := func(content string, extra string) string {
 		return `{"custom_id":"a","method":"POST","url":"/v1/chat/completions","body":{"model":"test/chat"` + extra + `,"messages":[{"role":"user","content":` + content + `}]}}` + "\n"
 	}
-	if _, err := rewriteBatchFile([]byte(line(`"ok"`, "")+line(`[{"type":"text","text":"this is FORBIDDEN"}]`, "")), m, "up", org); !errors.Is(err, errGuardrail) {
+	if _, err := rewriteBatchFile([]byte(line(`"ok"`, "")+line(`[{"type":"text","text":"this is FORBIDDEN"}]`, "")), m, "up", org, nil); !errors.Is(err, errGuardrail) {
 		t.Fatalf("blocked pattern in a content part must be refused, got %v", err)
 	}
 	img := `[{"type":"text","text":"mail a@b.co"},{"type":"image_url","image_url":{"url":"data:image/png;base64,+1234567890123"}}]`
-	out, err := rewriteBatchFile([]byte(line(img, `,"max_tokens":4000,"temperature":0.25`)+line(`"hi"`, "")), m, "up", org)
+	out, err := rewriteBatchFile([]byte(line(img, `,"max_tokens":4000,"temperature":0.25`)+line(`"hi"`, "")), m, "up", org, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

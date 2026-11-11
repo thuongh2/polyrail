@@ -67,6 +67,11 @@ func (g *Gateway) embed(ctx context.Context, p *principal, model string, dims in
 	start := time.Now()
 	q := *p
 	q.Key.Models, q.Key.RPM, q.Key.TPM = nil, 0, 0
+	if q.pol != nil { // the same holds for policy model allowlists; provider privacy and budgets still apply
+		pol := *q.pol
+		pol.models, pol.modelBy, pol.AllowedModels = nil, nil, nil
+		q.pol = &pol
+	}
 	em, ts, e := g.resolve(&q, model, "embedding", nil)
 	if e != nil {
 		return nil, fmt.Errorf("%w: %s", store.ErrInvalid, e.msg)

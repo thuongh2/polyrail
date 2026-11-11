@@ -94,6 +94,9 @@ Errors: `{"error": {"message", "type", "code"}}`. Codes include `invalid_api_key
 `expired_api_key` (401), `model_not_found` (404), `model_not_allowed` (403), `wrong_model_kind` (400),
 `guardrail_blocked` (400), `prompt_injection` (400), `insufficient_credits` (402), `key_budget_exceeded` (402),
 `rpm_exceeded` / `tpm_exceeded` (429), `body_too_large` (413), `provider_error` (upstream status or 502).
+Guardrail policies (below) answer 403 with the refusing policy's name in `error.policy`:
+`policy_model_not_allowed`, `policy_budget_exceeded`, `policy_no_eligible_provider`,
+`policy_filter_blocked`, e.g. `{"error":{"message":"…","type":"permission_error","code":"policy_budget_exceeded","policy":"Engineering"}}`.
 On `/anthropic/v1/*` errors use the Anthropic shape with the same status:
 `{"type":"error","error":{"type","message"}}`, type by status: 400 `invalid_request_error`,
 401 `authentication_error`, 402 `billing_error`, 403 `permission_error`, 404 `not_found_error`,
@@ -119,6 +122,58 @@ and before the response-cache lookup and the upstream call, in this order:
 Batch files get blocked patterns, max chars and masking (no role data, so no injection scan or
 compression). Embeddings, rerank, image, audio and video prompts get the same set. Metrics:
 `gateway_prompt_injection_total{action}`, `gateway_compressed_chars_total`.
+
+### Policies
+
+Guardrail policies (D26) are org-scoped and managed by admins. A policy applies to a key when it is
+the org default (`is_org_default`, unless the key or its creator is in `opted_out_key_ids` /
+`opted_out_member_ids`), when the key's creator is in `member_ids`, or when the key is in `key_ids`.
+All policies that apply to a key combine:
+
+| Field | Combination and effect |
+|---|---|
+| `allowed_models` (globs, `*` matches any run including `/`) | intersect: a model must match an entry of every list. Otherwise 403 `policy_model_not_allowed`; `/v1/models` lists only allowed models. |
+| `allowed_providers` (provider type, name or id; case-insensitive) | intersect. Targets of other providers are skipped. |
+| `require_zdr`, `deny_data_collection` | OR. Only targets whose provider declares `privacy.zdr: true` / `privacy.trains_on_data: false`; undeclared privacy fails both. |
+| (provider filters above) | If no target of the model is left: 403 `policy_no_eligible_provider`; the gateway never falls back to a disallowed provider. |
+| `filters: [{name, pattern, action}]` | union. RE2 patterns (linear time; at most 100 KB per policy) on the request's input text (the same text org guardrails see, batch files included), before org guardrails. Any `block` match: 403 `policy_filter_blocked`, and redactions are skipped. `redact` replaces matches with `[REDACTED:<name>]` (`[REDACTED]` without a name). |
+| `budget: {limit_usd \| limit_micros, interval, include_byok}` | each budget is checked on its own. `interval`: `daily`, `weekly` (from Monday), `monthly` (from the 1st), `lifetime`, all UTC. A budget applies per person and per key: a policy reaching the key as org default or through `member_ids` limits the spend of the key's creator across all their keys; through `key_ids` it limits the key's own spend (a key without a creator is budgeted per key). Spend on org (BYOK) models counts only with `include_byok`. Over the limit: 403 `policy_budget_exceeded` and a `budget.exceeded` event with `code: policy_budget_exceeded`, `policy`. |
+| `allowed_regions` | stored for data regions (W2); not enforced yet. |
+
+Budgets count spend while the policy applies to the key (counters are written only for keys under
+a budget), with the same per-node delta as key budgets (D7). Org guardrails, key `models` and
+`monthly_budget_usd` still apply on top. Policy changes apply on the node that made them at once
+and on other nodes at their next catalog poll.
+
+| Method | Path | Minimum role |
+|---|---|---|
+| GET/POST | `/api/orgs/{org}/policies` | admin (list is a bare array; create → 201) |
+| GET/PUT/DELETE | `/api/orgs/{org}/policies/{id}` | admin (PUT replaces the whole policy; DELETE → 204) |
+| GET | `/api/orgs/{org}/keys/{id}/effective-policy` | viewer: keys they created; admin: any key |
+
+Policy body: `name` (required, ≤ 100), `description`, `is_org_default`, `member_ids` (user ids of
+org members), `key_ids` (keys of the org), `opted_out_member_ids`, `opted_out_key_ids`, `budget`,
+`allowed_models`, `allowed_providers`, `filters`, `require_zdr`, `deny_data_collection`,
+`allowed_regions`. Unknown members or keys → 400. At most 100 policies per org. Responses return the
+stored policy (`budget.limit_micros`, `created_at`, `updated_at`). Mutations are audited
+(`policy.create`, `policy.update`, `policy.delete`).
+
+Effective policy response:
+
+```json
+{"policies":[{"id":"…","name":"Engineering","via":["member"]}],
+ "allowed_models":[["openai/*"]],"allowed_providers":[["openai"]],
+ "require_zdr":true,"deny_data_collection":false,
+ "filters":[{"policy":"Engineering","name":"pin","pattern":"\\d{4}","action":"redact"}],
+ "budgets":[{"policy_id":"…","policy":"Engineering","scope":"member","subject":"<user id>",
+   "limit_micros":2500000,"interval":"weekly","include_byok":false,
+   "spent_micros":120000,"resets_at":"2026-11-16T00:00:00Z"}]}
+```
+
+Providers (platform and org) take `privacy: {zdr, trains_on_data, retention_days, region}` on
+POST/PUT: what the provider's admin declares about prompt data. `retention_days` 0–36500 (not with
+`zdr: true`), `region` lowercase letters, digits and `-`. It is returned with the provider and per
+provider in `GET /api/public/models/{id}`.
 
 ### Semantic cache
 
@@ -224,7 +279,7 @@ No auth. Only public (platform) models and providers appear; provider ids, keys 
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/public/models` | Public catalog: `{"data": [ModelInfo]}`. ModelInfo adds `max_output_tokens` and `providers` (provider names). `Cache-Control: public, max-age=60`. |
-| GET | `/api/public/models/{vendor/name}` | One public, enabled model (else 404): `{"model": ModelInfo, "stats_24h": Stats, "providers": [{"name","type","upstream_model","weight","status","stats_24h": Stats, "hourly": [{"hour" (RFC3339 UTC),"requests","errors","avg_latency_ms"}]}]}`. `hourly` is the last 72 hours, oldest first, zero hours included. `Cache-Control: public, max-age=30`. |
+| GET | `/api/public/models/{vendor/name}` | One public, enabled model (else 404): `{"model": ModelInfo, "stats_24h": Stats, "providers": [{"name","type","upstream_model","weight","status","stats_24h": Stats, "hourly": [{"hour" (RFC3339 UTC),"requests","errors","avg_latency_ms"}], "privacy"?: {"zdr","trains_on_data","retention_days"?,"region"?}}]}` (`privacy` as the provider's admin declared it; absent = undeclared). `hourly` is the last 72 hours, oldest first, zero hours included. `Cache-Control: public, max-age=30`. |
 | GET | `/api/public/status` | `{"providers": [{"name","type","status","models","stats_24h": Stats}], "updated_at"}`: every public provider, sorted by name, over its public models. `Cache-Control: public, max-age=30`. |
 
 Stats (last 24 h of provider attempts): `{"requests","errors","uptime" (0..1, null without traffic),
@@ -313,7 +368,7 @@ Events (`data` never contains prompt or completion text):
 | Type | When | `data` |
 |---|---|---|
 | `request.failed` | a request failed upstream after all fallbacks (at most once per org and model per minute) | `model`, `status`, `code` (`provider_error`), `key_id` |
-| `budget.exceeded` | a request is rejected with 402 for org credits or a key's monthly budget (at most once per org, code and key per minute) | `code` (`insufficient_credits` \| `key_budget_exceeded`), `key_id` (key budget only) |
+| `budget.exceeded` | a request is rejected with 402 for org credits or a key's monthly budget, or 403 for a policy budget (at most once per org, code and key per minute) | `code` (`insufficient_credits` \| `key_budget_exceeded` \| `policy_budget_exceeded`), `key_id` (key and policy budgets), `policy` (policy budget) |
 | `key.created`, `key.revoked` | an API key is created / revoked | `key_id`, `name`, `prefix` |
 | `test.ping` | `POST …/webhooks/{id}/test` | `webhook_id` |
 

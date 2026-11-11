@@ -92,6 +92,18 @@ func (p *Pipeline) Record(l store.RequestLog) {
 	}
 }
 
+// AddSpend adds cost (micro-USD) to extra spend counters, read back with Spent (policy budgets,
+// D26). Never blocks.
+func (p *Pipeline) AddSpend(cost int64, keys ...string) {
+	p.mu.Lock()
+	for _, k := range keys {
+		cur := p.pending[k]
+		cur[store.AggCostMicros] += cost
+		p.pending[k] = cur
+	}
+	p.mu.Unlock()
+}
+
 // HealthHour is the UTC hour bucket of a health counter.
 func HealthHour(t time.Time) string { return t.UTC().Format("2006010215") }
 

@@ -98,6 +98,8 @@ type providerHealth struct {
 	Status        string      `json:"status"`
 	Stats         healthStats `json:"stats_24h"`
 	Hourly        []hourStats `json:"hourly"`
+	// Privacy is what the provider's admin declared (zero data retention, training, region).
+	Privacy *store.ProviderPrivacy `json:"privacy,omitempty"`
 }
 
 // GET /api/public/models/{id...}: a public model with per-provider health (24 h stats, 72 h hourly).
@@ -137,7 +139,7 @@ func (a *API) publicModel(w http.ResponseWriter, r *http.Request) {
 		total.Add(day)
 		st := statsOf(day)
 		provs = append(provs, providerHealth{Name: p.Name, Type: p.Type, UpstreamModel: t.Model, Weight: t.Weight,
-			Status: healthStatus(st, a.G.TargetOpen(p.ID, t.Model)), Stats: st, Hourly: hourly})
+			Status: healthStatus(st, a.G.TargetOpen(p.ID, t.Model)), Stats: st, Hourly: hourly, Privacy: p.Privacy})
 	}
 	publicHeaders(w)
 	writeJSON(w, 200, map[string]any{"model": snap.Info(m), "stats_24h": statsOf(total), "providers": provs})

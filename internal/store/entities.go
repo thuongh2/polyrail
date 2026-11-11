@@ -234,9 +234,21 @@ type Provider struct {
 	NoProxy bool           `json:"no_proxy,omitempty"` // connect directly even when a global proxy is set
 	// ProxyPool names an operator proxy pool (ProxyPool.ID) to rotate through instead of one
 	// proxy; platform providers only, never together with Proxy.
-	ProxyPool string    `json:"proxy_pool,omitempty"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
+	ProxyPool string `json:"proxy_pool,omitempty"`
+	// Privacy is what the provider declares about prompt data (set by its admin); policies with
+	// require_zdr / deny_data_collection route only to providers declaring it (D26).
+	Privacy   *ProviderPrivacy `json:"privacy,omitempty"`
+	Enabled   bool             `json:"enabled"`
+	CreatedAt time.Time        `json:"created_at"`
+}
+
+// ProviderPrivacy is a provider's declared data handling. nil means undeclared, which neither
+// require_zdr nor deny_data_collection accepts.
+type ProviderPrivacy struct {
+	ZDR           bool   `json:"zdr"`                      // zero data retention: prompts and outputs are not stored
+	TrainsOnData  bool   `json:"trains_on_data"`           // prompts may be used for training
+	RetentionDays int    `json:"retention_days,omitempty"` // how long data is kept when not ZDR (0 = not stated)
+	Region        string `json:"region,omitempty"`         // where data is processed, e.g. us, eu (data regions, W2)
 }
 
 // ProviderProxy is an outbound proxy. Password follows the Value/Sealed pattern: plaintext only on
@@ -502,7 +514,7 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id)) {
+	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id), "policy/"+id+"/") {
 		if err := s.DeletePrefix(ctx, p); err != nil {
 			return err
 		}

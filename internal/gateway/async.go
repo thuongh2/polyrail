@@ -100,7 +100,11 @@ func (g *Gateway) connect(r *http.Request, providerID, keyID, upstream string) (
 		return nil, unavailable
 	}
 	bp := BifrostKey(prov)
-	keys, err := (&account{snap: g.snap.Load}).GetKeysForProvider(r.Context(), bp)
+	acct := &account{snap: g.snap.Load} // a stored job's key: whatever its status
+	if keyID == "" {
+		acct = g.acct // a new job picks among available keys
+	}
+	keys, err := acct.GetKeysForProvider(r.Context(), bp)
 	if err != nil {
 		return nil, unavailable
 	}
@@ -380,7 +384,7 @@ func (g *Gateway) UploadFile(w http.ResponseWriter, r *http.Request) {
 	resp, berr := g.BF.FileUploadRequest(c.ctx, &schemas.BifrostFileUploadRequest{
 		Provider: c.bp, Model: &t.Model, File: data, Filename: hdr.Filename, Purpose: schemas.FilePurpose(purpose)})
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts[:1], berr, start)
+		g.upstreamFailed(w, c.ctx, snap, p, m, ts[:1], berr, start)
 		return
 	}
 	j := &store.Job{ID: store.NewJobID(), OrgID: p.Org.ID, KeyID: p.Key.ID, ProviderID: t.ProviderID, ProvKeyID: c.keyID, UpstreamID: resp.ID,
@@ -834,10 +838,10 @@ func (g *Gateway) CreateVideo(w http.ResponseWriter, r *http.Request) {
 	breq.Provider, breq.Model = c.bp, t.Model
 	resp, berr := g.BF.VideoGenerationRequest(c.ctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts[:1], berr, start)
+		g.upstreamFailed(w, c.ctx, snap, p, m, ts[:1], berr, start)
 		return
 	}
-	g.settle(snap, m, ts[:1], c.bp, false, start, 0)
+	g.settle(c.ctx, snap, m, ts[:1], c.bp, false, start, 0, 0)
 	j := &store.Job{ID: store.NewJobID(), OrgID: p.Org.ID, KeyID: p.Key.ID, ProviderID: t.ProviderID, ProvKeyID: c.keyID, UpstreamID: resp.ID,
 		Model: m.ID, ModelOrg: m.OrgID, Upstream: t.Model, VideoSecondPrice: m.VideoSecondPrice, Status: string(resp.Status)}
 	if err := g.S.PutJob(r.Context(), store.JobVideo, j); err != nil {

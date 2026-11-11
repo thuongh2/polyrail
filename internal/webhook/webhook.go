@@ -172,7 +172,11 @@ func (d *Dispatcher) Start(ctx context.Context, workers int) {
 // the org already holds its share of it.
 // request.failed goes out at most once per minute per org and model, budget.exceeded once per
 // org, code and key.
+// Other event types (key and provider events, which go to alert channels) are ignored.
 func (d *Dispatcher) Emit(orgID, typ string, data map[string]any) {
+	if !slices.Contains(Types, typ) {
+		return
+	}
 	if fs, ok := dedupeOn[typ]; ok {
 		key := orgID + "\x00" + typ
 		for _, f := range fs {

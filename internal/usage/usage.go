@@ -117,6 +117,29 @@ func (p *Pipeline) RecordHealth(model, providerID string, ok bool, latencyMs int
 	p.mu.Unlock()
 }
 
+// KeyStatPrefix is the prefix of one hour's per-key counters of a provider.
+func KeyStatPrefix(providerID string, t time.Time) string {
+	return "keystat/" + HealthHour(t) + "/" + providerID + "|"
+}
+
+// RecordKey accounts one attempt on a provider key (docs/KEYS.md stats). Never blocks.
+func (p *Pipeline) RecordKey(providerID, keyID string, ok bool, latencyMs int64, inTokens, outTokens int, at time.Time) {
+	var a store.Agg
+	a[store.AggRequests] = 1
+	if !ok {
+		a[store.AggErrors] = 1
+	}
+	a[store.AggLatencyMs] = latencyMs
+	a[store.AggInTokens] = int64(inTokens)
+	a[store.AggOutTokens] = int64(outTokens)
+	k := KeyStatPrefix(providerID, at) + keyID
+	p.mu.Lock()
+	cur := p.pending[k]
+	cur.Add(a)
+	p.pending[k] = cur
+	p.mu.Unlock()
+}
+
 // Spent returns flushed + pending cost for a spend counter. Flushed values are cached for one
 // flush interval, which bounds overspend to about one interval of traffic per node (D7).
 func (p *Pipeline) Spent(ctx context.Context, key string) (int64, error) {

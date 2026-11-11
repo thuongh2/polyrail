@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/core/mcp"
+	"github.com/polyrail/polyrail/internal/alert"
 	"github.com/polyrail/polyrail/internal/gateway"
 	"github.com/polyrail/polyrail/internal/limits"
 	"github.com/polyrail/polyrail/internal/store"
@@ -44,9 +45,12 @@ type API struct {
 	G     *gateway.Gateway
 	Lim   limits.Limiter
 	Hooks *webhook.Dispatcher // nil: webhooks are stored but nothing is sent
-	cfg   Config
-	sign  signer
-	oidc  *oidcClient
+	// Alerts sends alert channel tests (nil: tests answer 503). Events reach channels through the
+	// gateway's Events fan-out.
+	Alerts *alert.Dispatcher
+	cfg    Config
+	sign   signer
+	oidc   *oidcClient
 }
 
 func New(ctx context.Context, s *store.Store, g *gateway.Gateway, lim limits.Limiter, cfg Config) (*API, error) {
@@ -140,6 +144,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/admin/mcp/{id}", a.operator(a.deleteMCP))
 	a.registerKB(mux)
 	a.registerProxyPools(mux)
+	a.registerKeys(mux)
+	a.registerAlerts(mux)
 
 	// Unknown API paths answer JSON 404 instead of falling through to the UI's index.html.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, http.StatusNotFound, "not found") })

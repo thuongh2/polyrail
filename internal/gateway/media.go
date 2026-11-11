@@ -25,8 +25,8 @@ func badRequest(w http.ResponseWriter, msg string) {
 }
 
 // imageDone settles, records (per-image price plus tokens) and writes an image response.
-func (g *Gateway) imageDone(w http.ResponseWriter, snap *Snapshot, p *principal, m store.Model, ts []store.Target, resp *schemas.BifrostImageGenerationResponse, start time.Time) {
-	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
+func (g *Gateway) imageDone(w http.ResponseWriter, bctx *schemas.BifrostContext, snap *Snapshot, p *principal, m store.Model, ts []store.Target, resp *schemas.BifrostImageGenerationResponse, start time.Time) {
+	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0, 0)
 	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if u := resp.Usage; u != nil {
 		l.InTokens, l.OutTokens = u.InputTokens, u.OutputTokens
@@ -76,10 +76,10 @@ func (g *Gateway) ImageGenerations(w http.ResponseWriter, r *http.Request) {
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.ImageGenerationRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
-	g.imageDone(w, snap, p, m, ts, resp, start)
+	g.imageDone(w, bctx, snap, p, m, ts, resp, start)
 }
 
 // imageForm parses a multipart image request; it returns the form images (field image[] or image)
@@ -192,10 +192,10 @@ func (g *Gateway) ImageEdits(w http.ResponseWriter, r *http.Request) {
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.ImageEditRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
-	g.imageDone(w, snap, p, m, ts, resp, start)
+	g.imageDone(w, bctx, snap, p, m, ts, resp, start)
 }
 
 // ---- POST /v1/images/variations (multipart, no text input) ----
@@ -231,10 +231,10 @@ func (g *Gateway) ImageVariations(w http.ResponseWriter, r *http.Request) {
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.ImageVariationRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
-	g.imageDone(w, snap, p, m, ts, resp, start)
+	g.imageDone(w, bctx, snap, p, m, ts, resp, start)
 }
 
 // ---- POST /v1/rerank (Cohere / Jina format) ----
@@ -276,10 +276,10 @@ func (g *Gateway) Rerank(w http.ResponseWriter, r *http.Request) {
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.RerankRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
-	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
+	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0, 0)
 	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if u := resp.Usage; u != nil {
 		l.InTokens, l.OutTokens = u.PromptTokens, u.CompletionTokens
@@ -337,10 +337,10 @@ func (g *Gateway) OCR(w http.ResponseWriter, r *http.Request) {
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.OCRRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
-	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
+	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0, 0)
 	g.record(p, m, store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.RoutingInfo.Model}, start) // request price
 	resp.Model = m.ID
 	writeJSONHidden(w, provName, resp)
@@ -368,12 +368,12 @@ func (g *Gateway) countTokens(w http.ResponseWriter, r *http.Request, p *princip
 	breq.Params.MaxOutputTokens = maxOut // the org's output cap does not apply to counting
 	resp, berr := g.BF.CountTokensRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return nil
 	}
 	free := m
 	free.InputPrice, free.OutputPrice, free.RequestPrice = 0, 0, 0 // not billed
-	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
+	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0, 0)
 	g.record(p, free, store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.RoutingInfo.Model}, start)
 	w.Header().Set("x-gateway-provider", provName)
 	return resp

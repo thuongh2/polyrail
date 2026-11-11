@@ -275,7 +275,15 @@ create too), `expires_in_days`, `revoked`. On PATCH only admins may change limit
 | POST | `/api/orgs/{org}/kbs/{kb}/reindex` | admin (204; re-chunks and re-embeds every document) |
 | POST | `/api/orgs/{org}/kbs/{kb}/docs` | admin (multipart `file` + optional `attributes` JSON, or JSON `{filename, text}` / `{url}` → 202 with the queued doc) |
 | DELETE | `/api/orgs/{org}/kbs/{kb}/docs/{doc}` | admin |
+| GET/POST | `/api/orgs/{org}/providers/{id}/keys` | admin (provider keys, below) |
+| PATCH/DELETE | `/api/orgs/{org}/providers/{id}/keys/{kid}` | admin |
+| POST | `/api/orgs/{org}/providers/{id}/keys/bulk`, `/keys/{kid}/test` | admin |
+| GET | `/api/orgs/{org}/providers/{id}/keys/{kid}/stats?hours=72` | admin |
+| GET/POST | `/api/orgs/{org}/alerts` | admin (alert channels, below) |
+| PATCH/DELETE | `/api/orgs/{org}/alerts/{id}` | admin |
+| POST | `/api/orgs/{org}/alerts/{id}/test` | admin |
 | * | `/api/admin/providers`, `/api/admin/models`, `/api/admin/usage`, `/api/admin/audit`, `/api/admin/users`, `/api/admin/mcp` | operator |
+| * | `/api/admin/providers/{id}/keys…`, `/api/admin/alerts…` | operator (the same key and alert routes for platform providers and platform channels) |
 
 Org PATCH body: `name`, `guardrails`, `max_tokens_cap`, `prepaid`, `mcp_servers`, and
 `semantic_cache: {model, threshold, ttl_seconds}`: `model` must be an embedding model the org can use,
@@ -364,6 +372,84 @@ Proxy pool (platform providers only): `proxy_pool: "<pool id>"` rotates the prov
 connections across a pool's members (below). It cannot be combined with `proxy` (400), must name an
 existing pool (400), and org providers cannot set it (400). Precedence: own `proxy` or `proxy_pool` >
 `UPSTREAM_PROXY_POOL` > `UPSTREAM_PROXY_URL` > direct; `no_proxy: true` skips both global settings.
+
+Key status fields on provider keys (returned by the provider list, read-only there): `disabled`,
+`quarantined`, `status_reason`. A provider PUT keeps the stored status of existing keys (the key
+routes below change it); new keys start enabled.
+
+### Provider keys
+
+Same routes under `/api/orgs/{org}/providers/{id}` (org providers, admin) and
+`/api/admin/providers/{id}` (platform providers, operator); another scope's provider answers 404.
+Design and status rules: [KEYS.md](KEYS.md).
+
+| Method | Path | Body → answer |
+|---|---|---|
+| GET | `…/keys` | → `[{id, name, masked, weight, models, enabled, status, status_reason?, cooldown_until, last_used_at, stats_24h: {requests, errors, avg_latency_ms}}]` |
+| POST | `…/keys` | `{"keys": "k1\nk2,k3" \| ["k1","k2"], "weight"?: 1, "models"?: []}` → `{added, duplicates, invalid}` |
+| PATCH | `…/keys/{kid}` | `{enabled?, weight?, name?, models?}` → the key as listed |
+| DELETE | `…/keys/{kid}` | → 204 |
+| POST | `…/keys/bulk` | `{action: "enable"\|"disable"\|"delete"\|"test"\|"clear", ids: [...]}` → `{"results": [{id, ok, error?, status?, latency_ms?}]}` |
+| POST | `…/keys/{kid}/test` | `{model?}` (body optional) → `{ok, status, latency_ms, error?}` |
+| GET | `…/keys/{kid}/stats?hours=72` | → `[{hour, requests, errors, avg_latency_ms, in_tokens, out_tokens}]`, oldest first |
+
+- `masked` is the first 4 and last 4 characters around `****` (values under 12 characters: `****`);
+  keys without a value (cloud keys on IAM) show their name. Values are never returned.
+- `status`: `available`, `cooldown` (this node; `cooldown_until` set), `quarantined`, `disabled`.
+  `last_used_at` is this node's last request on the key, else the start of the latest hour with
+  traffic in the last 24 h, else null. `avg_latency_ms` is over successful attempts.
+- Bulk add: at most 1000 keys per call (400 above); values are split on newlines and commas and
+  trimmed; a value with whitespace or control characters inside counts as `invalid`; a value equal to
+  a stored key of the provider (compared by SHA-256 of the decrypted values) or to an earlier one in
+  the call counts as a `duplicate`. Cloud types (`azure`, `bedrock`, `bedrock_mantle`, `sagemaker`,
+  `vertex`, `cloudflare`) answer 400: their keys carry per-key config, added in the provider dialog.
+- PATCH `enabled: true` also lifts a quarantine and the cooldown. `weight` 0–1000000, `name` ≤ 100
+  characters, `models` ≤ 1000 names. Deleting the last key of a cloud-type provider answers 400.
+- Bulk: at most 1000 ids (100 for `test`, run 8 at a time); unknown ids get `{"ok": false, "error":
+  "not found"}`; `clear` lifts quarantine and cooldown.
+- Test: a list-models call, or a 1-token chat on `model`, sent with only that key (also when the key
+  is disabled, quarantined or cooling down). `status` is the upstream status (502 without one).
+  `error` for org providers is `upstream provider returned an error (status N)`; operators get the
+  upstream message with key-like strings redacted. A success lifts a quarantine and the cooldown; a
+  failure counts like traffic. The provider must be enabled (else 400).
+- `hours` 1–720. Mutations are audited (`provider.keys.add`, `provider.key.update`,
+  `provider.key.delete`, `provider.keys.<action>`) without key values.
+
+### Alert channels
+
+Same routes under `/api/orgs/{org}/alerts` (org channels, admin) and `/api/admin/alerts` (platform
+channels, operator). Body: `name` (1–100), `url` (a [shoutrrr](https://github.com/nicholas-fedor/shoutrrr)
+service URL, write-only), `events` (any of `key.quarantined`, `key.recovered`,
+`provider.unavailable`, `budget.exceeded`, `request.failed`, or `"*"`), `enabled` (default true).
+Answers (create 201, list, patch) are `{id, org_id, name, service, events, enabled, failures,
+created_at}`; `service` is the URL's scheme name (`telegram`, `slack`, …); the URL is encrypted at
+rest and never returned. At most 20 channels per org and 20 platform channels.
+
+- Services: `telegram`, `discord`, `slack`, `teams`, `googlechat`, `pushover`, `ntfy`, `gotify`,
+  `matrix`, `mattermost`. `smtp` and `generic` only in binaries built with `-tags alertsfull`
+  (CONFIG.md). An unknown service or a URL its service cannot parse answers 400 without quoting
+  the URL.
+- Org channels: `telegram`, `discord`, `slack`, `teams`, `googlechat`, `pushover`, and `ntfy` on
+  `ntfy.sh`. Services with their own host (`gotify`, `matrix`, `mattermost`, self-hosted `ntfy`,
+  `smtp`, `generic`) are platform-only unless `ALLOW_PRIVATE_PROVIDER_URLS=true`, and then the host
+  must be public. Org channels connect only to public addresses; platform channels may use private
+  ones.
+- `POST …/alerts/{id}/test` sends a test message now → `{"ok": true}` or `{"ok": false, "error"}`;
+  org channels get a generic error, operators the service's error text. It does not change `failures`.
+- Events: org channels receive their org's events, platform channels the platform providers' key and
+  provider events. Each event is sent at most once per 10 minutes per (org, type, subject: provider,
+  key, model or budget code), from a bounded in-memory queue (`ALERT_QUEUE`, default 1000; an org may
+  hold a tenth of it); drops are counted in `gateway_alert_sends_total{result="dropped"}`. After 10
+  consecutive failed sends a channel is disabled; PATCH `{"enabled": true}` resets `failures`.
+- Messages are a title and one sentence (provider and key names, masked key, model, status, budget
+  code), never prompt or upstream text.
+
+| Event | When | `data` |
+|---|---|---|
+| `key.quarantined` | 3 consecutive upstream 401/403 on a key | `provider_id`, `provider`, `key_id`, `key_name` (name or masked value), `reason` |
+| `key.recovered` | a quarantine is lifted (test success, re-enable, `clear`, or the key served a request) | `provider_id`, `provider`, `key_id`, `key_name` |
+| `provider.unavailable` | a request found no available key on a provider | `provider_id`, `provider` |
+| `budget.exceeded`, `request.failed` | as for webhooks | as for webhooks |
 
 ### Proxy pools (operator only)
 

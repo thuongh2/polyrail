@@ -47,7 +47,8 @@ func setup(t *testing.T, cfg Config) *fixture {
 	s := store.New(kv, box)
 	up := usage.New(kv, 100, 20*time.Millisecond, usage.StoreSink{S: s})
 	t.Cleanup(up.Close)
-	g, err := gateway.New(ctx, s, limits.NewLocal(), up, gateway.Config{MaxBodyBytes: 1 << 20, Concurrency: 2, Buffer: 8, CacheMB: 1, PollInterval: time.Hour})
+	g, err := gateway.New(ctx, s, limits.NewLocal(), up, gateway.Config{MaxBodyBytes: 1 << 20, Concurrency: 2, Buffer: 8, CacheMB: 1, PollInterval: time.Hour,
+		AllowPrivateURLs: cfg.AllowPrivateURLs}) // one env var (ALLOW_PRIVATE_PROVIDER_URLS) sets both
 	if err != nil {
 		t.Fatal(err)
 	}

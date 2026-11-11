@@ -149,7 +149,7 @@ func TestBreakerCountsOnlyTargetFaults(t *testing.T) {
 			be.StatusCode = &tc.status
 		}
 		for range 3 {
-			g.settleErr(snap, m, m.Targets, be, time.Now())
+			g.settleErr(nil, snap, m, m.Targets, be, time.Now())
 		}
 		if open := !g.rt.br.ok(id); open != tc.opens {
 			t.Errorf("status %d: open=%v want %v", tc.status, open, tc.opens)
@@ -161,7 +161,7 @@ func TestRetryAfterOpensTarget(t *testing.T) {
 	snap, m := routeFixture()
 	g := &Gateway{rt: newRouter()}
 	st := 429
-	g.settleErr(snap, m, m.Targets, &schemas.BifrostError{StatusCode: &st, ExtraFields: schemas.BifrostErrorExtraFields{RetryAfter: 60_000}}, time.Now())
+	g.settleErr(nil, snap, m, m.Targets, &schemas.BifrostError{StatusCode: &st, ExtraFields: schemas.BifrostErrorExtraFields{RetryAfter: 60_000}}, time.Now())
 	if g.rt.br.ok(targetID(m.Targets[0])) || !g.rt.br.ok(targetID(m.Targets[1])) {
 		t.Fatal("one 429 with Retry-After must open only the primary")
 	}
@@ -180,7 +180,7 @@ func TestSettleErrUsesFallbackStatuses(t *testing.T) {
 		{Provider: BifrostKey(snap.Providers["c"]), Model: "u", Skipped: true},
 	}}}
 	for range 3 {
-		g.settleErr(snap, m, m.Targets, be, time.Now())
+		g.settleErr(nil, snap, m, m.Targets, be, time.Now())
 	}
 	if !g.rt.br.ok(targetID(m.Targets[0])) || g.rt.br.ok(targetID(m.Targets[1])) || !g.rt.br.ok(targetID(m.Targets[2])) {
 		t.Fatal("only the fallback that answered 503 may open")

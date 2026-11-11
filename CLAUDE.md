@@ -69,7 +69,7 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
   - Credits/budgets: stored spend + this node's unflushed spend, refreshed each 1 s flush (D7).
 - D4 HTTP: stdlib `net/http` (Go 1.22 patterns). UI: plain HTML/CSS/JS embedded via `go:embed`, no build step.
 - D5 Provider secrets encrypted at rest with AES-GCM using `MASTER_KEY`. API keys stored as SHA-256 hash only.
-- D6–D24 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding, UI, cloud providers, routing strategies, guardrails, idempotency + cost header, webhooks, semantic cache, models.dev catalog seed + visibility rule, org OpenAI-compatible types, knowledge bases / gateway RAG, upstream proxy, proxy pools, rename to Polyrail).
+- D6–D25 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding, UI, cloud providers, routing strategies, guardrails, idempotency + cost header, webhooks, semantic cache, models.dev catalog seed + visibility rule, org OpenAI-compatible types, knowledge bases / gateway RAG, upstream proxy, proxy pools, rename to Polyrail, provider key status + alert channels).
 
 ## Lessons (do not repeat)
 

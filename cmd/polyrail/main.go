@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/polyrail/polyrail/internal/admin"
+	"github.com/polyrail/polyrail/internal/alert"
 	"github.com/polyrail/polyrail/internal/catalog"
 	"github.com/polyrail/polyrail/internal/gateway"
 	"github.com/polyrail/polyrail/internal/kb"
@@ -225,7 +226,9 @@ func run() error {
 	}
 	hooks := webhook.New(s, allowPrivate, envInt("WEBHOOK_QUEUE", 1000))
 	hooks.Start(ctx, 4)
-	g.Hooks, api.Hooks = hooks, hooks
+	alerts := alert.New(s, allowPrivate, envInt("ALERT_QUEUE", 1000))
+	alerts.Start(ctx, 2)
+	g.Hooks, api.Hooks, api.Alerts = gateway.Fanout{hooks, alerts}, hooks, alerts
 	if err := bootstrap(ctx, s); err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}

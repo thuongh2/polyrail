@@ -50,9 +50,19 @@ type Config struct {
 	ProxyHealthInterval time.Duration
 }
 
-// Events receives org events for webhooks (internal/webhook). Emit must not block.
+// Events receives org events for webhooks (internal/webhook) and alert channels (internal/alert).
+// orgID "" is the platform (events of platform providers). Emit must not block.
 type Events interface {
 	Emit(orgID, typ string, data map[string]any)
+}
+
+// Fanout sends each event to every Events in it.
+type Fanout []Events
+
+func (f Fanout) Emit(orgID, typ string, data map[string]any) {
+	for _, e := range f {
+		e.Emit(orgID, typ, data)
+	}
 }
 
 type Gateway struct {
@@ -68,6 +78,8 @@ type Gateway struct {
 	auth  *ttlCache[*principal]
 	resp  *ttlCache[[]byte]
 	rt    *router
+	keys  *keyHealth
+	acct  *account
 	sem   *semCache
 	mcp   mcpState
 	idem  idemStore
@@ -91,6 +103,7 @@ func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipe
 		auth: newTTLCache[*principal](50_000, 0),
 		resp: newTTLCache[[]byte](100_000, cfg.CacheMB<<20),
 		rt:   newRouter(),
+		keys: newKeyHealth(),
 		sem:  newSemCache(cfg.CacheMB << 20),
 	}
 	snap, err := loadSnapshot(ctx, s)
@@ -108,9 +121,13 @@ func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipe
 	if _, ok := snap.pool(cfg.ProxyPool); cfg.ProxyPool != "" && !ok {
 		slog.Warn("UPSTREAM_PROXY_POOL names no pool yet: providers using it fail closed until it exists", "pool", cfg.ProxyPool)
 	}
+	g.acct = &account{snap: g.snap.Load, concurrency: cfg.Concurrency, buffer: cfg.Buffer, allowPrivate: cfg.AllowPrivateURLs,
+		proxy: cfg.Proxy, tenantProxy: cfg.AllowTenantProxy, pools: g.pools, poolNoProxy: cfg.ProxyNoProxy,
+		keys: g.keys, unavailable: func(p store.Provider) {
+			g.emit(p.OrgID, EventProviderUnavailable, map[string]any{"provider_id": p.ID, "provider": p.Name})
+		}}
 	g.BF, err = bifrost.Init(ctx, schemas.BifrostConfig{
-		Account: &account{snap: g.snap.Load, concurrency: cfg.Concurrency, buffer: cfg.Buffer, allowPrivate: cfg.AllowPrivateURLs,
-			proxy: cfg.Proxy, tenantProxy: cfg.AllowTenantProxy, pools: g.pools, poolNoProxy: cfg.ProxyNoProxy},
+		Account:   g.acct,
 		Logger:    bifrost.NewDefaultLogger(schemas.LogLevelWarn),
 		MCPConfig: mcpCfg,
 	})
@@ -351,11 +368,14 @@ func bifrostTargets(snap *Snapshot, ts []store.Target) (schemas.ModelProvider, s
 // request and returns that provider's name. For public models it also records per-provider
 // health: every target tried before the serving one is a failure (latency 0), that one a success.
 // Requests that failed at every target go through settleErr, which knows each target's status.
-func (g *Gateway) settle(snap *Snapshot, m store.Model, ts []store.Target, served schemas.ModelProvider, failed bool, start time.Time, outTokens int) string {
+// Provider keys tried on bctx are settled too (settleKeys); inTokens and outTokens go to the
+// serving key's stats.
+func (g *Gateway) settle(bctx *schemas.BifrostContext, snap *Snapshot, m store.Model, ts []store.Target, served schemas.ModelProvider, failed bool, start time.Time, inTokens, outTokens int) string {
 	servedID := snap.byBifrost[served]
 	if !failed && servedID == "" {
 		return "" // nothing was served (client left before the first chunk): no verdict on targets
 	}
+	g.settleKeys(bctx, snap, !failed, nil, start, inTokens, outTokens)
 	health := func(t store.Target, ok bool) {
 		if m.OrgID != "" { // shortcut: only public health is shown; record private too when orgs get a health view
 			return
@@ -545,7 +565,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	done()
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settleErr(snap, m, ts, berr, start)
+		g.settleErr(bctx, snap, m, ts, berr, start)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)
 		return
@@ -554,7 +574,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	}
-	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
+	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
 	l.Provider = provName
 	resp.Model = m.ID
 	out, err := hideExtra(chatOut{BifrostChatResponse: resp, Provider: provName})
@@ -592,7 +612,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 	ch, berr := g.BF.ChatCompletionStreamRequest(ctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settleErr(snap, m, ts, berr, start)
+		g.settleErr(ctx, snap, m, ts, berr, start)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg, Stream: true}, start)
 		writeError(w, ae)
 		return
@@ -648,7 +668,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 	if l.OutTokens == 0 && chars > 0 {
 		l.OutTokens = (chars + 3) / 4 // shortcut: estimate when the provider sends no usage
 	}
-	l.Provider = g.settle(snap, m, ts, served, targetFault(l.Status), start, l.OutTokens)
+	l.Provider = g.settle(ctx, snap, m, ts, served, targetFault(l.Status), start, l.InTokens, l.OutTokens)
 	g.record(p, m, l, start)
 }
 
@@ -697,12 +717,12 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 	resp, berr := g.BF.EmbeddingRequest(bctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settleErr(snap, m, ts, berr, start)
+		g.settleErr(bctx, snap, m, ts, berr, start)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)
 		return
 	}
-	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
+	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0, 0)
 	l := store.RequestLog{Status: 200, Provider: provName}
 	if resp.Usage != nil {
 		l.InTokens = resp.Usage.PromptTokens

@@ -26,7 +26,10 @@ const sections = [
   ["kb", "Knowledge bases"],
   ["keys", "Provider keys and alerts"],
   ["policies", "Policies"],
+  ["regions", "Data regions"],
   ["mgmt", "Management tokens"],
+  ["sso", "SSO & SCIM"],
+  ["traces", "Trace export"],
   ["exports", "Exports"],
   ["headers", "Gateway headers"],
   ["errors", "Errors"],
@@ -453,6 +456,19 @@ curl ${base}/chat/completions \
             </p>
           </Section>
 
+          <Section id="regions" title="Data regions">
+            <p>
+              Each provider declares where it processes prompts: <C>global</C>, <C>europe</C>, <C>us</C> or another region name (provider
+              settings → Privacy). Names are normalized on save, so <C>eu-west-1</C> becomes <C>europe</C> and <C>us-east-1</C> becomes{" "}
+              <C>us</C>; a provider that declares nothing counts as <C>global</C>.
+            </p>
+            <p>
+              A policy's allowed regions keep requests on providers in those regions. Lists from several policies intersect, and a model whose
+              providers are all outside them answers 403 <C>policy_no_eligible_provider</C>: the gateway never falls back to another region.
+              Model pages show each provider's declared region.
+            </p>
+          </Section>
+
           <Section id="mgmt" title="Management tokens">
             <p>
               Org admins create management tokens under API keys → Management tokens, for scripts and CI that call the admin API. Send the
@@ -464,6 +480,44 @@ curl ${base}/chat/completions \
               code={`curl ${location.origin}/api/orgs/$ORG/usage?days=7 \\
   -H "Authorization: Bearer pr-mgmt-…"`}
             />
+          </Section>
+
+          <Section id="sso" title="SSO & SCIM">
+            <p>
+              Owners set this up under Organization → Security &amp; SSO. First add your email domain and publish its DNS TXT record
+              (<C>_polyrail-verify.&lt;domain&gt;</C>), then press Verify. A domain belongs to one organization.
+            </p>
+            <HeaderTable
+              rows={[
+                ["SAML", "Create a SAML app in Okta, Entra ID or Google Workspace with the entity ID and ACS URL shown on the page, then give Polyrail the IdP metadata URL or XML. People at your verified domains get “Continue with SSO” on the sign-in page; new users get an account on first sign-in."],
+                ["Require SSO", "Refuses password sign-in and sign-up for emails at your verified domains (error sso_required). Needs SAML on and a verified domain. Platform operators can still use their password."],
+                ["SCIM 2.0", "Generate a token (shown once) and enter it with the base URL /scim/v2/{org} in your IdP. The IdP creates, updates and deprovisions users and groups; deprovisioning removes the membership and revokes the keys the person created in the organization."],
+                ["Group mappings", "Map an IdP group name (SCIM group or the SAML groups attribute) to viewer, member or admin. The highest mapped role wins; owners keep their role."],
+              ]}
+            />
+            <p>The IdP can only sign in or provision emails at domains the organization verified.</p>
+          </Section>
+
+          <Section id="traces" title="Trace export">
+            <p>
+              Send one OpenTelemetry span per request to an OTLP/HTTP collector (Grafana Tempo, Datadog Agent, Jaeger, any OpenTelemetry
+              Collector) or to Langfuse. Admins add exports under Organization → Observability; operators add platform exports that see every
+              organization's requests under Platform → Observability.
+            </p>
+            <HeaderTable
+              rows={[
+                ["OTLP", "The full traces URL, such as https://collector.example.com/v1/traces, plus optional headers (write-only) such as Authorization."],
+                ["Langfuse", "The Langfuse base URL and the project's public and secret keys; spans go to <base>/api/public/otel/v1/traces."],
+                ["Sample rate", "0–100% of requests, decided by the request id."],
+                ["Keys", "Optionally only some API keys' requests."],
+                ["Content", "Prompt and completion are added only when the export includes content and the organization has content logging on, each cut at 16 KB."],
+              ]}
+            />
+            <p>
+              Spans follow the OpenTelemetry gen_ai conventions (<C>gen_ai.request.model</C>, <C>gen_ai.usage.input_tokens</C>, cost and latency
+              attributes). Endpoints must be public HTTPS unless the operator allows private URLs. Delivery is batched and best effort; an export is disabled after
+              10 failed batches in a row, and the Test button sends one span now.
+            </p>
           </Section>
 
           <Section id="exports" title="Exports">

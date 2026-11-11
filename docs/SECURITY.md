@@ -207,3 +207,27 @@ guard (`tenantReachable`) sees an empty `base_url` and passes, as for other host
 providers still get `AllowPrivateNetwork=false`. The openai base does not follow URLs from upstream
 replies for chat, embeddings or model lists, so H5 does not apply. Tenant keys are sent only to the
 vendor host. [TestOrgOpenAICompatibleConfig, TestOrgOpenAICompatibleChat, TestOrgOpenAICompatibleProviders]
+
+## Outbound proxy (2026-11-11, developer notes for review)
+
+Global proxy (`UPSTREAM_PROXY_URL`, operator env) and per-provider `proxy` are passed to Bifrost as
+`ProviderConfig.ProxyConfig` with literal SecretVars (never `env.*` resolution). Rules:
+
+- **Tenant proxies are off by default.** An org provider's `proxy` is refused (400) unless
+  `ALLOW_TENANT_PROXY=true`; a proxy stored while it was allowed is ignored (the global proxy or a
+  direct connection is used) once it is turned off. With it on, the proxy host must resolve only to
+  public addresses at save (`gateway.CheckPublicProxy`) and again before each request
+  (`tenantReachable`, 30 s cache), unless `ALLOW_PRIVATE_PROVIDER_URLS`. A proxy connects wherever it
+  is asked, so a tenant-chosen private proxy would be an SSRF relay into internal networks.
+- **The dial-time private-address block does not apply through a proxy.** Bifrost's dialer
+  (`AllowPrivateNetwork=false` for tenants) checks the address it connects to, which is then the
+  proxy, not the upstream. Org provider `base_url`s are still checked at save and before every
+  request (H1 rebinding residual unchanged). Operators who let org admins add providers and use a
+  global proxy should make the proxy deny internal ranges. Hosts in `UPSTREAM_NO_PROXY` connect
+  directly and keep the dial-time checks (Bifrost returns them to the checked dialer).
+- **Secrets:** the proxy password is sealed at rest (`sealed_password`), never returned (admin
+  `redact` → `ProviderProxy.Redacted`), and must be re-entered when the proxy URL or username
+  changes, like keys on a `base_url` change. Credentials in `UPSTREAM_PROXY_URL` are split out and
+  never logged (startup logs the URL without them).
+- A tenant's `ca_cert_pem` is trusted only by that provider's own client.
+[TestProviderProxy, TestProxyConfigPrecedence, TestCheckProxyAndParseGlobal, TestChatGoesThroughProviderProxy]

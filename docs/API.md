@@ -273,6 +273,18 @@ config and no `base_url`; `elevenlabs` takes `value` and an optional `base_url`.
 - `vertex` (platform only): `vertex: {project_id, project_number, region, auth_credentials*,
   deployments}`; `auth_credentials` is service-account JSON, empty = host Google credentials.
 
+Outbound proxy (any type): `proxy: {url, username, password*, ca_cert_pem}` sends this provider's
+upstream calls through an HTTP(S) proxy (CONNECT tunnel) or SOCKS5 proxy. `url` is
+`http://`, `https://` or `socks5://host[:port]` with nothing else (no path, query or credentials in
+it); `username` and `password` go together; `ca_cert_pem` is optional PEM certificates trusted for
+the proxy (https) and for upstream TLS through it (TLS-inspecting proxies). An empty `password` keeps
+the stored one while `url` and `username` are unchanged. `no_proxy: true` connects directly even when
+the gateway has a global proxy (`UPSTREAM_PROXY_URL`); a provider's own `proxy` wins over both.
+Org providers may set `proxy` only when the gateway runs with `ALLOW_TENANT_PROXY=true` (else 400),
+and its host must resolve to public addresses (unless `ALLOW_PRIVATE_PROVIDER_URLS`); `no_proxy` is
+always allowed. `GET /api/auth/config` returns `tenant_proxy` (bool). Changing the proxy restarts
+that provider's Bifrost client on the next catalog reload (about 2 s).
+
 `*` = secret. `deployments` maps model name → deployment / inference profile; when set, only those
 models are served by that key. `GET /api/auth/config` lists the types per scope in
 `provider_types.platform` / `provider_types.org`, and in `provider_types.org_fixed_url` the org types

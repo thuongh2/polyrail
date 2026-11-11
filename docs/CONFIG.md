@@ -18,6 +18,10 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `ALLOW_SIGNUP` | `false` | Let anyone create an account (with their own org). Email is not verified. |
 | `SIGNUP_PREPAID` | `false` | Orgs created by sign-up need credits before they can call models. |
 | `ALLOW_PRIVATE_PROVIDER_URLS` | `false` | Let org admins point private providers at private/internal addresses. Operators can always. |
+| `UPSTREAM_PROXY_URL` | – | Global outbound proxy for every upstream model call: `http://`, `https://` or `socks5://`, credentials allowed (`http://user:pass@proxy:3128`). Providers with their own `proxy` or `no_proxy` skip it. A malformed value stops startup. |
+| `UPSTREAM_NO_PROXY` | – | Comma-separated hosts that bypass the global proxy (`.corp.example` = domain and subdomains, `*` = all). Bypassed hosts keep the normal private-network dial checks. |
+| `UPSTREAM_PROXY_CA_FILE` | – | PEM file of CA certificates to trust for the global proxy and for upstream TLS through it (TLS-inspecting proxies). Needs `UPSTREAM_PROXY_URL`. |
+| `ALLOW_TENANT_PROXY` | `false` | Let org admins set a proxy on their own providers. The proxy host must be public unless `ALLOW_PRIVATE_PROVIDER_URLS`. |
 | `LOG_RETENTION_DAYS` | `14` | Request logs older than this are deleted (usage rollups are kept). Public provider health counters are kept 30 days (fixed). |
 | `RESPONSE_CACHE_MB` | `64` | Memory for the opt-in response cache. `0` disables it. |
 | `MAX_BODY_MB` | `8` | Largest accepted API request body. |

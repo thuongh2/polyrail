@@ -154,6 +154,8 @@ type account struct {
 	concurrency  int
 	buffer       int
 	allowPrivate bool // AllowPrivateURLs: tenant providers may dial private networks too
+	proxy        *GlobalProxy
+	tenantProxy  bool // AllowTenantProxy: org providers' own proxy settings apply
 }
 
 func (a *account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
@@ -299,6 +301,7 @@ func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.Provid
 			AllowPrivateNetwork: p.OrgID == "" || a.allowPrivate,
 		},
 		ConcurrencyAndBufferSize: schemas.ConcurrencyAndBufferSize{Concurrency: a.concurrency, BufferSize: a.buffer},
+		ProxyConfig:              a.proxyConfig(p),
 	}
 	if MultiInstance(p.Type) {
 		cfg.CustomProviderConfig = &schemas.CustomProviderConfig{

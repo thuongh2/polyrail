@@ -60,6 +60,9 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
 - [x] T28 Security review: H5 (upstream-URL SSRF via replicate/huggingface/gemini) and M9/M10 fixed
 - Resource smoke on v1.15.2 (same method as below, GOMAXPROCS=1): idle RSS 59 MB, peak 69 MB,
   `requests=5000 errors=0 rps=7690 p50=5.3ms p95=12.7ms p99=17.7ms`. Binary 46 MB (was 33 MB).
+- [x] Outbound proxy for upstream calls (D22): global `UPSTREAM_PROXY_URL` / `UPSTREAM_NO_PROXY` /
+  `UPSTREAM_PROXY_CA_FILE`, per-provider `proxy` + `no_proxy`, tenant proxies behind
+  `ALLOW_TENANT_PROXY` with a public-host check; provider dialog Proxy section and "via proxy" badge.
 
 ## Next (not started)
 - OIDC test against a mock IdP; live MCP server test.
@@ -76,3 +79,4 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
 - 2026-11-11 Production catalog (D19): `scripts/gencatalog.py` → `internal/catalog/catalog.json` from models.dev 3751776 (19 providers, 265 models, 121 KB); first start seeds disabled keyless `cat-<type>` providers + models (`SEED_CATALOG`); `POST /api/admin/catalog/sync` + "Load model catalog" button; models listed/routable only with an enabled provider; `run-local.sh` defaults to `DEMO=0`. vet + race tests green incl. Postgres and Redis.
 - 2026-11-11 OpenAI-compatible vendors (groq, deepseek, xai, mistral, openrouter, fireworks, cerebras, perplexity, nebius, parasail, minimax, sarvam, wafer, opencode-go/zen) are org provider types on Bifrost's openai base at the vendor's fixed URL (D20); org `base_url` refused; UI hides Base URL for them. `gofmt`, `go vet ./...`, `go test -race ./...` green incl. Postgres and Redis.
 - 2026-11-11 Knowledge bases task A (D21, docs/KB.md): `internal/store/kb.go` (KB/doc/source/queue records, leased per-doc queue, Pebble + Postgres tests), `APIKey.KBIDs`, `DeleteOrg` removes `kb*`; `internal/kb` engine (extract text/md/csv/json/html, chunker, URL fetch via injected check + dialer, int8 vectors + BM25 + RRF, per-KB LRU index with singleflight and rev reload, KV vector store, workers with retries); mockprovider embeddings = hashed bag of words. `BenchmarkSearch100k`: ~31 ms/op at 512 dims, ~1.6 KB/chunk. Gateway grounding, APIs and UI are tasks B/C. vet + race tests green incl. Postgres and Redis.
+- 2026-11-11 Outbound proxy (D22): Bifrost `ProxyConfig` per provider from own proxy > global env > none; sealed proxy password; tenant proxy gated + SSRF-checked at save and request time; chat-through-CONNECT-proxy test. gofmt, vet, race tests green incl. Postgres and Redis.

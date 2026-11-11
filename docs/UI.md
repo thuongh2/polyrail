@@ -1,0 +1,31 @@
+# Web UI
+
+React 19 + Vite + Tailwind 4 + shadcn/ui (new-york, copied into `web/src/components/ui`), routed with
+wouter. Built into `internal/web/dist` and embedded in the Go binary; Go serves `index.html` for any
+path without a file (SPA). No Node at runtime. `make ui` rebuilds; built files are committed.
+
+Budget: initial JS for public pages ≤ 120 kB gzip; the console is a lazy chunk. No chart library:
+charts are small SVG components. No new runtime dependency without a reason in docs/DECISIONS.md.
+
+## Conventions (binding for every agent touching web/)
+
+- Data: `web/src/lib/api.ts` (types + `publicApi`, `authApi`, `api()`), `useAsync` from `lib/hooks.ts`,
+  `useSession()` for user/org/role (`can("admin")`). Formatting helpers (`usd`, `perMillion`, `fmt`,
+  `compact`, `pct`, `when`) live in api.ts; reuse them.
+- Every data region renders four states through `<DataState>` (loading skeleton, error with retry,
+  empty with the one action that fills it, full). Page titles via `<PageHeader>`.
+- Tables before cards. Use shadcn `Table`, `Badge`, `Button`, `Dialog`, `Tabs`, `Select`, `Input`.
+  Destructive actions use `AlertDialog` confirmation. Feedback via `toast()` from components/toast.
+- Colors only through tokens (`bg-background`, `text-muted-foreground`, `text-success`, `bg-signal`,
+  `bg-danger`, `bg-warning`, `bg-nodata`...). Never a literal color, never `transition-all`, no
+  gradients, no emoji, no tracked uppercase labels, no eyebrow text above headings, no invented
+  numbers or testimonials. Status is shown as text (+ color), never a decorative dot alone.
+- Filters, tabs and sort live in the URL (`useQueryParam`).
+- Accessible: labels on every input, `aria-label` on icon buttons, keyboard reachable, focus visible.
+- Light and dark mode both checked.
+
+## Routes
+
+Public: `/`, `/models`, `/models/<vendor>/<name>`, `/status`, `/docs`, `/login`, `/signup`.
+Console: `/app/activity|logs|playground|keys|credits|models|providers|members|settings|audit|account`,
+operators: `/app/platform/activity|orgs|providers|models|users|mcp|audit`.

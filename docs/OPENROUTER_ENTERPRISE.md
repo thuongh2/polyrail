@@ -16,8 +16,8 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 | Members see only their own keys; admins see all | have | D28; members and viewers list only keys they created |
 | Workspaces (keys, guardrails, BYOK, routing, presets, budgets, members scoped per workspace) | gap · W3 | largest item; an org would hold workspaces; today org ≈ one workspace |
 | SSO (OIDC) | have | |
-| SSO via SAML, domain verification (DNS TXT), enforce SSO | gap · W2 | SAML via `crewjam/saml`; domain claim + "SSO required" |
-| SCIM provisioning, IdP groups → workspace + role, deprovision disables keys | gap · W2 | SCIM 2.0 Users/Groups endpoints |
+| SSO via SAML, domain verification (DNS TXT), enforce SSO | have | D29; per-org SAML (`crewjam/saml`), `_polyrail-verify` TXT claim (one org per domain), enforce with operator break-glass, `GET /api/auth/sso` discovery |
+| SCIM provisioning, IdP groups → workspace + role, deprovision disables keys | have (role) · workspace W3 | D29; SCIM 2.0 Users/Groups (`elimity-com/scim`), group → role mappings (`workspace_id` stored for W3), deprovision removes membership and revokes keys + management tokens |
 | Management API keys (programmatic key create / rotate / delete) | have | D28; `pr-mgmt-` org-scoped bearer tokens, role ≤ admin, docs/API.md "Management tokens" |
 | Key rotation | have | D28; `POST …/keys/{id}/rotate` keeps settings, optional `grace_seconds` |
 

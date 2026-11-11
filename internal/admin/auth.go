@@ -129,6 +129,24 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := a.S.GetUserByEmail(r.Context(), in.Email)
+	if loginURL, enforced := a.ssoRequired(r.Context(), in.Email); enforced {
+		// The org requires SSO for its verified domains. Break-glass: a platform operator with
+		// the right password still signs in. Everyone else gets the same answer whatever the
+		// password, so the response does not reveal operators or valid passwords.
+		ok := err == nil && u.Operator && !u.Disabled && u.PasswordHash != "" &&
+			bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(in.Password)) == nil
+		if !ok {
+			if err != nil || u.PasswordHash == "" {
+				_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(in.Password))
+			}
+			writeSSORequired(w, loginURL)
+			return
+		}
+		slog.Warn("password sign-in past enforced SSO (operator break-glass)", "user", u.ID)
+		a.setSession(w, u)
+		a.me(w, r.WithContext(context.WithValue(r.Context(), userCtx{}, u)))
+		return
+	}
 	if err != nil || u.PasswordHash == "" || u.Disabled {
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(in.Password))
 		writeErr(w, http.StatusUnauthorized, "invalid email or password")
@@ -165,6 +183,10 @@ func (a *API) signup(w http.ResponseWriter, r *http.Request) {
 	}
 	if n, _ := a.Lim.Incr(r.Context(), "signup:"+clientIP(r), 1); n > 5 {
 		writeErr(w, http.StatusTooManyRequests, "too many sign-ups, wait a minute")
+		return
+	}
+	if loginURL, enforced := a.ssoRequired(r.Context(), in.Email); enforced {
+		writeSSORequired(w, loginURL)
 		return
 	}
 	hash, err := HashPassword(in.Password)

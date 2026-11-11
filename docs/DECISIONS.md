@@ -327,6 +327,29 @@ capture is a per-request copy of the principal (`withContent`) plus one call in 
 add the same `withContent` line; a per-member visibility exception would be a policy field (agent A's
 policy engine).
 
+**D29 Enterprise identity: verified domains, SAML SSO, enforced SSO, SCIM (W2-E).** OpenRouter
+enterprise parity (docs/OPENROUTER_ENTERPRISE.md). Rulings: (1) Libraries over protocol code
+(ponytail): SAML on `github.com/crewjam/saml` v0.6.3 (signatures, conditions, InResponseTo, replay
+cache hook; deps etree, goxmldsig, clockwork, all on GitHub); SCIM on `github.com/elimity-com/scim`
+pinned to master 2641426 (2026-07-28; no recent tags but actively maintained, ~5 kLOC, deps
+scim2/filter-parser, q-uint/parser, q-uint/xsd-datetime) for routing, schema and PATCH validation,
+filters, paging and the discovery endpoints; we write only the Users/Groups handlers. Binary
++2.0 MB (69.8 → 71.8 MB unstripped). (2) The trust anchor is the verified domain: an org's IdP (SAML
+or SCIM) may only sign in, create or link accounts whose email is on a domain that org verified by
+DNS TXT; one verified claim per domain across orgs; operators never sign in through a tenant IdP.
+(3) Everything per org lives under `ident/<org>/` (config, sealed SP key bundle, SCIM token hash,
+SCIM users, SCIM groups, domains) and is removed with the org; domain claims are `vdomain/<name>`.
+(4) The SP key is created when an owner first opens the SSO settings, so the IdP can be set up
+from SP metadata first. IdP metadata URLs are fetched once at save (shortcut: no periodic refresh;
+re-save after an IdP certificate rotation). (5) Enforce blocks password sign-in and sign-up for the
+org's verified domains; operator password sign-in is the break-glass. (6) SCIM users are
+memberships, not accounts: deprovision = remove membership + revoke the user's keys and management
+tokens in that org (OpenRouter behaviour), with a tombstone so SAML JIT cannot undo it;
+reactivation does not restore credentials. (7) One group → role mapping list serves SAML `groups`
+values and SCIM groups (highest role wins, owners untouched); `workspace_id` is stored for W3.
+If wrong: periodic metadata refresh is a ticker over orgs with a URL; subdomain matching would make
+`DomainOrg` walk parent labels; a cross-node SCIM lock would be a KV lease (today a per-node mutex).
+
 **D30 Data regions and trace export (W2-F).** OpenRouter "data regions" and "Broadcast" parity.
 Rulings: (1) Regions are the provider's declared `privacy.region`, normalized to `global | europe |
 us | <other>` (`store.NormalizeRegion`: eu, eu-*, europe-* → europe; us, usa, us-* → us; empty →
@@ -356,4 +379,3 @@ id is derived from the request log id and the span id is that id, linking spans 
 once after an admin write on that node), and the request path asks an atomic set whether the org or
 platform has any export before building a span. If wrong: a node may send for up to 10 s after an
 export is deleted elsewhere.
-

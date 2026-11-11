@@ -69,13 +69,14 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
   - Credits/budgets: stored spend + this node's unflushed spend, refreshed each 1 s flush (D7).
 - D4 HTTP: stdlib `net/http` (Go 1.22 patterns). UI: plain HTML/CSS/JS embedded via `go:embed`, no build step.
 - D5 Provider secrets encrypted at rest with AES-GCM using `MASTER_KEY`. API keys stored as SHA-256 hash only.
-- D6–D28 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding, UI, cloud providers, routing strategies, guardrails, idempotency + cost header, webhooks, semantic cache, models.dev catalog seed + visibility rule, org OpenAI-compatible types, knowledge bases / gateway RAG, upstream proxy, proxy pools, rename to Polyrail, provider key status + alert channels, policy engine, request routing + presets, key identity/exports/content logging).
+- D6–D30 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding, UI, cloud providers, routing strategies, guardrails, idempotency + cost header, webhooks, semantic cache, models.dev catalog seed + visibility rule, org OpenAI-compatible types, knowledge bases / gateway RAG, upstream proxy, proxy pools, rename to Polyrail, provider key status + alert channels, policy engine, request routing + presets, key identity/exports/content logging, enterprise identity: domains/SAML/SCIM, data regions + OTLP trace export).
 
 ## Lessons (do not repeat)
 
 - Never return persisted secrets from JSON: hide with `json:"-"` and persist through a stored* wrapper.
 - Every admin mutation that affects keys/orgs must call `G.InvalidateAuth()`.
 - Tenant-controlled URLs: validate at save time AND at request time; never echo upstream bodies to tenants.
+- Tenant IdPs (SAML/SCIM) may only vouch for emails on domains their org verified, never for operators (D29).
 - Docs must describe what the code does; the slop reviewer checks this.
 - No docker daemon in the sandbox: Dockerfile/compose are written but not built here.
 - UI agents working in parallel must not run `vite build` (shared dist) — verify with tsc + dev server.

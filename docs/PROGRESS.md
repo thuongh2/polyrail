@@ -86,6 +86,15 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
   TestFairShare, TestBatchingAndHeaders, TestRetryThenDisable, TestSSRFAndLangfuse,
   TestTracerReceivesRequests, TestTraceExportAPI, TestTraceExportNeedsPublicHTTPS.
 
+- [x] W2-E enterprise identity (D29): per-org verified domains (DNS TXT), SAML 2.0 SSO
+  (crewjam/saml v0.6.3; SP key sealed per org; JIT on verified domains; replay cache), enforced
+  SSO with operator break-glass, `GET /api/auth/sso` discovery, SCIM 2.0 Users/Groups
+  (elimity-com/scim) with group → role mappings and deprovisioning that revokes keys and management
+  tokens. Backend only; UI pending. Tests: TestDomainVerification, TestSAMLLogin (crewjam IdP signs
+  real responses: SP- and IdP-initiated, replay, foreign key, unverified domain, operator, metadata
+  URL + SSRF), TestSSOEnforcementAndDiscovery, TestSCIMProvisioning (Okta + Entra payloads),
+  store TestDomainClaimIsExclusive, TestIdentitySecretsSealed. Binary 69.8 → 71.8 MB.
+
 ## Next (not started)
 - OIDC test against a mock IdP; live MCP server test.
 - Payment integration for credits (Stripe), email verification for sign-up.
@@ -111,3 +120,5 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
 - 2026-11-11 OpenRouter request routing (D27, W1-B): `models` fallbacks (one failover chain, billed and named on the model used, `X-GW-Route` on completions/responses too), `provider` object (order/only/ignore/allow_fallbacks/require_parameters/sort/max_price/preferred_*/quantizations/data_collection/zdr; strict 400 `invalid_routing`), `:nitro`/`:floor`, org presets `@preset/<slug>` + `/api/orgs/{org}/presets` CRUD (audited), `usage.include` → `usage.cost`/`cost_micros`/`cached_tokens` (stream + non-stream), `user` → `end_user` on logs, `enduser/` rollups, `usage?group=end_user`, ClickHouse `end_user`, cache-affinity sticky key; `Provider.Privacy`. Tests: `internal/gateway/reqroute_test.go`, `internal/admin/presets_test.go`. gofmt, vet, `go test -race ./...` green incl. Postgres and Redis.
 - 2026-11-11 W1 integration (D26–D28 merged): one `Provider.Privacy *ProviderPrivacy` type; request `provider.zdr` / `data_collection` filters run after the policy filter and fail undeclared privacy like policies (a request only tightens). `TestPolicyComposesWithRequestRouting` (require_zdr policy + `models` + `provider.order`: non-ZDR target dropped, order kept, fallback model serves after the first fails) and `TestMgmtTokenManagesPresetsAndPolicies` (mgmt token creates a preset and an org policy, 401 on /v1). gofmt clean, `go vet ./...` clean, `go test -race -count=1 ./...` green with Postgres + Redis.
 - 2026-11-11 W2-F (D30): data regions (`store.NormalizeRegion`, policy `allowed_regions`, `REGION_LOCK`) and trace export (`internal/broadcast`: hand-rolled OTLP/HTTP JSON; OTel SDK measured at +7.5 MB / 180 packages and rejected; Langfuse via `/api/public/otel`; `/api/orgs/{org}/trace-exports` + `/api/admin/trace-exports` CRUD + test; `TRACE_QUEUE`). gofmt, vet, `go test -race ./...` green incl. Postgres and Redis.
+
+- 2026-11-11 W2-E enterprise identity (D29): domains (DNS TXT, one org per domain), per-org SAML SSO (crewjam/saml v0.6.3), enforced SSO + operator break-glass, `GET /api/auth/sso`, SCIM 2.0 (elimity-com/scim) with group → role mappings and credential-revoking deprovision. gofmt clean, `go vet ./...`, `go test -race ./...` green incl. Postgres and Redis; binary +2.0 MB.

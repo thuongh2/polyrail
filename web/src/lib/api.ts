@@ -85,6 +85,8 @@ export type AuthConfig = { signup: boolean; sso: boolean; provider_types: { plat
 export const authApi = {
   config: () => get<AuthConfig>("/api/auth/config"),
   me: () => get<{ user: User; orgs: OrgRef[] }>("/api/auth/me"),
+  /** Like me() but 200 with user null when signed out. */
+  session: () => get<{ user: User | null; orgs: OrgRef[] }>("/api/auth/session"),
   login: (email: string, password: string) => api("POST", "/api/auth/login", { email, password }),
   signup: (email: string, password: string, name: string) => api("POST", "/api/auth/signup", { email, password, name }),
   logout: () => api("POST", "/api/auth/logout"),

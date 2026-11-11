@@ -727,3 +727,16 @@ func TestPublicModelHealthAndStatus(t *testing.T) {
 		t.Fatalf("status: %s", st.body)
 	}
 }
+
+func TestSessionEndpoint(t *testing.T) {
+	f := setup(t, Config{})
+	r := f.do(t, "", "GET", "/api/auth/session", "")
+	expect(t, r, 200, "anonymous session")
+	if !strings.Contains(r.body, `"user":null`) {
+		t.Fatalf("anonymous: %s", r.body)
+	}
+	r = f.do(t, "owner", "GET", "/api/auth/session", "")
+	if !strings.Contains(r.body, "owner@example.com") || strings.Contains(r.body, "password_hash") {
+		t.Fatalf("signed in: %s", r.body)
+	}
+}

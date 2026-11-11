@@ -17,7 +17,7 @@ export function Wordmark() {
       <span aria-hidden className="grid size-6 place-items-center rounded-md bg-foreground text-[11px] font-bold text-background">
         ag
       </span>
-      agent-gateway
+      <span className="hidden sm:inline">agent-gateway</span>
     </Link>
   );
 }
@@ -28,7 +28,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-40 border-b bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:gap-6">
           <Wordmark />
           <nav aria-label="Main" className="flex items-center gap-1 text-sm">
             {nav.map((n) => (

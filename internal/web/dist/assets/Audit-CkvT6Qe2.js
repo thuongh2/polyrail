@@ -1,1 +1,0 @@
-import{r as e}from"./index-DCojNjOH.js";import{o as t}from"./button-BS9NKi83.js";var n=t();function r(t){return(0,n.jsx)(e,{title:`Audit`,description:`Coming soon.`})}export{r as default};

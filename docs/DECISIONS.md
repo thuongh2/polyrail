@@ -139,3 +139,21 @@ float32; lookup is a linear dot-product scan of the org's ≤ 1,000 entries (≈
 1,536 dims, under a per-org lock), LRU eviction inside the org and a global byte budget of
 `RESPONSE_CACHE_MB` (separate from the response cache's own, SECURITY L18). No vector DB or ANN index: the ponytail ladder stops at a slice; revisit if
 orgs need more than ~10k entries or cross-node sharing. Fail open on any embedding error.
+
+**D19 OpenAI-compatible vendors as org provider types.** (Number may need renumbering if another
+D19 lands in parallel.) Org admins used to get only Bifrost's multi-instance base types, because a
+native provider (groq, mistral, ...) has one Bifrost slot per type that a tenant must not take. The
+key-only vendors whose API is OpenAI-compatible (`gateway.OpenAICompatible`: groq, deepseek, xai,
+mistral, openrouter, fireworks, cerebras, perplexity, nebius, parasail, minimax, sarvam, wafer,
+opencode-go, opencode-zen) are now org types too: an org provider of such a type is registered as a
+custom provider `p-<id>` on Bifrost's openai base (`CustomProviderConfig{BaseProviderType: openai}`)
+with `NetworkConfig.BaseURL` fixed to the URL Bifrost's native adapter defaults to (without `/v1`,
+which the openai base appends). DeepSeek and Perplexity serve chat at `/chat/completions` (and
+DeepSeek models at `/models`), so they carry `RequestPathOverrides` copied from the native adapters.
+Org admins cannot set `base_url` for these types (400), so there is no tenant-chosen host. The
+provider keeps its own `type` for logos and labels. Platform providers of these types are unchanged
+(native adapter, optional `base_url`). Trade-off: org providers lose native extras (e.g. Groq audio,
+Fireworks' config-based model list, Perplexity search fields beyond the OpenAI shape); chat,
+embeddings where offered and model discovery go through the generic OpenAI engine. Left out:
+byteplus (`/api/v3` paths, regional host, no model list), runware and runway (task APIs),
+elevenlabs (not OpenAI-compatible). `gateway.OrgType(t)` = multi-instance or in the table.

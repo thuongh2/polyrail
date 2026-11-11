@@ -89,8 +89,9 @@ Never waits on a synchronous DB write; reads are cached.
   their OpenAI-compatible endpoints. Tenants may only create the multi-instance types below. Providers of base type openai/anthropic/gemini/
   cohere are registered as Bifrost *custom providers* keyed by provider id, so any number of
   instances (public or per-org private) can coexist. Other types (azure, vertex, groq, mistral, …)
-  use the Bifrost standard key and may exist once (platform-wide) — or be added as `openai` type
-  with a base URL, since they are OpenAI-compatible.
+  use the Bifrost standard key and may exist once (platform-wide). Org providers of the
+  OpenAI-compatible vendor types (`gateway.OpenAICompatible`: groq, mistral, deepseek, xai, …) are
+  custom providers on the openai base at the vendor's fixed URL, so each org can have its own (D19).
 - `store` → `gateway.account` implements `schemas.Account` from the in-memory snapshot. On config
   change the gateway calls `bifrost.UpdateProvider` for changed providers.
 

@@ -61,7 +61,9 @@ type Org struct {
 	Guardrails    Guardrails     `json:"guardrails"`
 	MCPServers    []string       `json:"mcp_servers,omitempty"` // MCP server names this org may use ("*" = all); set by operators
 	SemanticCache *SemanticCache `json:"semantic_cache,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
+	// ContentLogging opts the org into storing request and response bodies (content.go).
+	ContentLogging *ContentLogging `json:"content_logging,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 // SemanticCache opts an org into answering near-duplicate prompts from cache (gateway/semcache.go).
@@ -105,6 +107,9 @@ type APIKey struct {
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	Revoked       bool       `json:"revoked"`
 	CreatedAt     time.Time  `json:"created_at"`
+	// RotatedAt is the last rotation; PrevValidUntil is when the secret it replaced stops working.
+	RotatedAt      *time.Time `json:"rotated_at,omitempty"`
+	PrevValidUntil *time.Time `json:"prev_valid_until,omitempty"`
 }
 
 // storedUser keeps the password hash in the persisted form while hiding it from API JSON.
@@ -122,7 +127,8 @@ func (s storedUser) user() *User {
 // storedKey keeps the hash in the persisted form while hiding it from API JSON.
 type storedKey struct {
 	APIKey
-	Hash string `json:"hash"`
+	Hash     string `json:"hash"`
+	PrevHash string `json:"prev_hash,omitempty"` // secret replaced by the last rotation (grace window)
 }
 
 type ProviderKey struct {
@@ -434,6 +440,11 @@ func (s *Store) UpdateOrg(ctx context.Context, id string, fn func(*Org) error) (
 			return err
 		}
 		o.ID, out = id, o
+		if o.ContentLogging != nil { // the purge job walks this index (content.go)
+			if err := tx.Put(contentIndex+id, []byte{1}); err != nil {
+				return err
+			}
+		}
 		return putJSON(tx, "org/"+id, o)
 	})
 	return out, err
@@ -478,6 +489,9 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 			sk, err := getJSON[storedKey](tx.Get, "key/"+id+"/"+k.ID)
 			if err == nil {
 				del = append(del, "khash/"+sk.Hash)
+				if sk.PrevHash != "" {
+					del = append(del, "khash/"+sk.PrevHash)
+				}
 			}
 			del = append(del, "key/"+id+"/"+k.ID)
 		}
@@ -502,7 +516,10 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id)) {
+	if err := s.deleteOrgTokens(ctx, id); err != nil {
+		return err
+	}
+	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id), contentPrefix(id), contentIndex+id) {
 		if err := s.DeletePrefix(ctx, p); err != nil {
 			return err
 		}
@@ -638,7 +655,7 @@ func (s *Store) CreateKey(ctx context.Context, k *APIKey, hash string) error {
 		if err := tx.Put("khash/"+hash, []byte(k.OrgID+"/"+k.ID)); err != nil {
 			return err
 		}
-		return putJSON(tx, "key/"+k.OrgID+"/"+k.ID, storedKey{*k, hash})
+		return putJSON(tx, "key/"+k.OrgID+"/"+k.ID, storedKey{APIKey: *k, Hash: hash})
 	})
 }
 
@@ -651,8 +668,58 @@ func (s *Store) KeyByHash(ctx context.Context, hash string) (*APIKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	sk.APIKey.Hash = sk.Hash
-	return &sk.APIKey, nil
+	k := sk.APIKey
+	k.Hash = sk.Hash
+	if hash != sk.Hash {
+		// a secret replaced by rotation: valid only until its grace ends, which the gateway's
+		// expiry check enforces even on a cached principal
+		if hash != sk.PrevHash || k.PrevValidUntil == nil || !time.Now().Before(*k.PrevValidUntil) {
+			return nil, ErrNotFound
+		}
+		if k.ExpiresAt == nil || k.PrevValidUntil.Before(*k.ExpiresAt) {
+			t := *k.PrevValidUntil
+			k.ExpiresAt = &t
+		}
+	}
+	return &k, nil
+}
+
+// RotateKey gives key id a new secret hash and prefix and keeps every other setting. The old
+// secret keeps working for grace (0 = stops now); a secret from an earlier rotation stops now.
+func (s *Store) RotateKey(ctx context.Context, orgID, id, hash, prefix string, grace time.Duration) (*APIKey, error) {
+	if hash == "" || grace < 0 {
+		return nil, fmt.Errorf("%w: hash required", ErrInvalid)
+	}
+	var out *APIKey
+	err := s.update(ctx, func(tx Tx) error {
+		sk, err := getJSON[storedKey](tx.Get, "key/"+orgID+"/"+id)
+		if err != nil {
+			return err
+		}
+		if sk.Revoked {
+			return fmt.Errorf("%w: a revoked key cannot be rotated", ErrInvalid)
+		}
+		if sk.PrevHash != "" {
+			if err := tx.Delete("khash/" + sk.PrevHash); err != nil {
+				return err
+			}
+		}
+		now := time.Now().UTC()
+		sk.PrevHash, sk.PrevValidUntil = "", nil
+		if grace > 0 {
+			until := now.Add(grace)
+			sk.PrevHash, sk.PrevValidUntil = sk.Hash, &until
+		} else if err := tx.Delete("khash/" + sk.Hash); err != nil {
+			return err
+		}
+		if err := tx.Put("khash/"+hash, []byte(orgID+"/"+id)); err != nil {
+			return err
+		}
+		sk.Hash, sk.APIKey.Hash, sk.Prefix, sk.RotatedAt = hash, hash, prefix, &now
+		out = &sk.APIKey
+		return putJSON(tx, "key/"+orgID+"/"+id, sk)
+	})
+	return out, err
 }
 
 func (s *Store) GetKey(ctx context.Context, orgID, id string) (*APIKey, error) {

@@ -89,7 +89,8 @@ type Gateway struct {
 type principal struct {
 	Key      store.APIKey
 	Org      store.Org
-	kbChunks int // knowledge-base excerpts injected into this request (request log)
+	kbChunks int             // knowledge-base excerpts injected into this request (request log)
+	content  *contentCapture // opt-in content logging (content.go); nil when off
 }
 
 // HashKey is how API key secrets are stored and looked up.
@@ -427,6 +428,7 @@ func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start 
 		_, _ = g.Lim.Incr(context.Background(), "t:"+p.Key.ID, int64(l.InTokens+l.OutTokens))
 	}
 	g.Usage.Record(l)
+	g.saveContent(p, l)
 	if l.Error != "" && l.Status >= 400 && l.Status != 499 && !strings.HasPrefix(l.Error, "guardrail") {
 		// upstream failure after all fallbacks; no prompt or upstream text in the payload
 		g.emit(p.Org.ID, "request.failed", map[string]any{"model": m.ID, "status": l.Status, "code": "provider_error", "key_id": p.Key.ID})
@@ -480,6 +482,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
+	p = withContent(p, body)
 	var req openai.OpenAIChatRequest
 	if err := sonic.Unmarshal(body, &req); err != nil || req.Model == "" || len(req.Messages) == 0 {
 		writeError(w, errf(400, "invalid_request_error", "bad_request", "body must be a chat completion request with model and messages"))
@@ -541,6 +544,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		cacheKey = hex.EncodeToString(h[:])
 		if out, ok := g.resp.Get(cacheKey); ok {
 			mCacheHits.Inc()
+			p.content.setResponse(out)
 			setCost(w, g.record(p, m, store.RequestLog{Status: 200, Cached: true, Provider: "cache"}, start))
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("x-gateway-cache-hit", "true")
@@ -586,6 +590,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		g.resp.Set(cacheKey, out, len(out), ttl)
 	}
 	g.semStore(sem, out)
+	p.content.setResponse(out)
 	setCost(w, g.record(p, m, l, start))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("x-gateway-provider", provName)
@@ -647,6 +652,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 			for _, ch := range c.Choices {
 				if ch.ChatStreamResponseChoice != nil && ch.Delta != nil && ch.Delta.Content != nil {
 					chars += len(*ch.Delta.Content)
+					p.content.addText(*ch.Delta.Content)
 				}
 			}
 			c.Model = m.ID

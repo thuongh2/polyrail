@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, get, orgBase, PLATFORM, type Provider } from "@/lib/api";
+import { api, get, orgBase, PLATFORM, type Provider, type ProviderKey } from "@/lib/api";
 import { useAsync } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 
@@ -129,6 +129,85 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
   );
 }
 
+/** Types whose credentials live in per-key config; the dialog edits their first key. */
+const CLOUD = ["azure", "bedrock", "vertex"] as const;
+type Cloud = (typeof CLOUD)[number];
+const isCloud = (t: string): t is Cloud => (CLOUD as readonly string[]).includes(t);
+
+type CloudForm = {
+  apiKey: string;
+  endpoint: string;
+  apiVersion: string;
+  region: string;
+  arn: string;
+  accessKey: string;
+  secretKey: string;
+  sessionToken: string;
+  projectId: string;
+  projectNumber: string;
+  credentials: string;
+  deployments: string;
+};
+
+const deploymentsText = (d?: Record<string, string>) =>
+  Object.entries(d ?? {})
+    .map(([m, dep]) => `${m}=${dep}`)
+    .join("\n");
+
+/** Parses "model=deployment" lines; blank lines are skipped, a line without "=" is an error. */
+function parseDeployments(text: string): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const i = line.indexOf("=");
+    if (i < 1 || i === line.length - 1) throw new Error(`Deployment "${line}" must look like model=deployment`);
+    out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function cloudForm(k?: ProviderKey): CloudForm {
+  return {
+    apiKey: "",
+    endpoint: k?.azure?.endpoint ?? "",
+    apiVersion: k?.azure?.api_version ?? "",
+    region: k?.bedrock?.region ?? k?.vertex?.region ?? "",
+    arn: k?.bedrock?.arn ?? "",
+    accessKey: "",
+    secretKey: "",
+    sessionToken: "",
+    projectId: k?.vertex?.project_id ?? "",
+    projectNumber: k?.vertex?.project_number ?? "",
+    credentials: "",
+    deployments: deploymentsText(k?.azure?.deployments ?? k?.bedrock?.deployments ?? k?.vertex?.deployments),
+  };
+}
+
+/** The first key of a cloud provider, built from the form. Empty secrets keep the stored ones. */
+function cloudKey(type: Cloud, f: CloudForm, prev?: ProviderKey): ProviderKey {
+  const deployments = parseDeployments(f.deployments);
+  const opt = (v: string) => v.trim() || undefined;
+  const k: ProviderKey = { id: prev?.id, name: prev?.name, weight: prev?.weight || 1, models: prev?.models, value: opt(f.apiKey) };
+  if (type === "azure") k.azure = { endpoint: f.endpoint.trim(), api_version: opt(f.apiVersion), deployments };
+  if (type === "bedrock")
+    k.bedrock = {
+      region: f.region.trim(),
+      arn: opt(f.arn),
+      deployments,
+      access_key: opt(f.accessKey),
+      secret_key: opt(f.secretKey),
+      session_token: opt(f.sessionToken),
+    };
+  if (type === "vertex")
+    k.vertex = {
+      project_id: f.projectId.trim(),
+      project_number: opt(f.projectNumber),
+      region: f.region.trim(),
+      deployments,
+      auth_credentials: opt(f.credentials),
+    };
+  return k;
+}
+
 function ProviderDialog({
   scope, base, provider, onClose, onSaved,
 }: { scope: Scope; base: string; provider?: Provider; onClose: () => void; onSaved: () => void }) {
@@ -142,19 +221,26 @@ function ProviderDialog({
   const [timeout, setTimeoutS] = useState(provider?.timeout_seconds ? String(provider.timeout_seconds) : "");
   const [enabled, setEnabled] = useState(provider?.enabled ?? true);
   const stored = provider?.keys?.length ?? 0;
+  // Stored cloud config only applies while the type is unchanged.
+  const sameType = !!provider && provider.type === type;
+  const [cloud, setCloud] = useState<CloudForm>(() => cloudForm(provider && isCloud(provider.type) ? provider.keys?.[0] : undefined));
+  const set = (k: keyof CloudForm) => (e: { target: { value: string } }) => setCloud((c) => ({ ...c, [k]: e.target.value }));
 
   const save = async () => {
     const entered = splitList(keys.replace(/,/g, "\n"));
     const body = {
       name: name.trim(),
       type,
-      base_url: baseURL.trim(),
+      base_url: isCloud(type) ? "" : baseURL.trim(),
       timeout_seconds: timeout ? Number(timeout) : 0,
       enabled,
-      // New values replace every stored key; none entered keeps the stored ones (by id, without values).
-      keys: entered.length
-        ? entered.map((value) => ({ value, weight: 1 }))
-        : (provider?.keys ?? []).map(({ id, name, weight, models }) => ({ id, name, weight, models })),
+      // Cloud types: the form edits the first key; other stored keys are kept as they are.
+      // Otherwise new values replace every stored key; none entered keeps the stored ones (by id).
+      keys: isCloud(type)
+        ? [cloudKey(type, cloud, sameType ? provider?.keys?.[0] : undefined), ...(sameType ? (provider?.keys ?? []).slice(1) : [])]
+        : entered.length
+          ? entered.map((value) => ({ value, weight: 1 }))
+          : (provider?.keys ?? []).map(({ id, name, weight, models }) => ({ id, name, weight, models })),
     };
     if (provider) await api("PUT", `${base}/${encodeURIComponent(provider.id)}`, body);
     else await api("POST", base, body);
@@ -193,34 +279,40 @@ function ProviderDialog({
             </SelectContent>
           </Select>
         </div>
-        <Field label="Base URL" hint="Optional for hosted providers. Any OpenAI-compatible API works as type openai with its base URL.">
+        {!isCloud(type) && (
+          <Field label="Base URL" hint="Optional for hosted providers. Any OpenAI-compatible API works as type openai with its base URL.">
+            {(id, hint) => (
+              <Input id={id} aria-describedby={hint} value={baseURL} onChange={(e) => setBaseURL(e.target.value)} placeholder="https://api.example.com/v1" inputMode="url" autoComplete="off" />
+            )}
+          </Field>
+        )}
+      </div>
+      {isCloud(type) ? (
+        <CloudFields type={type} form={cloud} set={set} keep={sameType} tenant={scope !== "platform"} />
+      ) : (
+        <Field
+          label="API keys"
+          hint={
+            provider
+              ? `${stored} key${stored === 1 ? "" : "s"} stored. Leave empty to keep them; new keys replace all stored keys. Re-enter keys when you change the type or base URL.`
+              : "One per line. Requests are spread across keys. Keys are encrypted and never shown again."
+          }
+        >
           {(id, hint) => (
-            <Input id={id} aria-describedby={hint} value={baseURL} onChange={(e) => setBaseURL(e.target.value)} placeholder="https://api.example.com/v1" inputMode="url" autoComplete="off" />
+            <Textarea
+              id={id}
+              aria-describedby={hint}
+              value={keys}
+              onChange={(e) => setKeys(e.target.value)}
+              rows={3}
+              className="font-mono text-xs"
+              placeholder={provider ? "Leave empty to keep stored keys" : "sk-..."}
+              autoComplete="off"
+              spellCheck={false}
+            />
           )}
         </Field>
-      </div>
-      <Field
-        label="API keys"
-        hint={
-          provider
-            ? `${stored} key${stored === 1 ? "" : "s"} stored. Leave empty to keep them; new keys replace all stored keys. Re-enter keys when you change the type or base URL.`
-            : "One per line. Requests are spread across keys. Keys are encrypted and never shown again."
-        }
-      >
-        {(id, hint) => (
-          <Textarea
-            id={id}
-            aria-describedby={hint}
-            value={keys}
-            onChange={(e) => setKeys(e.target.value)}
-            rows={3}
-            className="font-mono text-xs"
-            placeholder={provider ? "Leave empty to keep stored keys" : "sk-..."}
-            autoComplete="off"
-            spellCheck={false}
-          />
-        )}
-      </Field>
+      )}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Timeout (seconds)" hint="Empty uses the default.">
           {(id, hint) => (
@@ -233,5 +325,123 @@ function ProviderDialog({
         </div>
       </div>
     </FormDialog>
+  );
+}
+
+function CloudFields({
+  type, form, set, keep, tenant,
+}: {
+  type: Cloud;
+  form: CloudForm;
+  set: (k: keyof CloudForm) => (e: { target: { value: string } }) => void;
+  keep: boolean;
+  tenant: boolean;
+}) {
+  const secret = (label: string, k: keyof CloudForm, hint?: string, required = false) => (
+    <Field label={label} hint={hint}>
+      {(id, h) => (
+        <Input
+          id={id}
+          aria-describedby={h}
+          type="password"
+          value={form[k]}
+          onChange={set(k)}
+          required={required && !keep}
+          placeholder={keep ? "Leave empty to keep" : undefined}
+          autoComplete="new-password"
+          spellCheck={false}
+        />
+      )}
+    </Field>
+  );
+  const text = (label: string, k: keyof CloudForm, opts: { hint?: string; placeholder?: string; required?: boolean } = {}) => (
+    <Field label={label} hint={opts.hint}>
+      {(id, h) => (
+        <Input id={id} aria-describedby={h} value={form[k]} onChange={set(k)} required={opts.required} placeholder={opts.placeholder} autoComplete="off" spellCheck={false} />
+      )}
+    </Field>
+  );
+  const keepNote = keep && (
+    <p className="text-xs text-muted-foreground">Secrets are never shown. Leave a secret field empty to keep its stored value.</p>
+  );
+  const deployments = (hint: string) => (
+    <Field label="Deployments" hint={hint}>
+      {(id, h) => (
+        <Textarea
+          id={id}
+          aria-describedby={h}
+          value={form.deployments}
+          onChange={set("deployments")}
+          rows={3}
+          className="font-mono text-xs"
+          placeholder="model=deployment"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      )}
+    </Field>
+  );
+
+  if (type === "azure")
+    return (
+      <>
+        {text("Endpoint", "endpoint", { required: true, placeholder: "https://my-resource.openai.azure.com" })}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {secret("API key", "apiKey", keep ? undefined : "Encrypted and never shown again.", true)}
+          {text("API version", "apiVersion", { hint: "Empty uses 2024-10-21.", placeholder: "2024-10-21" })}
+        </div>
+        {keepNote}
+        {deployments("One model=deployment per line. When set, only these models are served.")}
+      </>
+    );
+  if (type === "bedrock")
+    return (
+      <>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {text("Region", "region", { required: true, placeholder: "us-east-1" })}
+          {text("ARN", "arn", { hint: "Optional inference profile ARN prefix." })}
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {secret("Access key ID", "accessKey")}
+          {secret("Secret access key", "secretKey")}
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {secret("Session token", "sessionToken", "Only for temporary credentials.")}
+          {secret("Bedrock API key", "apiKey", "Optional; used instead of access keys when set.")}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {tenant
+            ? "Enter an access key pair or a Bedrock API key."
+            : "Without credentials, requests use the gateway host's AWS identity (IAM role, environment)."}
+        </p>
+        {keepNote}
+        {deployments("One model=profile per line, mapping model names to inference profiles. When set, only these models are served.")}
+      </>
+    );
+  return (
+    <>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {text("Project ID", "projectId", { required: true, placeholder: "my-project" })}
+        {text("Project number", "projectNumber", { placeholder: "Optional" })}
+        {text("Region", "region", { required: true, placeholder: "us-central1" })}
+      </div>
+      <Field label="Service account JSON" hint="Without it, requests use the gateway host's Google credentials. Encrypted and never shown again.">
+        {(id, h) => (
+          <Textarea
+            id={id}
+            aria-describedby={h}
+            value={form.credentials}
+            onChange={set("credentials")}
+            rows={4}
+            className="font-mono text-xs"
+            placeholder={keep ? "Leave empty to keep" : '{"type": "service_account", ...}'}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        )}
+      </Field>
+      {keepNote}
+      {deployments("One model=endpoint per line. When set, only these models are served.")}
+    </>
   );
 }

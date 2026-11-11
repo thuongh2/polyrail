@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -419,7 +420,7 @@ func TestProviderSSRF(t *testing.T) {
 	ok.json(t, &p)
 	expect(t, f.do(t, "admin", "PUT", A+"/"+p.ID, `{"name":"ok","type":"openai","base_url":"http://127.0.0.1:1","enabled":true}`), 400, "tenant update to loopback")
 	expect(t, f.do(t, "op", "POST", "/api/admin/providers", `{"name":"local","type":"openai","base_url":"http://127.0.0.1:11434","enabled":true}`), 200, "operator loopback provider")
-	expect(t, f.do(t, "admin", "POST", A, `{"name":"x","type":"bedrock"}`), 400, "unsupported type")
+	expect(t, f.do(t, "admin", "POST", A, `{"name":"x","type":"azure"}`), 400, "platform-only type")
 
 	g := setup(t, Config{AllowPrivateURLs: true})
 	expect(t, g.do(t, "admin", "POST", "/api/orgs/"+g.orgA.ID+"/providers", `{"name":"x","type":"openai","base_url":"http://127.0.0.1:11434","enabled":true}`), 200, "ALLOW_PRIVATE_PROVIDER_URLS")
@@ -744,5 +745,65 @@ func TestSessionEndpoint(t *testing.T) {
 	r = f.do(t, "owner", "GET", "/api/auth/session", "")
 	if !strings.Contains(r.body, "owner@example.com") || strings.Contains(r.body, "password_hash") {
 		t.Fatalf("signed in: %s", r.body)
+	}
+}
+
+func TestCloudProviderValidationAndRedaction(t *testing.T) {
+	f := setup(t, Config{})
+	A := "/api/orgs/" + f.orgA.ID + "/providers"
+	P := "/api/admin/providers"
+	for _, c := range []struct{ as, path, body, what string }{
+		{"op", P, `{"name":"a","type":"azure","keys":[{"value":"k"}]}`, "azure without endpoint"},
+		{"op", P, `{"name":"a","type":"azure","base_url":"https://x.example","keys":[{"value":"k","azure":{"endpoint":"https://r.openai.azure.com"}}]}`, "azure with base_url"},
+		{"op", P, `{"name":"b","type":"bedrock","keys":[{"bedrock":{}}]}`, "bedrock without region"},
+		{"op", P, `{"name":"b","type":"bedrock","keys":[{"bedrock":{"region":"evil.com/x#"}}]}`, "bedrock region injection"},
+		{"op", P, `{"name":"b","type":"bedrock","keys":[{"bedrock":{"region":"us-east-1","access_key":"AK"}}]}`, "bedrock access key without secret"},
+		{"op", P, `{"name":"b","type":"bedrock"}`, "bedrock without keys"},
+		{"op", P, `{"name":"v","type":"vertex","keys":[{"vertex":{"region":"us-central1"}}]}`, "vertex without project"},
+		{"op", P, `{"name":"v","type":"vertex","keys":[{"vertex":{"project_id":"p","region":"us-central1","auth_credentials":"not json"}}]}`, "vertex bad credentials"},
+		{"op", P, `{"name":"o","type":"openai","keys":[{"value":"k","vertex":{"project_id":"p","region":"r"}}]}`, "config for another type"},
+		{"admin", A, `{"name":"a","type":"azure","keys":[{"value":"k","azure":{"endpoint":"https://8.8.8.8"}}]}`, "tenant azure (platform-only)"},
+		{"admin", A, `{"name":"v","type":"vertex","keys":[{"vertex":{"project_id":"p","region":"us-central1"}}]}`, "tenant vertex (platform-only)"},
+		{"admin", A, `{"name":"b","type":"bedrock","keys":[{"bedrock":{"region":"us-east-1"}}]}`, "tenant bedrock on host IAM"},
+		{"admin", A, `{"name":"b","type":"bedrock","keys":[{"id":"made-up","bedrock":{"region":"us-east-1"}}]}`, "tenant bedrock IAM via unknown key id"},
+	} {
+		expect(t, f.do(t, c.as, "POST", c.path, c.body), 400, c.what)
+	}
+
+	const secret = "TOPSECRET-cloud"
+	for _, c := range []struct{ as, path, body string }{
+		{"op", P, `{"name":"az","type":"azure","enabled":true,"keys":[{"value":"` + secret + `","azure":{"endpoint":"https://r.openai.azure.com","api_version":"2024-10-21","deployments":{"gpt-4o":"prod"}}}]}`},
+		{"op", P, `{"name":"br","type":"bedrock","enabled":true,"keys":[{"bedrock":{"region":"us-east-1"}}]}`},
+		{"op", P, `{"name":"vx","type":"vertex","enabled":true,"keys":[{"vertex":{"project_id":"proj-1","region":"us-central1","auth_credentials":"{\"k\":\"` + secret + `\"}"}}]}`},
+		{"op", P, `{"name":"el","type":"elevenlabs","enabled":true,"keys":[{"value":"` + secret + `"}]}`},
+		{"admin", A, `{"name":"tb","type":"bedrock","enabled":true,"keys":[{"bedrock":{"region":"us-east-1","access_key":"AK` + secret + `","secret_key":"` + secret + `","session_token":"` + secret + `"}}]}`},
+	} {
+		r := f.do(t, c.as, "POST", c.path, c.body)
+		expect(t, r, 200, c.body)
+		if strings.Contains(r.body, secret) || strings.Contains(r.body, "sealed") {
+			t.Fatalf("provider API leaks config secrets: %s", r.body)
+		}
+	}
+	list := f.do(t, "op", "GET", P, "")
+	if strings.Contains(list.body, secret) || !strings.Contains(list.body, `"prod"`) || !strings.Contains(list.body, "proj-1") {
+		t.Fatalf("provider list: %s", list.body)
+	}
+	// tenant bedrock keeps its stored AWS keys on an update with empty secrets
+	var tb []store.Provider
+	f.do(t, "admin", "GET", A, "").json(t, &tb)
+	upd := `{"name":"tb2","type":"bedrock","enabled":true,"keys":[{"id":"` + tb[0].Keys[0].ID + `","bedrock":{"region":"eu-west-1"}}]}`
+	expect(t, f.do(t, "admin", "PUT", A+"/"+tb[0].ID, upd), 200, "tenant bedrock update keeping secrets")
+	all, _ := f.s.ListProviders(context.Background(), true)
+	for _, p := range all {
+		if p.ID == tb[0].ID && (p.Keys[0].Bedrock.SecretKey != secret || p.Keys[0].Bedrock.Region != "eu-west-1") {
+			t.Fatalf("kept bedrock secrets: %+v", p.Keys[0].Bedrock)
+		}
+	}
+	var cfg struct {
+		ProviderTypes map[string][]string `json:"provider_types"`
+	}
+	f.do(t, "", "GET", "/api/auth/config", "").json(t, &cfg)
+	if !slices.Contains(cfg.ProviderTypes["org"], "bedrock") || slices.Contains(cfg.ProviderTypes["org"], "azure") || !slices.Contains(cfg.ProviderTypes["platform"], "vertex") {
+		t.Fatalf("provider types: %+v", cfg.ProviderTypes)
 	}
 }

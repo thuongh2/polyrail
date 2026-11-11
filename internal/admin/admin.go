@@ -737,10 +737,63 @@ func (a *API) patchKey(w http.ResponseWriter, r *http.Request) {
 
 // ---- providers ----
 
-// supportedTypes are provider types configured by API key + base URL alone.
+// supportedTypes are the Bifrost provider types the platform configures. azure, bedrock and vertex
+// take per-key config (ProviderKey.Azure/Bedrock/Vertex) instead of, or next to, an API key.
 var supportedTypes = map[string]bool{"openai": true, "anthropic": true, "gemini": true, "cohere": true,
 	"mistral": true, "groq": true, "ollama": true, "cerebras": true, "perplexity": true, "openrouter": true,
-	"nebius": true, "parasail": true, "sgl": true}
+	"nebius": true, "parasail": true, "sgl": true, "elevenlabs": true, "azure": true, "bedrock": true, "vertex": true}
+
+// cloudID matches AWS/GCP regions and GCP project ids; both are formatted into upstream hostnames
+// and paths by Bifrost, so anything else could redirect requests.
+var cloudID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// checkKeyConfig validates the per-key config the provider type needs. tenant is true for org
+// providers: they may not use the gateway host's own cloud identity (IAM), only explicit secrets.
+// old is the stored provider on update (nil on create), used to see which secrets are kept.
+func checkKeyConfig(p, old *store.Provider, tenant bool, allowPrivate bool) error {
+	cloud := p.Type == "azure" || p.Type == "bedrock" || p.Type == "vertex"
+	if cloud && p.BaseURL != "" {
+		return fmt.Errorf("%w: base_url is not used by %s; set the endpoint or region on each key", store.ErrInvalid, p.Type)
+	}
+	if cloud && len(p.Keys) == 0 {
+		return fmt.Errorf("%w: %s needs at least one key", store.ErrInvalid, p.Type)
+	}
+	for _, k := range p.Keys {
+		if (k.Azure != nil && p.Type != "azure") || (k.Bedrock != nil && p.Type != "bedrock") || (k.Vertex != nil && p.Type != "vertex") {
+			return fmt.Errorf("%w: key config does not match provider type %s", store.ErrInvalid, p.Type)
+		}
+		switch p.Type {
+		case "azure":
+			if k.Azure == nil || k.Azure.Endpoint == "" {
+				return fmt.Errorf("%w: azure keys need an endpoint", store.ErrInvalid)
+			}
+			if err := checkBaseURL(k.Azure.Endpoint, allowPrivate); err != nil {
+				return fmt.Errorf("%w: azure endpoint must be a public http(s) URL", store.ErrInvalid)
+			}
+		case "bedrock":
+			b := k.Bedrock
+			if b == nil || !cloudID.MatchString(b.Region) {
+				return fmt.Errorf("%w: bedrock keys need a region such as us-east-1", store.ErrInvalid)
+			}
+			if (b.AccessKey == "") != (b.SecretKey == "") {
+				return fmt.Errorf("%w: bedrock access_key and secret_key go together", store.ErrInvalid)
+			}
+			if tenant && k.Value == "" && b.AccessKey == "" && !keepsCredential(old, k.ID) {
+				// empty credentials mean the gateway host's AWS identity: operators only
+				return fmt.Errorf("%w: bedrock keys need an API key or access_key and secret_key", store.ErrInvalid)
+			}
+		case "vertex":
+			v := k.Vertex
+			if v == nil || !cloudID.MatchString(v.ProjectID) || !cloudID.MatchString(v.Region) {
+				return fmt.Errorf("%w: vertex keys need project_id and region", store.ErrInvalid)
+			}
+			if v.AuthCredentials != "" && !json.Valid([]byte(v.AuthCredentials)) {
+				return fmt.Errorf("%w: vertex auth_credentials must be service-account JSON", store.ErrInvalid)
+			}
+		}
+	}
+	return nil
+}
 
 // checkBaseURL blocks tenants from pointing providers at internal networks (SSRF). The gateway
 // re-checks at request time as well.
@@ -760,10 +813,24 @@ func checkBaseURL(raw string, allowPrivate bool) error {
 	return nil
 }
 
+// keepsCredential reports whether the stored key id holds an API key or AWS access key that an
+// update with empty inputs would keep.
+func keepsCredential(old *store.Provider, id string) bool {
+	if old == nil || id == "" {
+		return false
+	}
+	for _, k := range old.Keys {
+		if k.ID == id && (k.Sealed != "" || (k.Bedrock != nil && k.Bedrock.SealedAccessKey != "")) {
+			return true
+		}
+	}
+	return false
+}
+
 func redact(p store.Provider) store.Provider {
 	keys := make([]store.ProviderKey, len(p.Keys))
 	for i, k := range p.Keys {
-		keys[i] = store.ProviderKey{ID: k.ID, Name: k.Name, Weight: k.Weight, Models: k.Models}
+		keys[i] = k.Redacted()
 	}
 	p.Keys = keys
 	return p
@@ -796,6 +863,16 @@ func (a *API) putProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := checkBaseURL(p.BaseURL, p.OrgID == "" || a.cfg.AllowPrivateURLs); err != nil {
+		fail(w, err)
+		return
+	}
+	var old *store.Provider
+	if p.ID != "" {
+		if o, err := a.S.GetProvider(r.Context(), p.ID); err == nil && o.OrgID == p.OrgID {
+			old = o
+		}
+	}
+	if err := checkKeyConfig(&p, old, p.OrgID != "", p.OrgID == "" || a.cfg.AllowPrivateURLs); err != nil {
 		fail(w, err)
 		return
 	}

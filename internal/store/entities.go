@@ -113,12 +113,81 @@ type storedKey struct {
 }
 
 type ProviderKey struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name,omitempty"`
-	Value  string   `json:"value,omitempty"`  // plaintext; only set on input and inside the gateway
-	Sealed string   `json:"sealed,omitempty"` // encrypted at rest
-	Weight float64  `json:"weight"`
-	Models []string `json:"models,omitempty"`
+	ID      string         `json:"id"`
+	Name    string         `json:"name,omitempty"`
+	Value   string         `json:"value,omitempty"`  // plaintext; only set on input and inside the gateway
+	Sealed  string         `json:"sealed,omitempty"` // encrypted at rest
+	Weight  float64        `json:"weight"`
+	Models  []string       `json:"models,omitempty"`
+	Azure   *AzureConfig   `json:"azure,omitempty"`
+	Bedrock *BedrockConfig `json:"bedrock,omitempty"`
+	Vertex  *VertexConfig  `json:"vertex,omitempty"`
+}
+
+// AzureConfig is the per-key Azure OpenAI setup. Deployments map model name -> deployment name.
+type AzureConfig struct {
+	Endpoint    string            `json:"endpoint"`
+	APIVersion  string            `json:"api_version,omitempty"`
+	Deployments map[string]string `json:"deployments,omitempty"`
+}
+
+// BedrockConfig is the per-key AWS Bedrock setup. Secret fields follow the Value/Sealed pattern:
+// plaintext only on input and inside the gateway, sealed at rest. No access/secret key and no
+// Value means the AWS default credential chain (IAM role) of the gateway host.
+type BedrockConfig struct {
+	AccessKey          string            `json:"access_key,omitempty"`
+	SecretKey          string            `json:"secret_key,omitempty"`
+	SessionToken       string            `json:"session_token,omitempty"`
+	SealedAccessKey    string            `json:"sealed_access_key,omitempty"`
+	SealedSecretKey    string            `json:"sealed_secret_key,omitempty"`
+	SealedSessionToken string            `json:"sealed_session_token,omitempty"`
+	Region             string            `json:"region"`
+	ARN                string            `json:"arn,omitempty"`
+	Deployments        map[string]string `json:"deployments,omitempty"`
+}
+
+// VertexConfig is the per-key Google Vertex AI setup. Empty AuthCredentials means the gateway
+// host's Google default credentials (IAM).
+type VertexConfig struct {
+	ProjectID             string            `json:"project_id"`
+	ProjectNumber         string            `json:"project_number,omitempty"`
+	Region                string            `json:"region"`
+	AuthCredentials       string            `json:"auth_credentials,omitempty"` // service-account JSON
+	SealedAuthCredentials string            `json:"sealed_auth_credentials,omitempty"`
+	Deployments           map[string]string `json:"deployments,omitempty"`
+}
+
+// secrets maps each secret field of a key to its (plaintext, sealed) pair.
+func (k *ProviderKey) secrets() map[string][2]*string {
+	f := map[string][2]*string{"value": {&k.Value, &k.Sealed}}
+	if b := k.Bedrock; b != nil {
+		f["bedrock.access_key"] = [2]*string{&b.AccessKey, &b.SealedAccessKey}
+		f["bedrock.secret_key"] = [2]*string{&b.SecretKey, &b.SealedSecretKey}
+		f["bedrock.session_token"] = [2]*string{&b.SessionToken, &b.SealedSessionToken}
+	}
+	if v := k.Vertex; v != nil {
+		f["vertex.auth_credentials"] = [2]*string{&v.AuthCredentials, &v.SealedAuthCredentials}
+	}
+	return f
+}
+
+// Redacted returns the key without any secret material (plaintext or sealed); non-secret
+// config (endpoint, region, deployments) stays so clients can edit it.
+func (k ProviderKey) Redacted() ProviderKey {
+	out := ProviderKey{ID: k.ID, Name: k.Name, Weight: k.Weight, Models: k.Models}
+	if k.Azure != nil {
+		a := *k.Azure
+		out.Azure = &a
+	}
+	if k.Bedrock != nil {
+		out.Bedrock = &BedrockConfig{Region: k.Bedrock.Region, ARN: k.Bedrock.ARN, Deployments: k.Bedrock.Deployments}
+	}
+	if k.Vertex != nil {
+		v := *k.Vertex
+		v.AuthCredentials, v.SealedAuthCredentials = "", ""
+		out.Vertex = &v
+	}
+	return out
 }
 
 type Provider struct {
@@ -534,8 +603,9 @@ func (s *Store) ListKeys(ctx context.Context, orgID string) ([]APIKey, error) {
 
 // ---- providers ----
 
-// PutProvider creates or updates a provider. Key values are sealed; a key sent without a value
-// keeps its stored secret.
+// PutProvider creates or updates a provider. Key values and config secrets (Bedrock keys, Vertex
+// credentials) are sealed; a secret sent empty keeps the stored one for the same key id, except
+// across a base_url, type or Azure endpoint change, where secrets must be re-entered.
 func (s *Store) PutProvider(ctx context.Context, p *Provider) error {
 	if p.Name == "" || p.Type == "" {
 		return fmt.Errorf("%w: provider name and type required", ErrInvalid)
@@ -554,37 +624,44 @@ func (s *Store) PutProvider(ctx context.Context, p *Provider) error {
 		case !create && old == nil:
 			return ErrNotFound // updates need an existing provider
 		}
+		rehost := false // stored secrets must not follow the provider to a new host
 		if old != nil {
 			if old.OrgID != p.OrgID {
 				return ErrNotFound // never move a provider across tenants
 			}
 			p.CreatedAt = old.CreatedAt
-			if old.BaseURL != p.BaseURL || old.Type != p.Type {
-				for _, k := range p.Keys { // stored keys must not follow the provider to a new host
-					if k.Value == "" {
-						return fmt.Errorf("%w: re-enter the API keys when changing base_url or type", ErrInvalid)
-					}
-				}
-			}
+			rehost = old.BaseURL != p.BaseURL || old.Type != p.Type
 		}
 		for i := range p.Keys {
 			k := &p.Keys[i]
 			if k.ID == "" {
 				k.ID = NewID()
 			}
-			if k.Value != "" {
-				if k.Sealed, err = s.box.Seal(k.Value); err != nil {
-					return err
-				}
-				k.Value = ""
-				continue
-			}
-			k.Sealed = ""
+			var prev map[string][2]*string
+			keyRehost := rehost
 			if old != nil {
-				for _, ok := range old.Keys {
-					if ok.ID == k.ID {
-						k.Sealed = ok.Sealed
+				for j := range old.Keys {
+					if ok := &old.Keys[j]; ok.ID == k.ID {
+						prev = ok.secrets()
+						keyRehost = keyRehost || (ok.Azure != nil && k.Azure != nil && ok.Azure.Endpoint != k.Azure.Endpoint)
 					}
+				}
+			}
+			for name, f := range k.secrets() {
+				plain, sealed := f[0], f[1]
+				if *plain != "" {
+					if *sealed, err = s.box.Seal(*plain); err != nil {
+						return err
+					}
+					*plain = ""
+					continue
+				}
+				*sealed = "" // never trust a sealed value from input
+				if pf, ok := prev[name]; ok && *pf[1] != "" {
+					if keyRehost {
+						return fmt.Errorf("%w: re-enter the API keys and secrets when changing base_url, type or endpoint", ErrInvalid)
+					}
+					*sealed = *pf[1] // empty input keeps the stored secret
 				}
 			}
 		}
@@ -608,12 +685,13 @@ func (s *Store) ListProviders(ctx context.Context, decrypt bool) ([]Provider, er
 	}
 	for i := range ps {
 		for j := range ps[i].Keys {
-			k := &ps[i].Keys[j]
-			if k.Sealed == "" {
-				continue
-			}
-			if k.Value, err = s.box.Open(k.Sealed); err != nil {
-				return nil, fmt.Errorf("provider %s key %s: %w", ps[i].ID, k.ID, err)
+			for name, f := range ps[i].Keys[j].secrets() {
+				if *f[1] == "" {
+					continue
+				}
+				if *f[0], err = s.box.Open(*f[1]); err != nil {
+					return nil, fmt.Errorf("provider %s key %s %s: %w", ps[i].ID, ps[i].Keys[j].ID, name, err)
+				}
 			}
 		}
 	}

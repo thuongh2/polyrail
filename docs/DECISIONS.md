@@ -44,3 +44,15 @@ OpenRouter-like UI on shadcn. Built files are committed in `internal/web/dist` s
 Node; no chart or state libraries (hand-written SVG charts, `useAsync`), wouter for routing, console
 lazy-loaded. Initial JS 74 kB gzip. CSP keeps `script-src 'self'`; styles allow inline attributes
 (Radix positioning).
+
+**D13 Cloud providers (Azure, Bedrock, Vertex) as per-key config.** Bifrost carries their credentials
+in `schemas.Key` (`AzureKeyConfig`, `BedrockKeyConfig`, `VertexKeyConfig`), so `store.ProviderKey`
+gets optional `azure` / `bedrock` / `vertex` objects mapped 1:1 in the gateway Account. Secret parts
+(Bedrock access/secret/session keys, Vertex service-account JSON) are sealed with the same `Box` as
+key values and redacted from every API response; non-secret parts (endpoint, region, deployments)
+are returned so the UI can edit them. Bedrock is a Bifrost custom-base type, so it is multi-instance
+and tenants may add it; Azure and Vertex are single-slot standard providers, platform only. Empty
+Bedrock/Vertex credentials mean the host's cloud identity (IAM), which only operators may use: the
+admin API rejects it for org providers and the Account drops such tenant keys. Regions and project
+ids are checked against `^[a-z0-9][a-z0-9-]{0,62}$` because Bifrost formats them into upstream
+hostnames. Not tested against real Azure/AWS/GCP in the sandbox (no cloud accounts).

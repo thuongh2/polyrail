@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/agent-gateway/agent-gateway/internal/gateway"
 	"github.com/agent-gateway/agent-gateway/internal/store"
 )
 
@@ -100,13 +101,56 @@ func TestNewProviderTypes(t *testing.T) {
 	}
 	A := "/api/orgs/" + f.orgA.ID + "/providers"
 	expect(t, f.do(t, "admin", "POST", A, `{"name":"hf","type":"huggingface","keys":[{"value":"k"}]}`), 200, "tenant huggingface (multi-instance)")
-	expect(t, f.do(t, "admin", "POST", A, `{"name":"ds","type":"deepseek","keys":[{"value":"k"}]}`), 400, "tenant deepseek (platform-only)")
+	expect(t, f.do(t, "admin", "POST", A, `{"name":"el","type":"elevenlabs","keys":[{"value":"k"}]}`), 400, "tenant elevenlabs (platform-only)")
 	var cfg struct {
 		ProviderTypes map[string][]string `json:"provider_types"`
 	}
 	f.do(t, "", "GET", "/api/auth/config", "").json(t, &cfg)
 	if !slices.Contains(cfg.ProviderTypes["platform"], "xai") || !slices.Contains(cfg.ProviderTypes["org"], "replicate") || slices.Contains(cfg.ProviderTypes["org"], "vllm") {
 		t.Fatalf("provider types: %+v", cfg.ProviderTypes)
+	}
+}
+
+// OpenAI-compatible vendor types are org types on the vendor's fixed URL: no base_url, and
+// discovery and import work through Bifrost's openai base.
+func TestOrgOpenAICompatibleProviders(t *testing.T) {
+	var auth atomic.Value
+	up := modelsUpstream(t, &auth)
+	old := gateway.OpenAICompatible["groq"]
+	gateway.OpenAICompatible["groq"] = up.URL // the vendor, here on 127.0.0.1: no private-URL grant needed
+	t.Cleanup(func() { gateway.OpenAICompatible["groq"] = old })
+	f := setup(t, Config{})
+	A := "/api/orgs/" + f.orgA.ID + "/providers"
+	expect(t, f.do(t, "admin", "POST", A, `{"name":"g","type":"groq","base_url":"https://api.groq.com/openai","keys":[{"value":"k"}]}`), 400, "org groq with base_url")
+	r := f.do(t, "admin", "POST", A, `{"name":"g","type":"groq","enabled":true,"keys":[{"value":"gsk-org"}]}`)
+	expect(t, r, 200, "org groq")
+	var p store.Provider
+	r.json(t, &p)
+	if p.Type != "groq" || p.BaseURL != "" {
+		t.Fatalf("org groq keeps its type and no base_url: %+v", p)
+	}
+	r = f.do(t, "admin", "POST", A+"/"+p.ID+"/discover", "")
+	expect(t, r, 200, "discover org groq")
+	if !strings.Contains(r.body, `"upstream":"gpt-up"`) || auth.Load() != "Bearer gsk-org" {
+		t.Fatalf("discover: %s (auth %v)", r.body, auth.Load())
+	}
+	expect(t, f.do(t, "admin", "POST", A+"/"+p.ID+"/import", `{"models":[{"upstream":"gpt-up","id":"acme/gpt-up"}]}`), 200, "import")
+	if m, err := f.s.GetModel(context.Background(), f.orgA.ID, "acme/gpt-up"); err != nil || m.Targets[0].ProviderID != p.ID {
+		t.Fatalf("imported: %+v %v", m, err)
+	}
+	expect(t, f.do(t, "op", "POST", "/api/admin/providers", `{"name":"pg","type":"groq","base_url":"https://example.com","keys":[{"value":"k"}]}`), 200, "platform groq may override base_url")
+	var cfg struct {
+		ProviderTypes map[string][]string `json:"provider_types"`
+	}
+	f.do(t, "", "GET", "/api/auth/config", "").json(t, &cfg)
+	for _, typ := range []string{"groq", "deepseek", "xai", "mistral", "openrouter", "fireworks", "cerebras", "perplexity", "nebius", "parasail", "openai", "typesafe"} {
+		if !slices.Contains(cfg.ProviderTypes["org"], typ) {
+			t.Errorf("provider_types.org lacks %s: %v", typ, cfg.ProviderTypes["org"])
+		}
+	}
+	if slices.Contains(cfg.ProviderTypes["org"], "elevenlabs") || slices.Contains(cfg.ProviderTypes["org"], "vllm") ||
+		!slices.Contains(cfg.ProviderTypes["org_fixed_url"], "groq") || slices.Contains(cfg.ProviderTypes["org_fixed_url"], "openai") {
+		t.Fatalf("provider_types.org: %v", cfg.ProviderTypes["org"])
 	}
 }
 

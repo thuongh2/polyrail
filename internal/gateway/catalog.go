@@ -25,9 +25,47 @@ type Snapshot struct {
 // the types Bifrost can instantiate many times under custom names (schemas.SupportedBaseProviders).
 func MultiInstance(t string) bool { return bifrost.IsSupportedBaseProvider(schemas.ModelProvider(t)) }
 
+// OpenAICompatible maps key-only provider types whose API is OpenAI-compatible to the vendor's API
+// base, as Bifrost v1.15.2's native adapters default it, without /v1 (the openai base appends
+// /v1/...). Org providers of these types run as Bifrost custom providers on the openai base at
+// this fixed URL, so every org can have its own; platform providers keep the native adapter.
+// Not here: byteplus (/api/v3 paths, regional host, no model list), runware and runway (task
+// APIs), elevenlabs (not OpenAI-compatible). A var only so tests can point a vendor at httptest.
+var OpenAICompatible = map[string]string{
+	"groq":         "https://api.groq.com/openai",
+	"deepseek":     "https://api.deepseek.com",
+	"xai":          "https://api.x.ai",
+	"mistral":      "https://api.mistral.ai",
+	"openrouter":   "https://openrouter.ai/api",
+	"fireworks":    "https://api.fireworks.ai/inference",
+	"cerebras":     "https://api.cerebras.ai",
+	"perplexity":   "https://api.perplexity.ai",
+	"nebius":       "https://api.tokenfactory.nebius.com",
+	"parasail":     "https://api.parasail.io",
+	"minimax":      "https://api.minimax.io",
+	"sarvam":       "https://api.sarvam.ai",
+	"wafer":        "https://pass.wafer.ai",
+	"opencode-go":  "https://opencode.ai/zen/go",
+	"opencode-zen": "https://opencode.ai/zen",
+}
+
+// compatPaths are the vendor paths that differ from OpenAI's /v1/... (from the native adapters).
+var compatPaths = map[string]map[schemas.RequestType]string{
+	"deepseek": {schemas.ChatCompletionRequest: "/chat/completions", schemas.ChatCompletionStreamRequest: "/chat/completions",
+		schemas.ListModelsRequest: "/models"},
+	"perplexity": {schemas.ChatCompletionRequest: "/chat/completions", schemas.ChatCompletionStreamRequest: "/chat/completions"},
+}
+
+// OrgType reports whether org admins may create providers of type t: the multi-instance types
+// and the OpenAI-compatible vendors.
+func OrgType(t string) bool { return MultiInstance(t) || OpenAICompatible[t] != "" }
+
+// orgCompatible reports whether p is an org provider served through the openai base.
+func orgCompatible(p store.Provider) bool { return p.OrgID != "" && OpenAICompatible[p.Type] != "" }
+
 // BifrostKey is the Bifrost provider key a provider is registered under.
 func BifrostKey(p store.Provider) schemas.ModelProvider {
-	if MultiInstance(p.Type) {
+	if MultiInstance(p.Type) || orgCompatible(p) {
 		return schemas.ModelProvider("p-" + p.ID)
 	}
 	return schemas.ModelProvider(p.Type)
@@ -253,6 +291,11 @@ func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.Provid
 			BaseProviderType: schemas.ModelProvider(p.Type),
 			IsKeyLess:        len(p.Keys) == 0,
 		}
+	} else if orgCompatible(p) {
+		// the URL is fixed (admin rejects base_url for these org types): no tenant-chosen host
+		cfg.NetworkConfig.BaseURL = OpenAICompatible[p.Type]
+		cfg.CustomProviderConfig = &schemas.CustomProviderConfig{BaseProviderType: schemas.OpenAI,
+			RequestPathOverrides: compatPaths[p.Type]}
 	}
 	return cfg, nil
 }

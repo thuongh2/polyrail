@@ -472,14 +472,13 @@ func TestCrossTenantProvidersAndModels(t *testing.T) {
 	expect(t, f.do(t, "outsider", "DELETE", "/api/orgs/"+f.orgB.ID+"/models/acme/private", ""), 404, "org B deletes org A's model")
 }
 
-// A tenant must not be able to affect platform (public) providers. Non-custom provider types
-// (groq, mistral, ...) share one Bifrost slot per type, and the oldest provider of the type wins.
+// A tenant must not be able to affect platform (public) providers. Native provider types
+// (groq, mistral, ...) share one Bifrost slot per type, and the oldest provider of the type wins;
+// org providers of these types run as custom providers ("p-<id>") and never take that slot.
 func TestTenantProviderDoesNotShadowPublicProvider(t *testing.T) {
 	f := setup(t, Config{})
-	r := f.do(t, "admin", "POST", "/api/orgs/"+f.orgA.ID+"/providers", `{"name":"mine","type":"groq","base_url":"https://8.8.8.8","enabled":true,"keys":[{"value":"tenant-key"}]}`)
-	if r.code != 200 {
-		t.Skipf("tenant cannot create non-custom provider types (status %d); nothing to shadow", r.code)
-	}
+	r := f.do(t, "admin", "POST", "/api/orgs/"+f.orgA.ID+"/providers", `{"name":"mine","type":"groq","enabled":true,"keys":[{"value":"tenant-key"}]}`)
+	expect(t, r, 200, "tenant groq (OpenAI-compatible org type)")
 	pub := f.do(t, "op", "POST", "/api/admin/providers", `{"name":"platform-groq","type":"groq","enabled":true,"keys":[{"value":"platform-key"}]}`)
 	expect(t, pub, 200, "public groq provider")
 	var p store.Provider

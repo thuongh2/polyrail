@@ -100,6 +100,7 @@ type APIKey struct {
 	MonthlyBudget int64      `json:"monthly_budget_micros,omitempty"`
 	Models        []string   `json:"models,omitempty"`      // allowlist; empty = all visible models
 	MCPServers    []string   `json:"mcp_servers,omitempty"` // MCP server names, narrowing the org grant; empty = all granted
+	KBIDs         []string   `json:"kb_ids,omitempty"`      // knowledge bases grounding this key's requests (docs/KB.md §4)
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	Revoked       bool       `json:"revoked"`
 	CreatedAt     time.Time  `json:"created_at"`
@@ -410,7 +411,8 @@ func (s *Store) ListOrgs(ctx context.Context, after string, limit int) ([]Org, e
 	return listJSON[Org](ctx, s.KV, "org/", after, limit)
 }
 
-// DeleteOrg removes the org, its memberships, API keys, private providers, models and webhooks.
+// DeleteOrg removes the org, its memberships, API keys, private providers, models, webhooks and
+// knowledge bases (workers drop the org's KB queue entries).
 func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	members, err := s.ListMembers(ctx, id)
 	if err != nil {
@@ -432,7 +434,7 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return s.update(ctx, func(tx Tx) error {
+	err = s.update(ctx, func(tx Tx) error {
 		del := []string{"org/" + id}
 		for _, m := range members {
 			del = append(del, "mem/"+id+"/"+m.UserID, "umem/"+m.UserID+"/"+id)
@@ -462,6 +464,15 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	for _, p := range kbOrgPrefixes(id) {
+		if err := s.DeletePrefix(ctx, p); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---- users ----

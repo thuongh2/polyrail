@@ -192,4 +192,4 @@ int32 dot product + BM25 fused with RRF k=60. Grounding inserts a system message
 untrusted excerpts with `[n]` citations after the last user turn, for keys with `kb_ids` or requests
 with `X-GW-KB`; fails open; cache keys include `kb@rev`. OpenAI-compatible `/v1/vector_stores` subset
 with direct upload. `kb.VectorStore` is the seam for pgvector/Qdrant. If wrong: ~1M resident chunks
-per node needs ~1 GB index or the external seam; only `internal/kb` changes.
+per node needs ~1.6 GB index (measured ~1.6 KB/chunk at 512 dims) or the external seam; only `internal/kb` changes.

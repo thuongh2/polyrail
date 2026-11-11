@@ -25,6 +25,7 @@ import (
 	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/agent-gateway/agent-gateway/internal/usage"
 	"github.com/agent-gateway/agent-gateway/internal/web"
+	"github.com/agent-gateway/agent-gateway/internal/webhook"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -161,6 +162,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	hooks := webhook.New(s, allowPrivate, envInt("WEBHOOK_QUEUE", 1000))
+	hooks.Start(ctx, 4)
+	g.Hooks, api.Hooks = hooks, hooks
 	if err := bootstrap(ctx, s); err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}
@@ -278,7 +282,7 @@ func withCORS(h http.Handler) http.Handler {
 		if p := r.URL.Path; strings.HasPrefix(p, "/v1/") || strings.HasPrefix(p, "/openai/v1/") || strings.HasPrefix(p, "/anthropic/v1/") || strings.HasPrefix(p, "/genai/") {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, anthropic-version, anthropic-beta, x-goog-api-key, x-goog-api-client, x-gateway-cache, x-gateway-mcp-clients, Idempotency-Key")
-			w.Header().Set("Access-Control-Expose-Headers", "x-gateway-provider, x-gateway-request-id, x-gateway-cache-hit, X-GW-Cost-Micros, Idempotent-Replayed")
+			w.Header().Set("Access-Control-Expose-Headers", "x-gateway-provider, x-gateway-request-id, x-gateway-cache-hit, X-GW-Cost-Micros, Idempotent-Replayed, X-GW-Cache, X-GW-Cache-Score, X-GW-Route, X-GW-Guardrail, X-GW-Compressed-Chars")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return

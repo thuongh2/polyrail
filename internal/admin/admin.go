@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -103,6 +104,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/orgs/{org}/keys", a.org(store.RoleViewer, a.listKeys))
 	mux.HandleFunc("POST /api/orgs/{org}/keys", a.org(store.RoleMember, a.createKey))
 	mux.HandleFunc("PATCH /api/orgs/{org}/keys/{id}", a.org(store.RoleMember, a.patchKey))
+	mux.HandleFunc("POST /api/orgs/{org}/keys/{id}/rotate", a.org(store.RoleMember, a.rotateKey))
 	mux.HandleFunc("GET /api/orgs/{org}/providers", a.org(store.RoleAdmin, a.listProviders))
 	mux.HandleFunc("POST /api/orgs/{org}/providers", a.org(store.RoleAdmin, a.putProvider))
 	mux.HandleFunc("GET /api/orgs/{org}/providers/{id}", a.org(store.RoleAdmin, a.getProvider))
@@ -115,7 +117,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/orgs/{org}/models/{id...}", a.org(store.RoleAdmin, a.putModel))
 	mux.HandleFunc("DELETE /api/orgs/{org}/models/{id...}", a.org(store.RoleAdmin, a.deleteModel))
 	mux.HandleFunc("GET /api/orgs/{org}/usage", a.org(store.RoleViewer, a.usageReport))
+	mux.HandleFunc("GET /api/orgs/{org}/usage/export.csv", a.org(store.RoleViewer, a.exportUsage))
 	mux.HandleFunc("GET /api/orgs/{org}/logs", a.org(store.RoleViewer, a.listLogs))
+	mux.HandleFunc("GET /api/orgs/{org}/logs/export.csv", a.org(store.RoleViewer, a.exportLogs))
+	mux.HandleFunc("GET /api/orgs/{org}/logs/{id}/content", a.org(store.RoleAdmin, a.logContent))
 	mux.HandleFunc("GET /api/orgs/{org}/audit", a.org(store.RoleAdmin, a.listAudit))
 	mux.HandleFunc("GET /api/orgs/{org}/webhooks", a.org(store.RoleAdmin, a.listWebhooks))
 	mux.HandleFunc("POST /api/orgs/{org}/webhooks", a.org(store.RoleAdmin, a.createWebhook))
@@ -137,6 +142,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/admin/models/{id...}", a.operator(a.platform(a.deleteModel)))
 	mux.HandleFunc("POST /api/admin/catalog/sync", a.operator(a.platform(a.syncCatalog)))
 	mux.HandleFunc("GET /api/admin/usage", a.operator(a.platform(a.usageReport)))
+	mux.HandleFunc("GET /api/admin/usage/export.csv", a.operator(a.platform(a.exportUsage)))
 	mux.HandleFunc("GET /api/admin/audit", a.operator(a.platform(a.listAudit)))
 	mux.HandleFunc("GET /api/admin/users", a.operator(a.listUsers))
 	mux.HandleFunc("PATCH /api/admin/users/{id}", a.operator(a.patchUser))
@@ -150,6 +156,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerAlerts(mux)
 	a.registerPolicies(mux)
 	a.registerPresets(mux)
+	a.registerMgmt(mux)
 
 	// Unknown API paths answer JSON 404 instead of falling through to the UI's index.html.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, http.StatusNotFound, "not found") })
@@ -170,8 +177,9 @@ func csrf(h http.HandlerFunc) http.HandlerFunc {
 
 // authed requires a session. Mutations also require the X-GW-CSRF header, which a cross-site
 // form cannot set.
+// Management tokens are refused here: they only work on org routes (org).
 func (a *API) authed(h http.HandlerFunc) http.HandlerFunc {
-	return csrf(func(w http.ResponseWriter, r *http.Request) {
+	sess := csrf(func(w http.ResponseWriter, r *http.Request) {
 		u, err := a.currentUser(r)
 		if err != nil {
 			fail(w, err)
@@ -179,6 +187,13 @@ func (a *API) authed(h http.HandlerFunc) http.HandlerFunc {
 		}
 		h(w, r.WithContext(context.WithValue(r.Context(), userCtx{}, u)))
 	})
+	return func(w http.ResponseWriter, r *http.Request) {
+		if mgmtBearer(r) != "" {
+			writeErr(w, http.StatusUnauthorized, "management tokens work on organization routes only")
+			return
+		}
+		sess(w, r)
+	}
 }
 
 func (a *API) operator(h http.HandlerFunc) http.HandlerFunc {
@@ -200,9 +215,10 @@ func (a *API) platform(h http.HandlerFunc) http.HandlerFunc {
 }
 
 // org requires membership of {org} with at least min role. Operators act as owners everywhere.
-// Non-members get 404 so org ids cannot be probed.
+// Non-members get 404 so org ids cannot be probed. A management token (mgmt.go) authenticates
+// instead of the session when sent as the bearer.
 func (a *API) org(min store.Role, h http.HandlerFunc) http.HandlerFunc {
-	return a.authed(func(w http.ResponseWriter, r *http.Request) {
+	sess := a.authed(func(w http.ResponseWriter, r *http.Request) {
 		u, orgID := user(r), r.PathValue("org")
 		var rl store.Role
 		if u.Operator {
@@ -225,6 +241,13 @@ func (a *API) org(min store.Role, h http.HandlerFunc) http.HandlerFunc {
 		}
 		h(w, r.WithContext(context.WithValue(r.Context(), roleCtx{}, rl)))
 	})
+	return func(w http.ResponseWriter, r *http.Request) {
+		if tok := mgmtBearer(r); tok != "" {
+			a.tokenOrg(min, h, w, r, tok)
+			return
+		}
+		sess(w, r)
+	}
 }
 
 // ---- helpers ----
@@ -448,9 +471,20 @@ func (a *API) patchOrg(w http.ResponseWriter, r *http.Request) {
 		MCPServers   *[]string         `json:"mcp_servers"`
 		// SemanticCache with an empty model turns the semantic cache off.
 		SemanticCache *store.SemanticCache `json:"semantic_cache"`
+		// ContentLogging stores request and response bodies (off by default; retention 1..90 days).
+		ContentLogging *store.ContentLogging `json:"content_logging"`
 	}
 	if !decode(w, r, &in) {
 		return
+	}
+	if c := in.ContentLogging; c != nil {
+		if c.RetentionDays == 0 {
+			c.RetentionDays = 30
+		}
+		if c.RetentionDays < 1 || c.RetentionDays > store.ContentMaxDays {
+			fail(w, fmt.Errorf("%w: content_logging.retention_days must be 1..%d", store.ErrInvalid, store.ContentMaxDays))
+			return
+		}
 	}
 	var semCache *store.SemanticCache
 	if in.SemanticCache != nil {
@@ -499,14 +533,21 @@ func (a *API) patchOrg(w http.ResponseWriter, r *http.Request) {
 		if in.SemanticCache != nil {
 			o.SemanticCache = semCache
 		}
+		if in.ContentLogging != nil {
+			o.ContentLogging = in.ContentLogging
+		}
 		return nil
 	})
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	a.G.InvalidateAuth() // cached principals carry the org's guardrails and billing mode
-	a.audit(r, o.ID, "org.update", o.ID, "")
+	a.G.InvalidateAuth() // cached principals carry the org's guardrails, billing mode and content logging
+	detail := ""
+	if c := in.ContentLogging; c != nil {
+		detail = fmt.Sprintf("content_logging enabled=%v retention_days=%d", c.Enabled, c.RetentionDays)
+	}
+	a.audit(r, o.ID, "org.update", o.ID, detail)
 	writeJSON(w, 200, o)
 }
 
@@ -720,7 +761,60 @@ func (a *API) listKeys(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	if role(r).Rank() < store.RoleAdmin.Rank() { // members and viewers see only keys they created
+		keys = slices.DeleteFunc(keys, func(k store.APIKey) bool { return k.CreatedBy != user(r).ID })
+	}
+	if keys == nil {
+		keys = []store.APIKey{}
+	}
 	writeJSON(w, 200, keys)
+}
+
+// newKeySecret returns a fresh API key secret.
+func newKeySecret() (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return gateway.KeyPrefix + base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// rotateKey gives a key a new secret (shown once) and keeps its settings; the old secret works
+// for grace_seconds (0..86400, default 0). Members rotate only keys they created.
+func (a *API) rotateKey(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		GraceSeconds int `json:"grace_seconds"`
+	}
+	if r.ContentLength != 0 && !decode(w, r, &in) {
+		return
+	}
+	if in.GraceSeconds < 0 || in.GraceSeconds > 86400 {
+		fail(w, fmt.Errorf("%w: grace_seconds must be 0..86400", store.ErrInvalid))
+		return
+	}
+	org, id := r.PathValue("org"), r.PathValue("id")
+	cur, err := a.S.GetKey(r.Context(), org, id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if role(r).Rank() < store.RoleAdmin.Rank() && cur.CreatedBy != user(r).ID {
+		fail(w, errForbidden)
+		return
+	}
+	secret, err := newKeySecret()
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	k, err := a.S.RotateKey(r.Context(), org, id, gateway.HashKey(secret), secret[:12], time.Duration(in.GraceSeconds)*time.Second)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	a.G.InvalidateAuth() // the old secret's cached principal must not outlive the rotation
+	a.audit(r, org, "key.rotate", id, fmt.Sprintf("grace_seconds=%d", in.GraceSeconds))
+	writeJSON(w, 200, map[string]any{"key": k, "secret": secret})
 }
 
 type keyInput struct {
@@ -771,15 +865,14 @@ func (a *API) createKey(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	b := make([]byte, 24)
-	if _, err := rand.Read(b); err != nil {
+	secret, err := newKeySecret()
+	if err != nil {
 		fail(w, err)
 		return
 	}
 	if !a.keyKBs(w, r, &in) {
 		return
 	}
-	secret := gateway.KeyPrefix + base64.RawURLEncoding.EncodeToString(b)
 	k := &store.APIKey{OrgID: r.PathValue("org"), CreatedBy: user(r).ID, Prefix: secret[:12]}
 	in.Revoked = nil
 	in.apply(k)

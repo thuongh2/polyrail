@@ -93,6 +93,7 @@ type principal struct {
 	pol      *EffectivePolicy // guardrail policies applying to Key (nil: none)
 	kbChunks int              // knowledge-base excerpts injected into this request (request log)
 	rr       *reqRoute        // request routing options (reqroute.go); nil = none
+	content  *contentCapture  // opt-in content logging (content.go); nil when off
 }
 
 // HashKey is how API key secrets are stored and looked up.
@@ -455,6 +456,7 @@ func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start 
 	}
 	g.Usage.Record(l)
 	g.recordPolicySpend(p, m, l.Cost)
+	g.saveContent(p, l)
 	if l.Error != "" && l.Status >= 400 && l.Status != 499 && !strings.HasPrefix(l.Error, "guardrail") {
 		// upstream failure after all fallbacks; no prompt or upstream text in the payload
 		g.emit(p.Org.ID, "request.failed", map[string]any{"model": m.ID, "status": l.Status, "code": "provider_error", "key_id": p.Key.ID})
@@ -508,6 +510,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
+	p = withContent(p, body) // the body as the caller sent it, before preset expansion
 	body, rr, e := g.routeBody(p, body, "chat")
 	if e != nil {
 		writeError(w, e)
@@ -575,6 +578,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		cacheKey = hex.EncodeToString(h[:])
 		if out, ok := g.resp.Get(cacheKey); ok {
 			mCacheHits.Inc()
+			p.content.setResponse(out)
 			micros := g.record(p, m, store.RequestLog{Status: 200, Cached: true, Provider: "cache"}, start)
 			setCost(w, micros)
 			w.Header().Set("Content-Type", "application/json")
@@ -622,6 +626,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		g.resp.Set(cacheKey, out, len(out), ttl)
 	}
 	g.semStore(sem, out)
+	p.content.setResponse(out)
 	micros := g.record(p, used, l, start)
 	setCost(w, micros)
 	w.Header().Set("Content-Type", "application/json")
@@ -686,6 +691,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 			for _, ch := range c.Choices {
 				if ch.ChatStreamResponseChoice != nil && ch.Delta != nil && ch.Delta.Content != nil {
 					chars += len(*ch.Delta.Content)
+					p.content.addText(*ch.Delta.Content)
 				}
 			}
 			c.Model = used.ID

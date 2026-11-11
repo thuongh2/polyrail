@@ -150,6 +150,7 @@ export type APIKey = {
   expires_at?: string;
   revoked: boolean;
   created_at: string;
+  kb_ids?: string[]; // knowledge bases that ground this key's chat requests (docs/KB.md §4)
 };
 
 /** Per-key cloud config. Secret fields are write-only: the API never returns them. */
@@ -291,6 +292,130 @@ export type MCPClient = { config: { id: string; name: string }; tools: { name: s
 /** Base path for org-scoped admin routes, or the platform scope ("/api/admin"). */
 export const orgBase = (org: string) => `/api/orgs/${encodeURIComponent(org)}`;
 export const PLATFORM = "/api/admin";
+
+// ---- knowledge bases (docs/KB.md §1, §5) ----
+
+export type KB = {
+  id: string;
+  org_id: string;
+  name: string;
+  description?: string;
+  embedding_model: string;
+  dimensions?: number; // 0 / absent = the model's native size
+  chunk_chars: number;
+  overlap_chars: number;
+  top_k: number;
+  min_score: number;
+  max_context_tokens: number;
+  rev: number;
+  docs: number;
+  chunks: number;
+  bytes: number;
+  created_by_key?: string;
+  created_at: string;
+  updated_at: string;
+};
+/** Fields accepted by POST/PATCH …/kbs. */
+export type KBInput = Pick<KB, "name" | "embedding_model" | "chunk_chars" | "overlap_chars" | "top_k" | "min_score" | "max_context_tokens"> & {
+  description?: string;
+  dimensions?: number;
+};
+export type KBDocStatus = "queued" | "processing" | "ready" | "failed";
+export type KBDoc = {
+  id: string;
+  kb_id: string;
+  org_id: string;
+  filename: string;
+  source: "upload" | "text" | "url";
+  url?: string;
+  content_type?: string;
+  bytes: number;
+  chars: number;
+  chunks: number;
+  in_tokens: number;
+  cost_micros: number;
+  embedding_model?: string;
+  status: KBDocStatus;
+  error?: string;
+  attempts: number;
+  attributes?: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+};
+export type KBHit = { kb_id?: string; doc_id: string; filename?: string; seq: number; score: number; section?: string; text: string };
+
+/** KB defaults and limits from docs/KB.md §1. */
+export const kbLimits = {
+  chunk_chars: { def: 1600, min: 200, max: 8000 },
+  overlap_chars: { def: 200, min: 0 }, // max = chunk_chars / 2
+  top_k: { def: 5, min: 1, max: 20 },
+  min_score: { def: 0.25, min: 0, max: 1 },
+  max_context_tokens: { def: 2000, min: 100, max: 16000 },
+  perRequest: 3,
+};
+
+/** Thrown when a server without knowledge bases answers with something else (such as the SPA page). */
+const noKB = () => new ApiError(404, "Knowledge bases are not available on this server.");
+
+/** A list from either a bare array or a `{data}` / `{hits}` envelope. */
+const listOf = <T>(r: unknown): T[] => {
+  if (Array.isArray(r)) return r as T[];
+  const o = (r ?? {}) as { data?: T[]; hits?: T[] };
+  const l = o.data ?? o.hits;
+  if (!Array.isArray(l)) throw noKB();
+  return l;
+};
+
+/** Hit fields as the Go Hit struct may spell them (doc / Doc) → KBHit. */
+const hitOf = (h: Record<string, unknown>): KBHit => ({
+  kb_id: (h.kb_id ?? h.kb) as string | undefined,
+  doc_id: (h.doc_id ?? h.doc ?? "") as string,
+  filename: h.filename as string | undefined,
+  seq: Number(h.seq ?? 0),
+  score: Number(h.score ?? 0),
+  section: h.section as string | undefined,
+  text: String(h.text ?? ""),
+});
+
+export function kbApi(org: string) {
+  const b = `${orgBase(org)}/kbs`;
+  const kb = (id: string) => `${b}/${encodeURIComponent(id)}`;
+  return {
+    list: () => get<unknown>(b).then(listOf<KB>),
+    get: (id: string) =>
+      get<KB>(kb(id)).then((r) => {
+        if (!r?.id) throw noKB();
+        return r;
+      }),
+    create: (body: KBInput) => api<KB>("POST", b, body),
+    update: (id: string, body: Partial<KBInput>) => api<KB>("PATCH", kb(id), body),
+    remove: (id: string) => api("DELETE", kb(id)),
+    reindex: (id: string) => api("POST", `${kb(id)}/reindex`),
+    // shortcut: first page only (5,000 docs/KB max); add ?after= paging when a KB lists that many.
+    docs: (id: string) => get<unknown>(`${kb(id)}/docs`).then(listOf<KBDoc>),
+    addText: (id: string, filename: string, text: string) => api<KBDoc>("POST", `${kb(id)}/docs`, { filename, text }),
+    addURL: (id: string, url: string) => api<KBDoc>("POST", `${kb(id)}/docs`, { url }),
+    upload: async (id: string, file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${kb(id)}/docs`, { method: "POST", headers: { "X-GW-CSRF": "1" }, body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new ApiError(res.status, data?.error?.message || res.statusText);
+      return data as KBDoc;
+    },
+    removeDoc: (id: string, doc: string) => api("DELETE", `${kb(id)}/docs/${encodeURIComponent(doc)}`),
+    search: (id: string, query: string, top_k?: number) =>
+      api<unknown>("POST", `${kb(id)}/search`, { query, top_k }).then((r) => listOf<Record<string, unknown>>(r).map(hitOf)),
+  };
+}
+
+/** Human size for byte counts. */
+export function bytes(n: number | undefined) {
+  const v = n ?? 0;
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+  return `${(v / 1024 / 1024).toFixed(1)} MB`;
+}
 
 // ---- formatting ----
 

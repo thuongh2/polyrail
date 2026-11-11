@@ -22,6 +22,7 @@ const sections = [
   ["videos", "Videos"],
   ["models", "List and query models"],
   ["mcp", "MCP tools"],
+  ["kb", "Knowledge bases"],
   ["headers", "Gateway headers"],
   ["errors", "Errors"],
 ] as const;
@@ -32,6 +33,7 @@ const errors: [string, string, string][] = [
   ["model_not_allowed", "403", "The key is limited to other models."],
   ["model_not_found", "404", "No model with this id is visible to your org."],
   ["wrong_model_kind", "400", "The model's kind does not match the endpoint, such as a chat model on /v1/embeddings."],
+  ["kb_not_found", "404", "An X-GW-KB id is not a knowledge base of your org."],
   ["guardrail_blocked", "400", "The org's guardrails rejected the input."],
   ["prompt_injection", "400", "The org blocks prompts that look like jailbreak attempts."],
   ["invalid_idempotency_key", "400", "The Idempotency-Key header is longer than 255 characters."],
@@ -301,6 +303,50 @@ curl ${base}/batches \\
               model returns <C>tool_calls</C>, post one item to this endpoint; it returns the tool message to append to the
               conversation.
             </p>
+          </Section>
+
+          <Section id="kb" title="Knowledge bases">
+            <p>
+              A knowledge base holds documents the gateway chunks, embeds with a model you choose and searches with vector
+              plus keyword ranking. Create one and add documents in the console under Knowledge bases. A chat request is
+              grounded when it names knowledge bases: the gateway searches them with the latest user message and inserts the
+              best excerpts as a system message right after it, asking the model to cite them as <C>[n]</C>. Retrieval
+              embeds the query once per embedding model, billed to the calling key.
+            </p>
+            <HeaderTable
+              rows={[
+                ["X-GW-KB: vs_a,vs_b", "Request: ground in these knowledge bases (at most 3). Overrides the key's kb_ids. An id that is not your org's fails with 404 kb_not_found."],
+                ["X-GW-KB: off", "Request: no grounding for this request."],
+                ["X-GW-KB", "Response: the knowledge bases used, or empty (no excerpt matched) or error (retrieval failed; the request was answered without it)."],
+                ["X-GW-KB-Sources", "Response: the excerpts injected, as file_id#chunk, comma separated (at most 20)."],
+              ]}
+            />
+            <p>
+              An admin can attach up to 3 knowledge bases to an API key (<C>kb_ids</C> on key create and update); every chat
+              request with that key is then grounded unless it sends <C>X-GW-KB</C>.
+            </p>
+            <Endpoint method="POST" path="/v1/vector_stores" />
+            <p>
+              The OpenAI vector stores API, also under <C>/openai/v1</C>. Create takes <C>name</C>, <C>embedding_model</C>{" "}
+              (required, a gateway extension), optional <C>dimensions</C>, <C>chunking_strategy</C> (<C>static</C>, token
+              sizes) and <C>metadata</C>. Also: <C>GET /v1/vector_stores</C>, <C>GET</C> and <C>DELETE{" "}
+              /v1/vector_stores/{"{id}"}</C>, <C>POST /v1/vector_stores/{"{id}"}/files</C> (multipart <C>file</C>, or JSON{" "}
+              <C>{`{"text", "filename"}`}</C> or <C>{`{"url"}`}</C>, plus <C>attributes</C>), <C>GET …/files</C>,{" "}
+              <C>GET</C> and <C>DELETE …/files/{"{file_id}"}</C> (status <C>in_progress</C>, <C>completed</C> or{" "}
+              <C>failed</C>) and <C>POST /v1/vector_stores/{"{id}"}/search</C> with <C>query</C>,{" "}
+              <C>max_num_results</C> (up to 50), <C>filters</C> and <C>ranking_options.score_threshold</C>. Any key of the
+              org can list, read and search; a key changes only the stores it created.
+            </p>
+            <CodeBlock
+              code={`curl ${base}/vector_stores/vs_…/files \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -F file=@handbook.md
+
+curl ${base}/chat/completions \
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H "X-GW-KB: vs_…" \
+  -d '{"model": "vendor/model", "messages": [{"role": "user", "content": "How do refunds work?"}]}'`}
+            />
           </Section>
 
           <Section id="headers" title="Gateway headers">

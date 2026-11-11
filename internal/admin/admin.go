@@ -34,6 +34,7 @@ type Config struct {
 	AllowSignup      bool
 	SignupPrepaid    bool
 	AllowPrivateURLs bool // let tenants point private providers at internal addresses
+	AllowTenantProxy bool // let org providers set their own outbound proxy
 	LogRetentionDays int
 	OIDC             *OIDCConfig
 }
@@ -312,7 +313,7 @@ func (a *API) authConfig(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(platform)
 	sort.Strings(org)
 	sort.Strings(fixed)
-	writeJSON(w, 200, map[string]any{"signup": a.cfg.AllowSignup, "sso": a.oidc != nil,
+	writeJSON(w, 200, map[string]any{"signup": a.cfg.AllowSignup, "sso": a.oidc != nil, "tenant_proxy": a.cfg.AllowTenantProxy,
 		"provider_types": map[string][]string{"platform": platform, "org": org, "org_fixed_url": fixed}})
 }
 
@@ -943,7 +944,31 @@ func keepsCredential(old *store.Provider, id string) bool {
 	return false
 }
 
+// checkProxy validates a provider's own proxy. Org providers may set one only when the operator
+// allows it (ALLOW_TENANT_PROXY), and only on a public host: a proxy dials whatever it is asked
+// to, so a private one would hand tenants the internal network.
+func (a *API) checkProxy(p, old *store.Provider) error {
+	x := p.Proxy
+	if x == nil || x.URL == "" {
+		return nil
+	}
+	if p.OrgID != "" && !a.cfg.AllowTenantProxy {
+		return fmt.Errorf("%w: org providers cannot set a proxy on this gateway", store.ErrInvalid)
+	}
+	kept := old != nil && old.Proxy != nil && old.Proxy.SealedPassword != "" && old.Proxy.URL == x.URL && old.Proxy.Username == x.Username
+	if err := gateway.CheckProxy(x, kept); err != nil {
+		return fmt.Errorf("%w: %v", store.ErrInvalid, err)
+	}
+	if p.OrgID != "" && !a.cfg.AllowPrivateURLs {
+		if err := gateway.CheckPublicProxy(x.URL); err != nil {
+			return fmt.Errorf("%w: proxy url must be on a public host", store.ErrInvalid)
+		}
+	}
+	return nil
+}
+
 func redact(p store.Provider) store.Provider {
+	p.Proxy = p.Proxy.Redacted()
 	keys := make([]store.ProviderKey, len(p.Keys))
 	for i, k := range p.Keys {
 		keys[i] = k.Redacted()
@@ -989,6 +1014,10 @@ func (a *API) putProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := checkKeyConfig(&p, old, p.OrgID != "", p.OrgID == "" || a.cfg.AllowPrivateURLs); err != nil {
+		fail(w, err)
+		return
+	}
+	if err := a.checkProxy(&p, old); err != nil {
 		fail(w, err)
 		return
 	}

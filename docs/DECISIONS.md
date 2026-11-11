@@ -193,3 +193,14 @@ untrusted excerpts with `[n]` citations after the last user turn, for keys with 
 with `X-GW-KB`; fails open; cache keys include `kb@rev`. OpenAI-compatible `/v1/vector_stores` subset
 with direct upload. `kb.VectorStore` is the seam for pgvector/Qdrant. If wrong: ~1M resident chunks
 per node needs ~1.6 GB index (measured ~1.6 KB/chunk at 512 dims) or the external seam; only `internal/kb` changes.
+
+**D22 Outbound proxy for upstream calls.** Owner request: model calls through a proxy. Bifrost core
+v1.15.2 has it per provider (`ProviderConfig.ProxyConfig`: http/https via CONNECT, socks5, a CA, a
+runtime `NoProxy` list), so the gateway only builds that config: a provider's own `proxy` >
+the global `UPSTREAM_PROXY_URL` (with `UPSTREAM_NO_PROXY`, `UPSTREAM_PROXY_CA_FILE`) unless the
+provider sets `no_proxy` > direct. No Bifrost "environment" type: `HTTP(S)_PROXY` would also catch
+webhooks and SSO and is read differently by fasthttp and net/http. The password follows the sealed
+secret pattern. Org providers get their own proxy only with `ALLOW_TENANT_PROXY` and a public proxy
+host (docs/SECURITY.md "Outbound proxy"). A proxy change restarts that provider's client through
+`Reload` → `BF.UpdateProvider`, like a `base_url` change. If wrong: per-key proxies or proxy pools
+would need Bifrost changes; everything else is in `internal/gateway/proxy.go`.

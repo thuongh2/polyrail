@@ -221,8 +221,32 @@ type Provider struct {
 	BaseURL        string        `json:"base_url,omitempty"`
 	TimeoutSeconds int           `json:"timeout_seconds,omitempty"`
 	Keys           []ProviderKey `json:"keys"`
-	Enabled        bool          `json:"enabled"`
-	CreatedAt      time.Time     `json:"created_at"`
+	// Proxy routes this provider's upstream calls through an HTTP(S) or SOCKS5 proxy; nil uses
+	// the gateway's global proxy (UPSTREAM_PROXY_URL) unless NoProxy is set.
+	Proxy     *ProviderProxy `json:"proxy,omitempty"`
+	NoProxy   bool           `json:"no_proxy,omitempty"` // connect directly even when a global proxy is set
+	Enabled   bool           `json:"enabled"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
+// ProviderProxy is an outbound proxy. Password follows the Value/Sealed pattern: plaintext only on
+// input and inside the gateway, sealed at rest, never returned (see Redacted).
+type ProviderProxy struct {
+	URL            string `json:"url"` // http://, https:// or socks5://host:port
+	Username       string `json:"username,omitempty"`
+	Password       string `json:"password,omitempty"`
+	SealedPassword string `json:"sealed_password,omitempty"`
+	CACertPEM      string `json:"ca_cert_pem,omitempty"` // extra CA to trust (TLS-inspecting proxy, https proxy)
+}
+
+// Redacted returns the proxy without its password (plaintext or sealed).
+func (x *ProviderProxy) Redacted() *ProviderProxy {
+	if x == nil {
+		return nil
+	}
+	out := *x
+	out.Password, out.SealedPassword = "", ""
+	return &out
 }
 
 type Target struct {
@@ -714,8 +738,38 @@ func (s *Store) PutProvider(ctx context.Context, p *Provider) error {
 				}
 			}
 		}
+		if err := s.sealProxy(p, old); err != nil {
+			return err
+		}
 		return putJSON(tx, "prov/"+p.ID, p)
 	})
+}
+
+// sealProxy seals the proxy password. An empty password keeps the stored one while the proxy URL
+// and username stay the same; a new URL needs the password again, like a new base_url.
+func (s *Store) sealProxy(p, old *Provider) error {
+	x := p.Proxy
+	if x == nil || x.URL == "" {
+		p.Proxy = nil
+		return nil
+	}
+	x.SealedPassword = "" // never trust a sealed value from input
+	if x.Password != "" {
+		var err error
+		if x.SealedPassword, err = s.box.Seal(x.Password); err != nil {
+			return err
+		}
+		x.Password = ""
+		return nil
+	}
+	if old == nil || old.Proxy == nil || old.Proxy.SealedPassword == "" || x.Username == "" {
+		return nil
+	}
+	if old.Proxy.URL != x.URL || old.Proxy.Username != x.Username {
+		return fmt.Errorf("%w: re-enter the proxy password when changing the proxy URL or username", ErrInvalid)
+	}
+	x.SealedPassword = old.Proxy.SealedPassword
+	return nil
 }
 
 // CreateKeylessProvider creates a provider under a caller-chosen id (the model catalog's
@@ -750,6 +804,11 @@ func (s *Store) ListProviders(ctx context.Context, decrypt bool) ([]Provider, er
 		return ps, err
 	}
 	for i := range ps {
+		if x := ps[i].Proxy; x != nil && x.SealedPassword != "" {
+			if x.Password, err = s.box.Open(x.SealedPassword); err != nil {
+				return nil, fmt.Errorf("provider %s proxy password: %w", ps[i].ID, err)
+			}
+		}
 		for j := range ps[i].Keys {
 			for name, f := range ps[i].Keys[j].secrets() {
 				if *f[1] == "" {

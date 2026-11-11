@@ -65,7 +65,7 @@ x-api-key: sk-gw-…
 
 Errors: `{"error": {"message", "type", "code"}}`. Codes include `invalid_api_key` (401),
 `expired_api_key` (401), `model_not_found` (404), `model_not_allowed` (403), `wrong_model_kind` (400),
-`guardrail_blocked` (400), `insufficient_credits` (402), `key_budget_exceeded` (402),
+`guardrail_blocked` (400), `prompt_injection` (400), `insufficient_credits` (402), `key_budget_exceeded` (402),
 `rpm_exceeded` / `tpm_exceeded` (429), `body_too_large` (413), `provider_error` (upstream status or 502).
 On `/anthropic/v1/*` errors use the Anthropic shape with the same status:
 `{"type":"error","error":{"type","message"}}`, type by status: 400 `invalid_request_error`,
@@ -75,6 +75,23 @@ On `/genai/*` errors use Google's shape with the same status: `{"error":{"code",
 status 400 `INVALID_ARGUMENT`, 401 `UNAUTHENTICATED`, 402 `FAILED_PRECONDITION`, 403 `PERMISSION_DENIED`,
 404 `NOT_FOUND`, 429 `RESOURCE_EXHAUSTED`, 502/503 `UNAVAILABLE`, other `INTERNAL`; stream errors are a
 `data:` frame of the same shape.
+
+## Guardrails
+
+Set per org in `guardrails` on `PATCH /api/orgs/{org}` (admin). Applied before routing and before
+the response-cache lookup, in this order:
+
+| Field | Effect |
+|---|---|
+| `compression: "lossless"` | Chat and Responses message text (not tool results, not assistant `tool_calls`): outside ```` ``` ```` fences, trailing whitespace is trimmed, inner runs of spaces/tabs become one space (leading indentation kept), 3+ newlines become 2. Text starting with `{` or `[` and everything inside or after an unclosed fence is untouched. Chat also drops exact-duplicate `system`/`developer` string messages. Response header `X-GW-Compressed-Chars: N` when N > 0. |
+| `blocked_patterns`, `max_input_chars` | 400 `guardrail_blocked` (counted after compression). |
+| `prompt_injection: "warn" \| "block"` | Scans user-role text only (chat `user` messages, Responses `user` items, `/v1/completions` prompts), first 16 KB per request, for high-signal jailbreak phrasings ("ignore all previous instructions", "you are now DAN", "reveal your system prompt", …). Match sets `X-GW-Guardrail: prompt_injection`; `block` answers 400 `prompt_injection`, `warn` lets the request through. Content is never logged. |
+| `mask_secrets: true` | Replaces credential shapes with `[REDACTED:<type>]`: `openai` (`sk-`, `sk-proj-`), `anthropic` (`sk-ant-`), `aws` (`AKIA`/`ASIA` key ids), `github` (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`, `github_pat_`), `slack` (`xox[baprs]-`), `google` (`AIza`), `stripe` (`sk_live_`, `rk_live_`), `jwt`, `private_key` (PEM blocks). `password=`-style assignments are not masked. |
+| `mask_pii: true` | Emails → `[email]`, phone numbers → `[phone]`. |
+
+Batch files get blocked patterns, max chars and masking (no role data, so no injection scan or
+compression). Embeddings, rerank, image, audio and video prompts get the same set. Metrics:
+`gateway_prompt_injection_total{action}`, `gateway_compressed_chars_total`.
 
 ## Async: files, batches, videos (API key)
 

@@ -425,6 +425,14 @@ func (a *API) patchOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Guardrails != nil {
+		if pi := in.Guardrails.PromptInjection; pi != "" && pi != "warn" && pi != "block" {
+			fail(w, fmt.Errorf("%w: prompt_injection must be \"\", \"warn\" or \"block\"", store.ErrInvalid))
+			return
+		}
+		if c := in.Guardrails.Compression; c != "" && c != "lossless" {
+			fail(w, fmt.Errorf("%w: compression must be \"\" or \"lossless\"", store.ErrInvalid))
+			return
+		}
 		for _, p := range in.Guardrails.BlockedPatterns {
 			if _, err := regexp.Compile(p); err != nil {
 				fail(w, fmt.Errorf("%w: blocked pattern %q: %v", store.ErrInvalid, p, err))

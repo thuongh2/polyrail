@@ -46,6 +46,9 @@ type Guardrails struct {
 	MaxInputChars   int      `json:"max_input_chars,omitempty"`
 	BlockedPatterns []string `json:"blocked_patterns,omitempty"` // Go regexps, matched on user/system text
 	MaskPII         bool     `json:"mask_pii,omitempty"`
+	MaskSecrets     bool     `json:"mask_secrets,omitempty"`     // replace API keys, tokens, private keys with [REDACTED:<type>]
+	PromptInjection string   `json:"prompt_injection,omitempty"` // "" (off) | "warn" | "block"; user text only
+	Compression     string   `json:"compression,omitempty"`      // "" (off) | "lossless"; chat and Responses only
 }
 
 type Org struct {

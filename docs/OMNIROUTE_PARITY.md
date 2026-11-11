@@ -40,8 +40,8 @@ Status: **have** = already in agent-gateway, **wave 1** = in progress / shipped 
 | cost response headers | wave 1 | `X-GW-Cost-Micros` |
 | model discovery `POST /v1/models/query` | wave 1 | |
 | guardrails: PII, regex, max chars | have | |
-| guardrails: credential masker, prompt-injection detector | wave 1 | block / warn mode |
-| token compression (lossless: whitespace, duplicate system prompts) | wave 1 | opt-in per org |
+| guardrails: credential masker, prompt-injection detector | have | `mask_secrets`; `prompt_injection` warn / block, `X-GW-Guardrail` (D15) |
+| token compression (lossless: whitespace, duplicate system prompts) | have | `compression: lossless`, `X-GW-Compressed-Chars` (D15) |
 | compression "Caveman"/lossy, LLMLingua | skip | changes meaning; heavy model |
 | RTK tool-output filters | later | |
 | `/v1/moderations` | later | Bifrost core has no moderation request type |

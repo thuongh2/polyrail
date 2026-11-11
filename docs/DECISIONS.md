@@ -90,3 +90,14 @@ comes from Bifrost's `FallbackAttempts` (skipped attempts are not counted). A 42
 Retry-After (Bifrost's `ExtraFields.RetryAfter`, already clamped 1 s..5 min) opens the primary
 until then, capped at 5 min. `X-GW-Route: <strategy>; <provider name>/<upstream model>` on chat
 completions names the decision; the provider name is already in `x-gateway-provider`.
+
+**D15 Guardrails: credential masker, prompt-injection tripwire, lossless compression.** Three
+opt-in fields on `store.Guardrails` (`mask_secrets`, `prompt_injection: ""|warn|block`,
+`compression: ""|lossless`), kept in the existing struct so they ride the org JSON and auth cache.
+`applyGuardrails` takes a `guardInput` (all / user-role / prose text) so the injection scan sees
+only user text and compression never touches tool results; batch files have no role data and get
+neither. Secret patterns are fixed well-known prefixes; generic `password=` assignments are skipped
+(high false-positive rate on code). Injection is one stdlib regex of high-signal phrasings, capped
+at 16 KB per request, no content logging. Compression is whitespace only (lossy "Caveman"/LLMLingua
+stay out, see OMNIROUTE_PARITY). The cache key stays the raw body: deterministic, and compression
+runs before the lookup so an identical body always compresses identically.

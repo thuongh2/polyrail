@@ -429,12 +429,9 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	bctx := newBifrostCtx(r)
 	breq := req.ToBifrostChatRequest(bctx)
-	if reason, err := applyGuardrails(p.Org, texts(breq.Input)); err != nil {
-		writeError(w, errf(500, "api_error", "guardrail_config", "%v", err))
-		return
-	} else if reason != "" {
-		g.record(p, m, store.RequestLog{Status: 400, Error: "guardrail: " + reason}, start)
-		writeError(w, errf(400, "invalid_request_error", "guardrail_blocked", "%s", reason))
+	var gin guardInput
+	breq.Input, gin = chatGuard(p.Org.Guardrails, breq.Input)
+	if !g.guardIn(w, p, m, gin, start) {
 		return
 	}
 	if req.MaxTokens != nil { // Bifrost reads max_completion_tokens
@@ -616,12 +613,7 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if reason, err := applyGuardrails(p.Org, segs); err != nil {
-		writeError(w, errf(500, "api_error", "guardrail_config", "%v", err))
-		return
-	} else if reason != "" {
-		g.record(p, m, store.RequestLog{Status: 400, Error: "guardrail: " + reason}, start)
-		writeError(w, errf(400, "invalid_request_error", "guardrail_blocked", "%s", reason))
+	if !g.guard(w, p, m, segs, start) {
 		return
 	}
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)

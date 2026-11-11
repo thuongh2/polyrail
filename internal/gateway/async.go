@@ -136,7 +136,8 @@ func (g *Gateway) jobConnect(r *http.Request, j *store.Job) (*jobConn, *apiError
 
 // jobModel is the model as priced when the job was created (for record and cost).
 func jobModel(j *store.Job) store.Model {
-	return store.Model{ID: j.Model, OrgID: j.ModelOrg, InputPrice: j.InputPrice, OutputPrice: j.OutputPrice, VideoSecondPrice: j.VideoSecondPrice}
+	return store.Model{ID: j.Model, OrgID: j.ModelOrg, InputPrice: j.InputPrice, OutputPrice: j.OutputPrice,
+		CacheReadPrice: j.CacheReadPrice, CacheWritePrice: j.CacheWritePrice, VideoSecondPrice: j.VideoSecondPrice}
 }
 
 // bill charges a finished job once, to the key that created it.
@@ -565,6 +566,7 @@ func (g *Gateway) CreateBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	j := &store.Job{ID: store.NewJobID(), OrgID: p.Org.ID, KeyID: p.Key.ID, ProviderID: file.ProviderID, ProvKeyID: file.ProvKeyID, UpstreamID: resp.ID,
 		Model: m.ID, ModelOrg: m.OrgID, Upstream: file.Upstream, InputPrice: m.InputPrice, OutputPrice: m.OutputPrice,
+		CacheReadPrice: m.CacheReadPrice, CacheWritePrice: m.CacheWritePrice,
 		InputFileID: file.ID, Purpose: req.Endpoint, Status: string(resp.Status)}
 	if err := g.S.PutJob(r.Context(), store.JobBatch, j); err != nil {
 		writeError(w, errf(503, "api_error", "store_unavailable", "temporarily unavailable"))
@@ -626,7 +628,10 @@ func (g *Gateway) mapFile(ctx context.Context, b *store.Job, upstreamID string, 
 }
 
 // batchUsage sums token usage over successful results (chat, completions, responses, embeddings).
-func batchUsage(results []schemas.BatchResultItem) (in, out int) {
+// batchUsage sums the token usage of successful batch results: OpenAI shape (prompt tokens
+// include usage.*_tokens_details.cached_tokens) or Anthropic shape (input_tokens excludes
+// cache_read_input_tokens and cache_creation_input_tokens, so they are added).
+func batchUsage(results []schemas.BatchResultItem) (l store.RequestLog) {
 	num := func(u map[string]any, keys ...string) int {
 		for _, k := range keys {
 			switch v := u[k].(type) {
@@ -646,10 +651,17 @@ func batchUsage(results []schemas.BatchResultItem) (in, out int) {
 			continue
 		}
 		u, _ := r.Response.Body["usage"].(map[string]any)
-		in += num(u, "prompt_tokens", "input_tokens")
-		out += num(u, "completion_tokens", "output_tokens")
+		read, write := num(u, "cache_read_input_tokens"), num(u, "cache_creation_input_tokens")
+		l.InTokens += num(u, "prompt_tokens", "input_tokens") + read + write
+		l.OutTokens += num(u, "completion_tokens", "output_tokens")
+		for _, k := range []string{"prompt_tokens_details", "input_tokens_details"} {
+			d, _ := u[k].(map[string]any)
+			read += num(d, "cached_tokens")
+		}
+		l.CacheReadTokens += read
+		l.CacheWriteTokens += write
 	}
-	return in, out
+	return l
 }
 
 // refreshBatch fetches a batch upstream, maps its output files and bills it once when finished.
@@ -695,15 +707,16 @@ func (g *Gateway) refreshBatch(r *http.Request, p *principal, j *store.Job) (map
 }
 
 func (g *Gateway) billBatch(r *http.Request, p *principal, j *store.Job, c *jobConn, up *schemas.BifrostBatchRetrieveResponse) error {
-	var in, out int
+	var l store.RequestLog
 	if up.OutputFileID != nil && *up.OutputFileID != "" {
 		res, berr := g.BF.BatchResultsRequest(c.ctx, &schemas.BifrostBatchResultsRequest{Provider: c.bp, Model: &j.Upstream, BatchID: j.UpstreamID})
 		if berr != nil {
 			return fmt.Errorf("batch results: %s", fromBifrost(berr, false).msg)
 		}
-		in, out = batchUsage(res.Results)
+		l = batchUsage(res.Results)
 	}
-	g.bill(r.Context(), p, store.JobBatch, j, c.name, store.RequestLog{InTokens: in, OutTokens: out, Cost: cost(jobModel(j), in, out)})
+	l.Cost = logCost(jobModel(j), l)
+	g.bill(r.Context(), p, store.JobBatch, j, c.name, l)
 	return nil
 }
 

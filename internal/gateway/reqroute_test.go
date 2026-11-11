@@ -47,7 +47,7 @@ func (u *recUpstream) serve(t *testing.T) *httptest.Server {
 		case "/v1/completions":
 			fmt.Fprintf(w, `{"id":"c","object":"text_completion","created":1,"model":"up","choices":[{"index":0,"text":"from %s","finish_reason":"stop"}],%s}`, u.tag, usage)
 		case "/v1/responses":
-			fmt.Fprintf(w, `{"id":"r","object":"response","created_at":1,"model":"up","status":"completed","output":[{"id":"m","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"from %s","annotations":[]}]}],"usage":{"input_tokens":1000000,"output_tokens":1000000,"total_tokens":2000000}}`, u.tag)
+			fmt.Fprintf(w, `{"id":"r","object":"response","created_at":1,"model":"up","status":"completed","output":[{"id":"m","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"from %s","annotations":[]}]}],"usage":{"input_tokens":1000000,"output_tokens":1000000,"total_tokens":2000000,"input_tokens_details":{"cached_tokens":5}}}`, u.tag)
 		default:
 			if req["stream"] == true {
 				w.Header().Set("Content-Type", "text/event-stream")

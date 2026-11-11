@@ -7,6 +7,8 @@ Build-time only (needs Python 3.11+ for tomllib); the gateway embeds the JSON. R
 - one gateway model per canonical models.dev id "<author>/<model>" (`base_model`, or the file id for a
   first-party provider file without one); every provider offering it becomes a target, first-party
   first, then cheapest input price; the model price is the first-party price, else the cheapest;
+- chat models carry `cost.text.input.cache` read/write prices of the same target (write: the 5-minute
+  TTL price when per TTL; 0/absent = unset, D32);
 - deprecated models, models without a positive price, realtime/live and router models are skipped;
 - OpenRouter only adds targets to models another provider already offers.
 """
@@ -71,9 +73,20 @@ def kind_of(mid, m):
     return "chat"
 
 
+def cache_price(cost, which):
+    """cost.text.input.cache.<read|write> -> micro-USD per 1M; write may be per TTL: the 5-minute price."""
+    v = (((cost or {}).get("text") or {}).get("input") or {}).get("cache")
+    v = v.get(which) if isinstance(v, dict) else None
+    if isinstance(v, dict):
+        v = v.get("5m")
+    return round(v * 1e6) if isinstance(v, (int, float)) and v > 0 else 0  # 0 = unset (billed at input price)
+
+
 def prices(kind, cost):
     p = {"in": price(cost, "text.input") or price(cost, "audio.input" if kind == "transcription" else "_"),
          "out": price(cost, "text.output")}
+    if kind == "chat":
+        p["cache_read"], p["cache_write"] = cache_price(cost, "read"), cache_price(cost, "write")
     if kind == "image":
         p["out"] = price(cost, "image.output") or p["out"]
         p["image"] = price(cost, "image.output", "image")
@@ -154,7 +167,8 @@ def main():
         if e["kind"] == "chat" and e["mods"]:
             row["modalities"] = e["mods"]
         for k, f in (("in", "input_price_micros"), ("out", "output_price_micros"), ("minute", "audio_minute_price_micros"),
-                     ("image", "image_price_micros"), ("second", "video_second_price_micros")):
+                     ("image", "image_price_micros"), ("second", "video_second_price_micros"),
+                     ("cache_read", "cache_read_price_micros"), ("cache_write", "cache_write_price_micros")):
             if p.get(k):
                 row[f] = p[k]
         row["targets"] = [{"type": t["type"], "model": t["model"]} for t in ts]

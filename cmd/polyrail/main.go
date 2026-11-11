@@ -415,7 +415,7 @@ func seedCatalog(ctx context.Context, s *store.Store) error {
 	if ps, err := s.ListProviders(ctx, false); err != nil || len(ps) > 0 {
 		return err
 	}
-	np, nm, err := catalog.Sync(ctx, s)
+	np, nm, _, err := catalog.Sync(ctx, s)
 	if err != nil {
 		return err
 	}

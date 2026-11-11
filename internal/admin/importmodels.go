@@ -28,6 +28,8 @@ type discoveredModel struct {
 	// Upstream list prices (OpenRouter-style providers), micro-USD per 1M tokens.
 	InputPrice  *int64 `json:"input_price_micros,omitempty"`
 	OutputPrice *int64 `json:"output_price_micros,omitempty"`
+	CacheRead   *int64 `json:"cache_read_price_micros,omitempty"`
+	CacheWrite  *int64 `json:"cache_write_price_micros,omitempty"`
 }
 
 // ownedProvider loads {id} if it belongs to the route's owner (platform or {org}).
@@ -113,6 +115,7 @@ func (a *API) discoverModels(w http.ResponseWriter, r *http.Request) {
 			}
 			if m.Pricing != nil {
 				d.InputPrice, d.OutputPrice = perTokenMicros(m.Pricing.Prompt), perTokenMicros(m.Pricing.Completion)
+				d.CacheRead, d.CacheWrite = perTokenMicros(m.Pricing.InputCacheRead), perTokenMicros(m.Pricing.InputCacheWrite)
 			}
 			out = append(out, d)
 		}
@@ -134,6 +137,8 @@ type importModel struct {
 	MaxOutput     int    `json:"max_output_tokens"`
 	InputPrice    int64  `json:"input_price_micros"`
 	OutputPrice   int64  `json:"output_price_micros"`
+	CacheRead     int64  `json:"cache_read_price_micros"`
+	CacheWrite    int64  `json:"cache_write_price_micros"`
 }
 
 func (a *API) importModels(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +166,7 @@ func (a *API) importModels(w http.ResponseWriter, r *http.Request) {
 		case m.Upstream == "" || len(m.Upstream) > 256:
 			fail(w, fmt.Errorf("%w: model %q needs an upstream id (at most 256 characters)", store.ErrInvalid, m.ID))
 			return
-		case m.InputPrice < 0 || m.OutputPrice < 0 || m.ContextLength < 0 || m.MaxOutput < 0:
+		case m.InputPrice < 0 || m.OutputPrice < 0 || m.CacheRead < 0 || m.CacheWrite < 0 || m.ContextLength < 0 || m.MaxOutput < 0:
 			fail(w, fmt.Errorf("%w: model %q: prices and limits must be >= 0", store.ErrInvalid, m.ID))
 			return
 		case seen[m.ID]:
@@ -182,7 +187,7 @@ func (a *API) importModels(w http.ResponseWriter, r *http.Request) {
 		}
 		m := store.Model{ID: im.ID, OrgID: p.OrgID, Name: name, Description: im.Description, Kind: im.Kind,
 			ContextLength: im.ContextLength, MaxOutput: im.MaxOutput, InputPrice: im.InputPrice, OutputPrice: im.OutputPrice,
-			Enabled: true, Targets: []store.Target{{ProviderID: p.ID, Model: im.Upstream, Weight: 1}}}
+			CacheReadPrice: im.CacheRead, CacheWritePrice: im.CacheWrite, Enabled: true, Targets: []store.Target{{ProviderID: p.ID, Model: im.Upstream, Weight: 1}}}
 		if err := a.S.PutModel(ctx, &m); err != nil {
 			for _, id := range created { // undo, so a failed import leaves the catalog as it was
 				_ = a.S.DeleteModel(ctx, p.OrgID, id)

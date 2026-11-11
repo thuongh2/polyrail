@@ -38,6 +38,8 @@ type Model struct {
 	Modalities       []string `json:"modalities"`
 	InputPrice       int64    `json:"input_price_micros"`
 	OutputPrice      int64    `json:"output_price_micros"`
+	CacheReadPrice   int64    `json:"cache_read_price_micros"`
+	CacheWritePrice  int64    `json:"cache_write_price_micros"`
 	AudioMinutePrice int64    `json:"audio_minute_price_micros"`
 	ImagePrice       int64    `json:"image_price_micros"`
 	VideoSecondPrice int64    `json:"video_second_price_micros"`
@@ -63,37 +65,54 @@ func Load() (*Catalog, error) {
 // seeding on several nodes writes the same records instead of duplicates.
 func ProviderID(typ string) string { return "cat-" + typ }
 
-// Sync adds the catalog providers and public models missing from s; existing records are never
-// changed. Providers are created disabled with no keys.
-func Sync(ctx context.Context, s *store.Store) (providers, models int, err error) {
+// Sync adds the catalog providers and public models missing from s. Providers are created
+// disabled with no keys. Existing records are not changed, except that an existing public model
+// with a catalog id gets the catalog's prompt-cache prices for those of its two cache prices that
+// are 0 (unset); cachePriced counts the models so filled (D32).
+func Sync(ctx context.Context, s *store.Store) (providers, models, cachePriced int, err error) {
 	c, err := Load()
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	for _, p := range c.Providers {
 		if err := s.CreateKeylessProvider(ctx, &store.Provider{ID: ProviderID(p.Type), Name: p.Type, Type: p.Type}); err != nil {
 			if errors.Is(err, store.ErrExists) { // already there (an earlier sync, or another node)
 				continue
 			}
-			return providers, models, err
+			return providers, models, cachePriced, err
 		}
 		providers++
 	}
 	have, err := s.ListModels(ctx, "")
 	if err != nil {
-		return providers, models, err
+		return providers, models, cachePriced, err
 	}
-	exists := make(map[string]bool, len(have))
+	exists := make(map[string]store.Model, len(have))
 	for _, m := range have {
-		exists[m.ID] = true
+		exists[m.ID] = m
 	}
 	for _, cm := range c.Models {
-		if exists[cm.ID] {
+		if m, ok := exists[cm.ID]; ok {
+			if (m.CacheReadPrice == 0 && cm.CacheReadPrice > 0) || (m.CacheWritePrice == 0 && cm.CacheWritePrice > 0) {
+				if m.CacheReadPrice == 0 {
+					m.CacheReadPrice = cm.CacheReadPrice
+				}
+				if m.CacheWritePrice == 0 {
+					m.CacheWritePrice = cm.CacheWritePrice
+				}
+				// shortcut: read-modify-write without a version check; an edit of this model saved
+				// on another node during the sync can be lost. Add a CAS update if that matters.
+				if err := s.PutModel(ctx, &m); err != nil {
+					return providers, models, cachePriced, fmt.Errorf("catalog model %s: %w", cm.ID, err)
+				}
+				cachePriced++
+			}
 			continue
 		}
 		m := store.Model{ID: cm.ID, Name: cm.Name, Description: cm.Description, Kind: cm.Kind,
 			ContextLength: cm.ContextLength, MaxOutput: cm.MaxOutput, Modalities: cm.Modalities,
-			InputPrice: cm.InputPrice, OutputPrice: cm.OutputPrice, AudioMinutePrice: cm.AudioMinutePrice,
+			InputPrice: cm.InputPrice, OutputPrice: cm.OutputPrice, CacheReadPrice: cm.CacheReadPrice,
+			CacheWritePrice: cm.CacheWritePrice, AudioMinutePrice: cm.AudioMinutePrice,
 			ImagePrice: cm.ImagePrice, VideoSecondPrice: cm.VideoSecondPrice, Enabled: true}
 		for _, t := range cm.Targets {
 			m.Targets = append(m.Targets, store.Target{ProviderID: ProviderID(t.Type), Model: t.Model, Weight: 1})
@@ -102,9 +121,9 @@ func Sync(ctx context.Context, s *store.Store) (providers, models int, err error
 			m.Strategy = "priority" // first-party first, then the cheapest; the others are fallbacks
 		}
 		if err := s.PutModel(ctx, &m); err != nil {
-			return providers, models, fmt.Errorf("catalog model %s: %w", cm.ID, err)
+			return providers, models, cachePriced, fmt.Errorf("catalog model %s: %w", cm.ID, err)
 		}
 		models++
 	}
-	return providers, models, nil
+	return providers, models, cachePriced, nil
 }

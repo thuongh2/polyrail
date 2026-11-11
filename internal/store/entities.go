@@ -307,6 +307,10 @@ type Model struct {
 	Modalities    []string `json:"modalities,omitempty"`
 	InputPrice    int64    `json:"input_price_micros"`  // micro-USD per 1M input tokens
 	OutputPrice   int64    `json:"output_price_micros"` // micro-USD per 1M output tokens
+	// CacheReadPrice/CacheWritePrice are micro-USD per 1M prompt tokens read from / written to the
+	// provider's prompt cache; 0 = not set, those tokens bill at InputPrice (D32).
+	CacheReadPrice  int64 `json:"cache_read_price_micros,omitempty"`
+	CacheWritePrice int64 `json:"cache_write_price_micros,omitempty"`
 	// AudioMinutePrice is micro-USD per minute of input audio, for transcription models whose
 	// provider reports duration instead of tokens.
 	AudioMinutePrice int64     `json:"audio_minute_price_micros,omitempty"`
@@ -331,24 +335,29 @@ type AuditEntry struct {
 }
 
 type RequestLog struct {
-	ID        string    `json:"id"`
-	OrgID     string    `json:"org_id"`
-	KeyID     string    `json:"key_id"`
-	Workspace string    `json:"workspace_id,omitempty"` // the key's workspace ("" = default)
-	Model     string    `json:"model"`
-	Provider  string    `json:"provider,omitempty"`
-	Upstream  string    `json:"upstream_model,omitempty"`
-	Status    int       `json:"status"`
-	Error     string    `json:"error,omitempty"`
-	InTokens  int       `json:"in_tokens"`
-	OutTokens int       `json:"out_tokens"`
-	Cost      int64     `json:"cost_micros"`
-	LatencyMs int64     `json:"latency_ms"`
-	Cached    bool      `json:"cached,omitempty"`
-	Stream    bool      `json:"stream,omitempty"`
-	KBChunks  int       `json:"kb_chunks,omitempty"` // knowledge-base excerpts injected (docs/KB.md §4)
-	EndUser   string    `json:"end_user,omitempty"`  // the request's `user` (tenant data, max 128 chars)
-	At        time.Time `json:"at"`
+	ID        string `json:"id"`
+	OrgID     string `json:"org_id"`
+	KeyID     string `json:"key_id"`
+	Workspace string `json:"workspace_id,omitempty"` // the key's workspace ("" = default)
+	Model     string `json:"model"`
+	Provider  string `json:"provider,omitempty"`
+	Upstream  string `json:"upstream_model,omitempty"`
+	Status    int    `json:"status"`
+	Error     string `json:"error,omitempty"`
+	InTokens  int    `json:"in_tokens"`  // all prompt tokens, cached ones included
+	OutTokens int    `json:"out_tokens"` // all completion tokens, reasoning included
+	// Parts of InTokens read from / written to the provider's prompt cache, and the part of
+	// OutTokens spent on reasoning (D32).
+	CacheReadTokens  int       `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int       `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens  int       `json:"reasoning_tokens,omitempty"`
+	Cost             int64     `json:"cost_micros"`
+	LatencyMs        int64     `json:"latency_ms"`
+	Cached           bool      `json:"cached,omitempty"`
+	Stream           bool      `json:"stream,omitempty"`
+	KBChunks         int       `json:"kb_chunks,omitempty"` // knowledge-base excerpts injected (docs/KB.md §4)
+	EndUser          string    `json:"end_user,omitempty"`  // the request's `user` (tenant data, max 128 chars)
+	At               time.Time `json:"at"`
 }
 
 type MCPServer struct {
@@ -1088,7 +1097,7 @@ func (s *Store) PutModel(ctx context.Context, m *Model) error {
 			return fmt.Errorf("%w: prices must be >= 0", ErrInvalid)
 		}
 	}
-	if m.InputPrice < 0 || m.OutputPrice < 0 || m.AudioMinutePrice < 0 || m.ImagePrice < 0 || m.RequestPrice < 0 || m.VideoSecondPrice < 0 {
+	if m.InputPrice < 0 || m.OutputPrice < 0 || m.CacheReadPrice < 0 || m.CacheWritePrice < 0 || m.AudioMinutePrice < 0 || m.ImagePrice < 0 || m.RequestPrice < 0 || m.VideoSecondPrice < 0 {
 		return fmt.Errorf("%w: prices must be >= 0", ErrInvalid)
 	}
 	return s.update(ctx, func(tx Tx) error {

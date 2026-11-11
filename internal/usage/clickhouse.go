@@ -27,7 +27,9 @@ const chSchema = `CREATE TABLE IF NOT EXISTS gateway_requests (
 ) ENGINE = MergeTree PARTITION BY toYYYYMM(at) ORDER BY (org_id, at)`
 
 // chMigrate adds columns introduced after the first schema.
-const chMigrate = `ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS end_user String`
+const chMigrate = `ALTER TABLE gateway_requests ADD COLUMN IF NOT EXISTS end_user String,
+  ADD COLUMN IF NOT EXISTS cache_read_tokens UInt32 DEFAULT 0, ADD COLUMN IF NOT EXISTS cache_write_tokens UInt32 DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reasoning_tokens UInt32 DEFAULT 0`
 
 func NewClickHouse(ctx context.Context, rawURL string) (*ClickHouse, error) {
 	c := &ClickHouse{url: rawURL, client: &http.Client{Timeout: 30 * time.Second}}
@@ -78,6 +80,10 @@ type chRow struct {
 	Stream    bool   `json:"stream"`
 	At        string `json:"at"`
 	EndUser   string `json:"end_user"`
+	// D32 prompt-cache and reasoning token counts
+	CacheRead  int `json:"cache_read_tokens"`
+	CacheWrite int `json:"cache_write_tokens"`
+	Reasoning  int `json:"reasoning_tokens"`
 }
 
 func (c *ClickHouse) WriteLogs(ctx context.Context, logs []store.RequestLog) error {
@@ -85,7 +91,8 @@ func (c *ClickHouse) WriteLogs(ctx context.Context, logs []store.RequestLog) err
 	enc := json.NewEncoder(&buf)
 	for _, l := range logs {
 		if err := enc.Encode(chRow{l.ID, l.OrgID, l.KeyID, l.Model, l.Provider, l.Upstream, l.Status, l.Error,
-			l.InTokens, l.OutTokens, l.Cost, l.LatencyMs, l.Cached, l.Stream, l.At.UTC().Format("2006-01-02 15:04:05.000"), l.EndUser}); err != nil {
+			l.InTokens, l.OutTokens, l.Cost, l.LatencyMs, l.Cached, l.Stream, l.At.UTC().Format("2006-01-02 15:04:05.000"), l.EndUser,
+			l.CacheReadTokens, l.CacheWriteTokens, l.ReasoningTokens}); err != nil {
 			return err
 		}
 	}

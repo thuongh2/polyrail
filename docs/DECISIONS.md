@@ -409,3 +409,36 @@ roles (marked `idp`, removed when no mapping matches); mappings without it set t
 (10) Trace exports in a workspace see that workspace's requests; default-workspace exports see all.
 If wrong: per-workspace model/preset namespaces and per-workspace rollups are additive changes.
 
+
+**D32 Prompt cache pricing.** OpenRouter "Input cache read / write" parity. Rulings: (1) `store.Model`
+gains `cache_read_price_micros` / `cache_write_price_micros` (micro-USD per 1M prompt tokens, omitempty).
+0 means *not set* and those tokens bill at the input price, so existing models bill exactly as before;
+a genuinely free cache read cannot be expressed (shortcut: use a pointer if a provider ever needs it;
+models.dev `read = 0` entries are treated as unset). No per-target cache prices: target prices only rank
+routes for the `cost` strategy (D14) and billing always uses the model price. (2) One formula,
+`logCost` in `internal/gateway/billing.go`, rounded once to the nearest micro-USD (D11):
+`max(prompt − read − write, 0) × input + read × read_price + write × write_price + completion × output`.
+Counts are Bifrost's: prompt tokens *include* cache reads and writes (Bifrost folds Anthropic's separate
+`cache_read_input_tokens` / `cache_creation_input_tokens` into `prompt_tokens`, and the Responses
+`input_tokens` likewise), `PromptTokensDetails.CachedReadTokens` / `CachedWriteTokens` carry the parts
+(OpenAI `cached_tokens` → read, Anthropic cache_read / cache_creation → read / write, Gemini
+`cachedContentTokenCount` → read). Completion tokens include reasoning (`CompletionTokensDetails.
+ReasoningTokens`), which is logged, never added again. The per-TTL write breakdown (5m/1h/…) is not
+priced separately: one write price, and the catalog takes the 5-minute price (Anthropic's default TTL,
+what OpenRouter lists). (3) Every token path fills the counts through `chatTokens` / `respTokens`
+(chat stream + non-stream, completions, Responses, Anthropic and GenAI compat, chat-shaped media
+usage); batches copy both cache prices onto the job at creation and read `cached_tokens` (or Anthropic
+cache counts) from results. (4) Accounting: `RequestLog` gains `cache_read_tokens`, `cache_write_tokens`,
+`reasoning_tokens` (omitempty, old rows decode as 0); the usage `Agg` vector grows from 7 to 9 counters
+(`AggCacheReadTokens`, `AggCacheWriteTokens`) — Pebble values decode short records with zeros, Postgres
+adds `a7`/`a8` with `ADD COLUMN IF NOT EXISTS … DEFAULT 0` at open; ClickHouse adds three `UInt32 DEFAULT 0`
+columns in `chMigrate`. Reasoning is not rolled up (log only). (5) Public pricing adds
+`pricing.input_cache_read` / `input_cache_write` (USD per 1M decimal strings like every other price,
+only when set) to `/v1/models`, `/api/public/models` and the model page; responses keep Bifrost's
+`cached_tokens` / `cache_write_tokens`, and `usage.include` adds the OpenRouter names on Responses
+usage too. (6) Catalog: `gencatalog.py` reads `cost.text.input.cache.{read,write}` of the chosen target
+(chat models only). "Load model catalog" (`catalog.Sync`) also fills those two fields on existing public
+models with a catalog id when they are 0, and only those fields (an operator-set price wins; an operator
+who *cleared* a price gets it back on the next sync — set it to the input price to pin it).
+If wrong: per-TTL write prices are an additive field; a Postgres agg table rewrite is not needed for
+more counters (same `ADD COLUMN IF NOT EXISTS` path).

@@ -89,6 +89,8 @@ export function DiscoverDialog({ base, provider, onClose }: { base: string; prov
         max_output_tokens: m?.max_output_tokens,
         input_price_micros: Math.round(inp * 1e6),
         output_price_micros: Math.round(out * 1e6),
+        cache_read_price_micros: r.kind === "chat" ? m?.cache_read_price_micros : undefined, // as listed upstream
+        cache_write_price_micros: r.kind === "chat" ? m?.cache_write_price_micros : undefined,
       });
     }
     setErrors(errs);

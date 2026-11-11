@@ -18,7 +18,8 @@ const pgSchema = `
 CREATE TABLE IF NOT EXISTS kv (k text COLLATE "C" PRIMARY KEY, v bytea NOT NULL);
 CREATE TABLE IF NOT EXISTS agg (k text COLLATE "C" PRIMARY KEY, a0 bigint NOT NULL DEFAULT 0,
   a1 bigint NOT NULL DEFAULT 0, a2 bigint NOT NULL DEFAULT 0, a3 bigint NOT NULL DEFAULT 0,
-  a4 bigint NOT NULL DEFAULT 0, a5 bigint NOT NULL DEFAULT 0, a6 bigint NOT NULL DEFAULT 0);`
+  a4 bigint NOT NULL DEFAULT 0, a5 bigint NOT NULL DEFAULT 0, a6 bigint NOT NULL DEFAULT 0);
+ALTER TABLE agg ADD COLUMN IF NOT EXISTS a7 bigint NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS a8 bigint NOT NULL DEFAULT 0;`
 
 type pgKV struct{ pool *pgxpool.Pool }
 
@@ -131,18 +132,33 @@ func (p *pgKV) AddAgg(ctx context.Context, adds map[string]Agg) error {
 	b := &pgx.Batch{}
 	for _, k := range keys {
 		a := adds[k]
-		b.Queue(`INSERT INTO agg (k, a0, a1, a2, a3, a4, a5, a6) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-ON CONFLICT (k) DO UPDATE SET a0 = agg.a0 + excluded.a0, a1 = agg.a1 + excluded.a1, a2 = agg.a2 + excluded.a2,
-a3 = agg.a3 + excluded.a3, a4 = agg.a4 + excluded.a4, a5 = agg.a5 + excluded.a5, a6 = agg.a6 + excluded.a6`,
-			k, a[0], a[1], a[2], a[3], a[4], a[5], a[6])
+		args := []any{k}
+		for _, v := range a {
+			args = append(args, v)
+		}
+		b.Queue(aggUpsert, args...)
 	}
 	return p.pool.SendBatch(ctx, b).Close()
 }
 
-const aggCols = "a0, a1, a2, a3, a4, a5, a6"
+// aggCols ("a0, …, a8") and aggUpsert follow AggFields; pgSchema adds new columns with DEFAULT 0.
+var aggCols, aggUpsert = func() (string, string) {
+	var cols, vals, sets []string
+	for i := range AggFields {
+		c := fmt.Sprintf("a%d", i)
+		cols, vals = append(cols, c), append(vals, fmt.Sprintf("$%d", i+2))
+		sets = append(sets, fmt.Sprintf("%s = agg.%s + excluded.%s", c, c, c))
+	}
+	return strings.Join(cols, ", "), "INSERT INTO agg (k, " + strings.Join(cols, ", ") + ") VALUES ($1," + strings.Join(vals, ",") +
+		") ON CONFLICT (k) DO UPDATE SET " + strings.Join(sets, ", ")
+}()
 
 func scanAggRow(row pgx.Row, k *string, a *Agg) error {
-	return row.Scan(k, &a[0], &a[1], &a[2], &a[3], &a[4], &a[5], &a[6])
+	dst := []any{k}
+	for i := range a {
+		dst = append(dst, &a[i])
+	}
+	return row.Scan(dst...)
 }
 
 func (p *pgKV) GetAgg(ctx context.Context, key string) (Agg, error) {

@@ -82,7 +82,8 @@ func aggCells(a store.Agg) []string {
 	return []string{strconv.FormatInt(a[store.AggRequests], 10), strconv.FormatInt(a[store.AggErrors], 10),
 		strconv.FormatInt(a[store.AggInTokens], 10), strconv.FormatInt(a[store.AggOutTokens], 10),
 		strconv.FormatFloat(float64(a[store.AggCostMicros])/1e6, 'f', 6, 64), strconv.FormatInt(avg, 10),
-		strconv.FormatInt(a[store.AggCacheHits], 10)}
+		strconv.FormatInt(a[store.AggCacheHits], 10), strconv.FormatInt(a[store.AggCacheReadTokens], 10),
+		strconv.FormatInt(a[store.AggCacheWriteTokens], 10)}
 }
 
 // exportUsage streams daily usage rollups grouped by model, key, creator (the user who created
@@ -133,7 +134,7 @@ func (a *API) exportUsage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cw := csvHeaders(w, fmt.Sprintf("usage-%s-%s.csv", group, store.Day(from)))
-	head := []string{"date", group, "requests", "errors", "in_tokens", "out_tokens", "cost_usd", "avg_latency_ms", "cache_hits"}
+	head := []string{"date", group, "requests", "errors", "in_tokens", "out_tokens", "cost_usd", "avg_latency_ms", "cache_hits", "cache_read_tokens", "cache_write_tokens"}
 	if group == "day" {
 		head = append(head[:1], head[2:]...)
 	}
@@ -226,7 +227,8 @@ func (a *API) exportLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := writeRow(cw, "id", "at", "key_id", "model", "provider", "upstream_model", "status", "error", "in_tokens",
-		"out_tokens", "cost_usd", "latency_ms", "cached", "stream", "kb_chunks", "end_user"); err != nil {
+		"out_tokens", "cost_usd", "latency_ms", "cached", "stream", "kb_chunks", "end_user",
+		"cache_read_tokens", "cache_write_tokens", "reasoning_tokens"); err != nil {
 		return
 	}
 	n := 0
@@ -238,7 +240,8 @@ func (a *API) exportLogs(w http.ResponseWriter, r *http.Request) {
 		if err := writeRow(cw, l.ID, l.At.UTC().Format(time.RFC3339Nano), l.KeyID, l.Model, l.Provider, l.Upstream,
 			strconv.Itoa(l.Status), l.Error, strconv.Itoa(l.InTokens), strconv.Itoa(l.OutTokens),
 			strconv.FormatFloat(float64(l.Cost)/1e6, 'f', 6, 64), strconv.FormatInt(l.LatencyMs, 10),
-			strconv.FormatBool(l.Cached), strconv.FormatBool(l.Stream), strconv.Itoa(l.KBChunks), l.EndUser); err != nil {
+			strconv.FormatBool(l.Cached), strconv.FormatBool(l.Stream), strconv.Itoa(l.KBChunks), l.EndUser,
+			strconv.Itoa(l.CacheReadTokens), strconv.Itoa(l.CacheWriteTokens), strconv.Itoa(l.ReasoningTokens)); err != nil {
 			return false, err
 		}
 		if n%1000 == 0 {

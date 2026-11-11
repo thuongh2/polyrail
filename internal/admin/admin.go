@@ -1342,7 +1342,7 @@ func (a *API) putModel(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	a.audit(r, r.PathValue("org"), "model.put", m.ID, fmt.Sprintf("in=%d out=%d micros/1M", m.InputPrice, m.OutputPrice))
+	a.audit(r, r.PathValue("org"), "model.put", m.ID, fmt.Sprintf("in=%d out=%d cache_read=%d cache_write=%d micros/1M", m.InputPrice, m.OutputPrice, m.CacheReadPrice, m.CacheWritePrice))
 	writeJSON(w, 200, m)
 }
 
@@ -1389,11 +1389,15 @@ type usageRow struct {
 	CostUSD      float64 `json:"cost_usd"`
 	AvgLatencyMs int64   `json:"avg_latency_ms"`
 	CacheHits    int64   `json:"cache_hits"`
+	// prompt tokens read from / written to the provider's prompt cache (D32)
+	CacheReadTokens  int64 `json:"cache_read_tokens"`
+	CacheWriteTokens int64 `json:"cache_write_tokens"`
 }
 
 func row(key string, a store.Agg) usageRow {
 	u := usageRow{Key: key, Requests: a[store.AggRequests], Errors: a[store.AggErrors], InTokens: a[store.AggInTokens],
-		OutTokens: a[store.AggOutTokens], CostUSD: float64(a[store.AggCostMicros]) / 1e6, CacheHits: a[store.AggCacheHits]}
+		OutTokens: a[store.AggOutTokens], CostUSD: float64(a[store.AggCostMicros]) / 1e6, CacheHits: a[store.AggCacheHits],
+		CacheReadTokens: a[store.AggCacheReadTokens], CacheWriteTokens: a[store.AggCacheWriteTokens]}
 	if u.Requests > 0 {
 		u.AvgLatencyMs = a[store.AggLatencyMs] / u.Requests
 	}

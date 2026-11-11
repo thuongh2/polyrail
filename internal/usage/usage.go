@@ -71,6 +71,8 @@ func (p *Pipeline) Record(l store.RequestLog) {
 	a[store.AggOutTokens] = int64(l.OutTokens)
 	a[store.AggCostMicros] = l.Cost
 	a[store.AggLatencyMs] = l.LatencyMs
+	a[store.AggCacheReadTokens] = int64(l.CacheReadTokens)
+	a[store.AggCacheWriteTokens] = int64(l.CacheWriteTokens)
 	if l.Cached {
 		a[store.AggCacheHits] = 1
 	}

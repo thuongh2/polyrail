@@ -60,3 +60,16 @@ func TestKeyFaults(t *testing.T) {
 		}
 	}
 }
+
+func TestChatUsageCachesEarlierTurns(t *testing.T) {
+	var req chatReq
+	_ = json.Unmarshal([]byte(`{"messages":[{"content":"0123456789abcdef"},{"content":"01234567"}]}`), &req)
+	u := chatUsage(req, "abcd")
+	if u["prompt_tokens"] != 5+4+2 || u["completion_tokens"] != 2 || u["prompt_tokens_details"].(map[string]int)["cached_tokens"] != 4 {
+		t.Fatalf("usage %v", u)
+	}
+	req.Messages = req.Messages[1:] // a single turn has nothing cached
+	if _, ok := chatUsage(req, "abcd")["prompt_tokens_details"]; ok {
+		t.Fatal("single turn reported cached tokens")
+	}
+}

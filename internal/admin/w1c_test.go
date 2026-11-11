@@ -253,7 +253,7 @@ func TestUsageAndLogExport(t *testing.T) {
 		t.Fatalf("model export must defuse formulas: %v", recs)
 	}
 	recs = readCSV(t, f.do(t, "viewer", "GET", A+"/usage/export.csv?group=day&from="+now.AddDate(0, 0, -1).Format("2006-01-02")+"&to="+now.Format("2006-01-02"), ""))
-	if len(recs) != 3 || len(recs[0]) != 8 || recs[2][1] != "2" || recs[1][1] != "0" {
+	if len(recs) != 3 || len(recs[0]) != 10 || recs[2][1] != "2" || recs[1][1] != "0" {
 		t.Fatalf("day export: %v", recs)
 	}
 	expect(t, f.do(t, "viewer", "GET", A+"/usage/export.csv?group=nope", ""), 400, "bad group")

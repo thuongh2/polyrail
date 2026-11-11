@@ -3,6 +3,7 @@
 // It answers chat and text completions (streaming or not), the Responses API, embeddings, text to
 // speech (a short WAV tone), transcriptions (a fixed sentence), images (1x1 PNGs), rerank, token
 // counting (OpenAI and Anthropic paths) and OCR (Mistral path) without calling any real model.
+// Multi-turn chats report the earlier turns as prompt-cache reads (chatUsage).
 // Files, batches and videos (OpenAI async paths) are served by package asyncmock.
 package main
 
@@ -141,6 +142,26 @@ type chatReq struct {
 	Messages []struct {
 		Content any `json:"content"`
 	} `json:"messages"`
+}
+
+// chatUsage is the deterministic usage of a chat answer: the last message plus 5 prompt tokens,
+// and every earlier message counted as a prompt-cache read (as if a provider had cached the
+// conversation prefix), so a multi-turn chat reports prompt_tokens_details.cached_tokens (D32).
+func chatUsage(req chatReq, reply string) map[string]any {
+	in, cached := 5, 0
+	for i, m := range req.Messages {
+		n := len(fmt.Sprint(m.Content)) / 4
+		if i < len(req.Messages)-1 {
+			cached += n
+		}
+		in += n
+	}
+	out := len(reply)/4 + 1
+	u := map[string]any{"prompt_tokens": in, "completion_tokens": out, "total_tokens": in + out}
+	if cached > 0 {
+		u["prompt_tokens_details"] = map[string]int{"cached_tokens": cached}
+	}
+	return u
 }
 
 // keyFaults lets demos and e2e tests exercise key status (docs/KEYS.md): a key starting with
@@ -316,13 +337,13 @@ func main() {
 			last = fmt.Sprint(req.Messages[n-1].Content)
 		}
 		reply := "This is the mock provider. You said: " + last
-		in, out := len(last)/4+5, len(reply)/4+1
+		usage := chatUsage(req, reply)
 		if !req.Stream {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": "mock-1", "object": "chat.completion", "created": 1, "model": "mock",
 				"choices": []any{map[string]any{"index": 0, "message": map[string]string{"role": "assistant", "content": reply}, "finish_reason": "stop"}},
-				"usage":   map[string]int{"prompt_tokens": in, "completion_tokens": out, "total_tokens": in + out},
+				"usage":   usage,
 			})
 			return
 		}
@@ -338,7 +359,7 @@ func main() {
 		}
 		chunk(map[string]any{"id": "mock-1", "object": "chat.completion.chunk", "created": 1, "model": "mock",
 			"choices": []any{map[string]any{"index": 0, "delta": map[string]string{}, "finish_reason": "stop"}},
-			"usage":   map[string]int{"prompt_tokens": in, "completion_tokens": out, "total_tokens": in + out}})
+			"usage":   usage})
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	})
 	asyncmock.Register(http.DefaultServeMux) // files, batches, videos

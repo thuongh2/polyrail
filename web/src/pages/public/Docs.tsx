@@ -336,6 +336,8 @@ curl ${base}/batches \\
             <p>
               Models visible to the key, each with <C>kind</C> (chat, embedding, speech, transcription, image, rerank, ocr
               or video), <C>pricing.input</C> and <C>pricing.output</C> in USD per 1M tokens, and when set{" "}
+              <C>pricing.input_cache_read</C> and <C>pricing.input_cache_write</C> (USD per 1M prompt tokens read from or
+              written to the provider's prompt cache; unset means the input price),{" "}
               <C>pricing.audio_minute</C> (per audio minute), <C>pricing.image</C> (per image), <C>pricing.request</C>{" "}
               (per request), <C>pricing.video_second</C> (per second of video), plus <C>context_length</C>. The public catalog is also browsable on the <Link href="/models">models page</Link>.
             </p>

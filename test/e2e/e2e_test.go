@@ -79,6 +79,10 @@ func mockUpstream(t *testing.T, hits *atomic.Int64) *httptest.Server {
 			fmt.Fprint(w, "data: [DONE]\n\n")
 			return
 		}
+		if req["model"] == "up-cache" { // D32: 800 of 1000 prompt tokens read from the provider's prompt cache
+			fmt.Fprint(w, `{"id":"c3","object":"chat.completion","created":1,"model":"up-cache","choices":[{"index":0,"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":10,"total_tokens":1010,"prompt_tokens_details":{"cached_tokens":800},"completion_tokens_details":{"reasoning_tokens":4}}}`)
+			return
+		}
 		fmt.Fprint(w, `{"id":"c1","object":"chat.completion","created":1,"model":"up","choices":[{"index":0,"message":{"role":"assistant","content":"pong"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`)
 	}))
 	t.Cleanup(srv.Close)
@@ -412,6 +416,39 @@ func runFlow(t *testing.T, extraEnv []string) {
 		t.Fatalf("public catalog: %+v", cat)
 	}
 
+	// D32: prompt-cache pricing. 200 uncached × $1/M + 800 cache reads × $0.10/M + 10 out × $2/M = 300 micros
+	c.must(200, "POST", "/api/admin/models", `{"id":"mock/cached","name":"Mock Cached","input_price_micros":1000000,"output_price_micros":2000000,"cache_read_price_micros":100000,"enabled":true,"targets":[{"provider_id":"`+prov.ID+`","model":"up-cache"}]}`, nil)
+	var cachedCat struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Pricing struct {
+				InputCacheRead  string `json:"input_cache_read"`
+				InputCacheWrite string `json:"input_cache_write"`
+			} `json:"pricing"`
+		} `json:"data"`
+	}
+	eventually(t, 6*time.Second, "mock/cached in the public catalog with its cache price", func() bool {
+		anon.must(200, "GET", "/api/public/models", "", &cachedCat)
+		for _, m := range cachedCat.Data {
+			if m.ID == "mock/cached" {
+				return m.Pricing.InputCacheRead == "0.1" && m.Pricing.InputCacheWrite == ""
+			}
+		}
+		return false
+	})
+	var cachedChat struct {
+		Usage struct {
+			Details struct {
+				Cached int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+			Cost float64 `json:"cost"`
+		} `json:"usage"`
+	}
+	h = c.must(200, "POST", "/v1/chat/completions", `{"model":"mock/cached","usage":{"include":true},"messages":[{"role":"user","content":"long prompt"}]}`, &cachedChat, bearer...)
+	if h.Get("X-GW-Cost-Micros") != "300" || cachedChat.Usage.Details.Cached != 800 || cachedChat.Usage.Cost != 0.0003 {
+		t.Fatalf("cached chat: cost header %q, usage %+v", h.Get("X-GW-Cost-Micros"), cachedChat.Usage)
+	}
+
 	// F6-AC4/AC5 + F3-AC2: usage rollups and request logs after the async flush
 	// chat: 10 in × $1/M + 5 out × $2/M = 20 micros; stream: 5×1 + 2×2 = 9 micros; embed: 4 × 0.1 = 0.4 micros
 	var usage struct {
@@ -420,6 +457,7 @@ func runFlow(t *testing.T, extraEnv []string) {
 			InTokens  int64   `json:"in_tokens"`
 			OutTokens int64   `json:"out_tokens"`
 			CostUSD   float64 `json:"cost_usd"`
+			CacheRead int64   `json:"cache_read_tokens"`
 		} `json:"total"`
 		Models []struct {
 			Key string `json:"key"`
@@ -427,23 +465,33 @@ func runFlow(t *testing.T, extraEnv []string) {
 	}
 	eventually(t, 6*time.Second, "usage rollup", func() bool {
 		c.must(200, "GET", "/api/orgs/"+org+"/usage?days=1", "", &usage)
-		return usage.Total.Requests >= 3
+		return usage.Total.Requests >= 4
 	})
-	if usage.Total.InTokens < 19 || usage.Total.OutTokens < 7 || usage.Total.CostUSD < 0.000029 || len(usage.Models) == 0 {
+	if usage.Total.InTokens < 19 || usage.Total.OutTokens < 7 || usage.Total.CostUSD < 0.000329 || usage.Total.CacheRead != 800 || len(usage.Models) == 0 {
 		t.Fatalf("usage: %+v", usage)
 	}
 	var logRows []struct {
-		Model    string `json:"model"`
-		Provider string `json:"provider"`
-		Status   int    `json:"status"`
+		Model     string `json:"model"`
+		Provider  string `json:"provider"`
+		Status    int    `json:"status"`
+		Cost      int64  `json:"cost_micros"`
+		CacheRead int    `json:"cache_read_tokens"`
+		Reasoning int    `json:"reasoning_tokens"`
 	}
 	// counters are flushed before log rows in the same batch, so wait for the rows too
 	eventually(t, 6*time.Second, "request logs", func() bool {
 		c.must(200, "GET", "/api/orgs/"+org+"/logs", "", &logRows)
-		return len(logRows) >= 3
+		return len(logRows) >= 4
 	})
 	if logRows[0].Model == "" {
 		t.Fatalf("request logs: %+v", logRows)
+	}
+	cachedLog := false
+	for _, l := range logRows {
+		cachedLog = cachedLog || l.Model == "mock/cached" && l.CacheRead == 800 && l.Reasoning == 4 && l.Cost == 300
+	}
+	if !cachedLog {
+		t.Fatalf("request logs lack the cached request's tokens: %+v", logRows)
 	}
 
 	// F8-AC2

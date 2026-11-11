@@ -319,15 +319,15 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 			g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 			return
 		}
-		g.pump(w, bctx, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
+		g.pump(w, bctx, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *tokens) {
 			t := c.BifrostTextCompletionResponse
 			if t == nil {
 				return "", nil, "", nil
 			}
 			t.Model = m.ID
-			var u *usagePair
+			var u *tokens
 			if t.Usage != nil {
-				u = &usagePair{t.Usage.PromptTokens, t.Usage.CompletionTokens}
+				u = chatTokens(t.Usage)
 			}
 			return "", t, t.ExtraFields.RoutingInfo.Provider, u
 		})
@@ -339,9 +339,7 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
-	if resp.Usage != nil {
-		l.InTokens, l.OutTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
-	}
+	chatTokens(resp.Usage).into(&l)
 	l.Provider = g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
 	used := usedModel(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, resp.ExtraFields.RoutingInfo.Model)
 	micros := g.record(p, used, l, start)
@@ -394,16 +392,16 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 			g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 			return
 		}
-		g.pump(w, bctx, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
+		g.pump(w, bctx, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *tokens) {
 			ev := c.BifrostResponsesStreamResponse
 			if ev == nil {
 				return "", nil, "", nil
 			}
-			var u *usagePair
+			var u *tokens
 			if ev.Response != nil {
 				ev.Response.Model = m.ID
 				if ev.Response.Usage != nil {
-					u = &usagePair{ev.Response.Usage.InputTokens, ev.Response.Usage.OutputTokens}
+					u = respTokens(ev.Response.Usage)
 				}
 			}
 			return string(ev.Type), ev, ev.ExtraFields.RoutingInfo.Provider, u
@@ -416,9 +414,7 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
-	if resp.Usage != nil {
-		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
-	}
+	respTokens(resp.Usage).into(&l)
 	l.Provider = g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
 	used := usedModel(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, resp.ExtraFields.RoutingInfo.Model)
 	micros := g.record(p, used, l, start)
@@ -481,12 +477,10 @@ func (g *Gateway) prepareResponses(w http.ResponseWriter, r *http.Request, p *pr
 // sseFrames is a pump payload that is already framed as one or more server-sent events.
 type sseFrames []byte
 
-type usagePair struct{ in, out int }
-
 // pump writes a Bifrost stream as server-sent events. conv maps one chunk to (event name or "",
 // payload, serving provider, usage if present); a nil payload skips the chunk.
 func (g *Gateway) pump(w http.ResponseWriter, bctx *schemas.BifrostContext, snap *Snapshot, p *principal, m store.Model, ts []store.Target, ch chan *schemas.BifrostStreamChunk, start time.Time,
-	conv func(*schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair)) {
+	conv func(*schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *tokens)) {
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -508,7 +502,7 @@ func (g *Gateway) pump(w http.ResponseWriter, bctx *schemas.BifrostContext, snap
 			event, payload = errorBody(w, ae)
 		} else {
 			var prov schemas.ModelProvider
-			var u *usagePair
+			var u *tokens
 			event, payload, prov, u = conv(c)
 			if payload == nil {
 				continue
@@ -522,7 +516,8 @@ func (g *Gateway) pump(w http.ResponseWriter, bctx *schemas.BifrostContext, snap
 			}
 			setModel(payload, used.ID)
 			if u != nil {
-				l.InTokens, l.OutTokens, hasUsage = u.in, u.out, true
+				u.into(&l)
+				hasUsage = true
 			}
 		}
 		frame, ok := payload.(sseFrames)
@@ -534,7 +529,7 @@ func (g *Gateway) pump(w http.ResponseWriter, bctx *schemas.BifrostContext, snap
 				continue
 			}
 			if hasUsage {
-				data = p.withCost(data, billed(used, l.InTokens, l.OutTokens))
+				data = p.withCost(data, billed(used, l))
 			}
 			if event != "" {
 				frame, named = fmt.Appendf(nil, "event: %s\n", event), true

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -63,6 +64,15 @@ func testKV(t *testing.T, kv KV) {
 	if a, _ := kv.GetAgg(ctx, "agg/x"); a[AggRequests] != 20 || a[AggInTokens] != 200 {
 		t.Fatalf("agg x: %v", a)
 	}
+	var last Agg // every counter round-trips, the last one included
+	last[AggFields-1] = 3
+	if err := kv.AddAgg(ctx, map[string]Agg{"agg/z": last}); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := kv.GetAgg(ctx, "agg/z"); a != last {
+		t.Fatalf("agg z: %v", a)
+	}
+	_ = kv.DeleteRange(ctx, "agg/z", "agg/z0")
 	m, err := kv.ScanAgg(ctx, "agg/")
 	if err != nil || len(m) != 2 || m["agg/y"][0] != 40 {
 		t.Fatalf("scan agg: %v %v", m, err)
@@ -100,4 +110,18 @@ func TestPostgresKV(t *testing.T) {
 	defer kv.Close()
 	_ = kv.DeleteRange(context.Background(), "", "\x7f")
 	testKV(t, kv)
+}
+
+// D32 grew Agg from 7 to 9 counters: rollups written before still decode, new counters 0.
+func TestDecodeAggOlderShorterRecord(t *testing.T) {
+	old := make([]byte, 7*8)
+	old[AggCostMicros*8] = 42
+	a := decodeAgg(old)
+	if a[AggCostMicros] != 42 || a[AggCacheReadTokens] != 0 || a[AggCacheWriteTokens] != 0 {
+		t.Fatalf("decoded %+v", a)
+	}
+	var l RequestLog // request logs written before D32 have no cache/reasoning fields
+	if err := json.Unmarshal([]byte(`{"id":"x","in_tokens":5,"out_tokens":2,"cost_micros":9}`), &l); err != nil || l.InTokens != 5 || l.CacheReadTokens != 0 {
+		t.Fatalf("old log: %+v %v", l, err)
+	}
 }

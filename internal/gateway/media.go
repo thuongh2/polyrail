@@ -281,9 +281,7 @@ func (g *Gateway) Rerank(w http.ResponseWriter, r *http.Request) {
 	}
 	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0, 0)
 	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.RoutingInfo.Model}
-	if u := resp.Usage; u != nil {
-		l.InTokens, l.OutTokens = u.PromptTokens, u.CompletionTokens
-	}
+	chatTokens(resp.Usage).into(&l)
 	g.record(p, m, l, start) // tokens + request price
 	resp.Model = m.ID
 	writeJSONHidden(w, provName, resp)

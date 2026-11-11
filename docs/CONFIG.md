@@ -54,7 +54,7 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `Authorization: Bearer sk-gw-…` or `x-api-key` | API key (`x-api-key` is what the Anthropic SDKs send). |
 | `x-goog-api-key` or `?key=` | API key on `/genai/*` (what the Google GenAI SDKs send). |
 | `anthropic-version`, `anthropic-beta` | Accepted (and allowed by CORS) on `/anthropic/v1/*`, ignored. |
-| `x-gateway-cache: <seconds>` | Serve an identical earlier non-stream request from cache (max 86400). Cache hits cost nothing. |
+| `x-gateway-cache: <seconds>` | Serve an identical earlier non-stream request of the same org and workspace from cache (max 86400). Cache hits cost nothing. |
 | `X-GW-KB: vs_a,vs_b` or `off` | Ground the request on these knowledge bases (max 3) or turn off the key's `kb_ids` (docs/API.md "Knowledge bases"). |
 | `x-gateway-mcp-clients: name1,name2` or `*` | Inject tools from these MCP servers (only servers granted to your org and, if the key has `mcp_servers`, listed there). |
 

@@ -79,7 +79,8 @@ func compilePolicy(k store.APIKey, pols []store.Policy) (*EffectivePolicy, error
 		if p.IsOrgDefault && !slices.Contains(p.OptedOutKeyIDs, k.ID) && !(member && slices.Contains(p.OptedOutMemberIDs, k.CreatedBy)) {
 			via = append(via, "org_default")
 		}
-		if member && slices.Contains(p.MemberIDs, k.CreatedBy) {
+		// a member assignment by a workspace's admins reaches the member's keys in that workspace only
+		if member && slices.Contains(p.MemberIDs, k.CreatedBy) && (store.WSID(p.WorkspaceID) == "" || store.WSID(p.WorkspaceID) == store.WSID(k.WorkspaceID)) {
 			via = append(via, "member")
 		}
 		if slices.Contains(p.KeyIDs, k.ID) {

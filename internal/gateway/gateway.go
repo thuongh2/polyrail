@@ -611,7 +611,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey, ttl := "", cacheTTL(r)
 	if ttl > 0 && !usesMCP && g.cfg.CacheMB > 0 {
-		h := sha256.Sum256(append([]byte(p.Org.ID+"\x00"+kbSig+"\x00"), body...))
+		h := sha256.Sum256(append([]byte(p.Org.ID+"\x00"+p.ws()+"\x00"+kbSig+"\x00"), body...)) // per workspace (D31)
 		cacheKey = hex.EncodeToString(h[:])
 		if out, ok := g.resp.Get(cacheKey); ok {
 			mCacheHits.Inc()

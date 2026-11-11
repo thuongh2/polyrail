@@ -59,7 +59,10 @@ func (in traceExportInput) apply(t *store.TraceExport) error {
 		t.Type = *in.Type
 	}
 	if in.Endpoint != nil {
-		t.Endpoint = strings.TrimSpace(*in.Endpoint)
+		if e := strings.TrimSpace(*in.Endpoint); e != t.Endpoint {
+			t.Headers = nil // secrets entered for one endpoint never follow it to another (send them again)
+			t.Endpoint = e
+		}
 	}
 	if in.Headers != nil {
 		t.Headers = *in.Headers
@@ -161,6 +164,10 @@ func (a *API) createTraceExport(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	if org != "" && t.IncludeContent && !orgWide(r) { // content is for org admins only (D28)
+		fail(w, errForbidden)
+		return
+	}
 	if err := a.checkTraceExport(r.Context(), t); err != nil {
 		fail(w, err)
 		return
@@ -195,6 +202,9 @@ func (a *API) patchTraceExport(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		_, err = a.keepWS(r, cur.WorkspaceID, in.WorkspaceID)
+	}
+	if err == nil && org != "" && !orgWide(r) && (cur.IncludeContent || (in.IncludeContent != nil && *in.IncludeContent)) {
+		err = errForbidden // exports carrying content are for org admins only (D28); others may delete them
 	}
 	if err == nil {
 		if err = in.apply(cur); err == nil {

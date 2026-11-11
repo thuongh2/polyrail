@@ -69,7 +69,7 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
   - Credits/budgets: stored spend + this node's unflushed spend, refreshed each 1 s flush (D7).
 - D4 HTTP: stdlib `net/http` (Go 1.22 patterns). UI: plain HTML/CSS/JS embedded via `go:embed`, no build step.
 - D5 Provider secrets encrypted at rest with AES-GCM using `MASTER_KEY`. API keys stored as SHA-256 hash only.
-- D6–D33 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding, UI, cloud providers, routing strategies, guardrails, idempotency + cost header, webhooks, semantic cache, models.dev catalog seed + visibility rule, org OpenAI-compatible types, knowledge bases / gateway RAG, upstream proxy, proxy pools, rename to Polyrail, provider key status + alert channels, policy engine, request routing + presets, key identity/exports/content logging, enterprise identity: domains/SAML/SCIM, data regions + OTLP trace export, workspaces, prompt cache pricing, Playground Markdown renderer).
+- D6–D34 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding, UI, cloud providers, routing strategies, guardrails, idempotency + cost header, webhooks, semantic cache, models.dev catalog seed + visibility rule, org OpenAI-compatible types, knowledge bases / gateway RAG, upstream proxy, proxy pools, rename to Polyrail, provider key status + alert channels, policy engine, request routing + presets, key identity/exports/content logging, enterprise identity: domains/SAML/SCIM, data regions + OTLP trace export, workspaces, prompt cache pricing, Playground Markdown renderer, budgets count BYOK by default).
 
 ## Lessons (do not repeat)
 

@@ -5,6 +5,8 @@ import { DataState, EmptyState, PageHeader } from "@/components/states";
 import { StatusBadge, latency } from "@/components/public/StatusBadge";
 import { compact, fmt, pct, publicApi, when, type StatusPage } from "@/lib/api";
 import { useAsync } from "@/lib/hooks";
+import { ProviderLogo } from "@/components/ProviderLogo";
+import { providerLabel } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 
 function summary(p: StatusPage["providers"]) {
@@ -73,8 +75,13 @@ export default function Status() {
                     {d.providers.map((p) => (
                       <TableRow key={p.name}>
                         <TableCell>
-                          <div className="font-medium">{p.name}</div>
-                          <div className="text-xs text-muted-foreground">{p.type}</div>
+                          <div className="flex items-center gap-2.5">
+                            <ProviderLogo type={p.type} size={24} />
+                            <div>
+                              <div className="font-medium">{p.name}</div>
+                              <div className="text-xs text-muted-foreground">{providerLabel(p.type)}</div>
+                            </div>
+                          </div>
                         </TableCell>
                         <TableCell>
                           <StatusBadge status={p.status} />

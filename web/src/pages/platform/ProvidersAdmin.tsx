@@ -14,6 +14,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, get, orgBase, PLATFORM, type Provider, type ProviderKey } from "@/lib/api";
 import { useAsync } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
+import { providerLabel } from "@/lib/providers";
+import { ProviderLogo } from "@/components/ProviderLogo";
 
 /** Base path of the providers collection for a scope, or null when it can't be used. */
 export function providersPath(scope: Scope, orgId?: string) {
@@ -79,8 +81,13 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
               <TableBody>
                 {[...ps].sort((a, b) => a.name.localeCompare(b.name)).map((p) => (
                   <TableRow key={p.id}>
-                    <TableCell className="font-medium">{p.name}</TableCell>
-                    <TableCell className="font-mono text-xs">{p.type}</TableCell>
+                    <TableCell className="font-medium">
+                      <span className="flex items-center gap-2">
+                        <ProviderLogo type={p.type} />
+                        {p.name}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-sm" title={p.type}>{providerLabel(p.type)}</TableCell>
                     <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground" title={p.base_url}>
                       {p.base_url || "Provider default"}
                     </TableCell>
@@ -146,9 +153,11 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
 const needsURL = (t: string) => ["ollama", "sgl", "vllm", "databricks"].includes(t);
 
 /** Types whose credentials live in per-key config; the dialog edits their first key. */
-const CLOUD = ["azure", "bedrock", "vertex"] as const;
+const CLOUD = ["azure", "bedrock", "bedrock_mantle", "sagemaker", "vertex", "cloudflare"] as const;
 type Cloud = (typeof CLOUD)[number];
 const isCloud = (t: string): t is Cloud => (CLOUD as readonly string[]).includes(t);
+/** AWS types share the key's "bedrock" config block; only bedrock takes an ARN. */
+const isAWS = (t: string) => t === "bedrock" || t === "bedrock_mantle" || t === "sagemaker";
 
 type CloudForm = {
   apiKey: string;
@@ -163,6 +172,7 @@ type CloudForm = {
   projectNumber: string;
   credentials: string;
   deployments: string;
+  accountId: string;
 };
 
 const deploymentsText = (d?: Record<string, string>) =>
@@ -195,6 +205,7 @@ function cloudForm(k?: ProviderKey): CloudForm {
     projectNumber: k?.vertex?.project_number ?? "",
     credentials: "",
     deployments: deploymentsText(k?.azure?.deployments ?? k?.bedrock?.deployments ?? k?.vertex?.deployments),
+    accountId: k?.cloudflare?.account_id ?? "",
   };
 }
 
@@ -204,15 +215,20 @@ function cloudKey(type: Cloud, f: CloudForm, prev?: ProviderKey): ProviderKey {
   const opt = (v: string) => v.trim() || undefined;
   const k: ProviderKey = { id: prev?.id, name: prev?.name, weight: prev?.weight || 1, models: prev?.models, value: opt(f.apiKey) };
   if (type === "azure") k.azure = { endpoint: f.endpoint.trim(), api_version: opt(f.apiVersion), deployments };
-  if (type === "bedrock")
+  if (isAWS(type))
     k.bedrock = {
       region: f.region.trim(),
-      arn: opt(f.arn),
+      arn: type === "bedrock" ? opt(f.arn) : undefined,
       deployments,
       access_key: opt(f.accessKey),
       secret_key: opt(f.secretKey),
       session_token: opt(f.sessionToken),
     };
+  if (type === "cloudflare") {
+    const account_id = f.accountId.trim().toLowerCase();
+    if (!/^[0-9a-f]{32}$/.test(account_id)) throw new Error("Account ID must be 32 hexadecimal characters");
+    k.cloudflare = { account_id };
+  }
   if (type === "vertex")
     k.vertex = {
       project_id: f.projectId.trim(),
@@ -279,7 +295,7 @@ function ProviderDialog({
       <Field label="Name">
         {(id) => <Input id={id} value={name} onChange={(e) => setName(e.target.value)} required placeholder="openai-main" autoComplete="off" />}
       </Field>
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)]">
+      <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
         <div className="grid content-start gap-1.5">
           <Label htmlFor="provider-type">Type</Label>
           <Select value={type} onValueChange={setType}>
@@ -287,9 +303,10 @@ function ProviderDialog({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {types.map((t) => (
+              {[...types].sort((a, b) => providerLabel(a).localeCompare(providerLabel(b))).map((t) => (
                 <SelectItem key={t} value={t}>
-                  {t}
+                  <ProviderLogo type={t} size={16} />
+                  {providerLabel(t)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -419,12 +436,37 @@ function CloudFields({
         {deployments("One model=deployment per line. When set, only these models are served.")}
       </>
     );
-  if (type === "bedrock")
+  if (type === "cloudflare")
+    return (
+      <>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {secret("API token", "apiKey", keep ? undefined : "A Workers AI token. Encrypted and never shown again.", true)}
+          <Field label="Account ID" hint="32 hexadecimal characters, from the Cloudflare dashboard.">
+            {(id, h) => (
+              <Input
+                id={id}
+                aria-describedby={h}
+                value={form.accountId}
+                onChange={set("accountId")}
+                required
+                pattern="[0-9a-fA-F]{32}"
+                title="32 hexadecimal characters"
+                className="font-mono text-xs"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            )}
+          </Field>
+        </div>
+        {keepNote}
+      </>
+    );
+  if (isAWS(type))
     return (
       <>
         <div className="grid gap-4 sm:grid-cols-2">
           {text("Region", "region", { required: true, placeholder: "us-east-1" })}
-          {text("ARN", "arn", { hint: "Optional inference profile ARN prefix." })}
+          {type === "bedrock" && text("ARN", "arn", { hint: "Optional inference profile ARN prefix." })}
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           {secret("Access key ID", "accessKey")}
@@ -432,15 +474,19 @@ function CloudFields({
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           {secret("Session token", "sessionToken", "Only for temporary credentials.")}
-          {secret("Bedrock API key", "apiKey", "Optional; used instead of access keys when set.")}
+          {secret(type === "sagemaker" ? "API key" : "Bedrock API key", "apiKey", "Optional; used instead of access keys when set.")}
         </div>
         <p className="text-xs text-muted-foreground">
           {tenant
-            ? "Enter an access key pair or a Bedrock API key."
+            ? "Enter an access key pair or an API key."
             : "Without credentials, requests use the gateway host's AWS identity (IAM role, environment)."}
         </p>
         {keepNote}
-        {deployments("One model=profile per line, mapping model names to inference profiles. When set, only these models are served.")}
+        {deployments(
+          type === "sagemaker"
+            ? "One model=endpoint per line, mapping model names to SageMaker endpoints. When set, only these models are served."
+            : "One model=profile per line, mapping model names to inference profiles. When set, only these models are served.",
+        )}
       </>
     );
   return (

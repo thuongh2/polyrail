@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { compact, kindLabel, mainPrice, perMillion, type ModelInfo } from "@/lib/api";
 import { CopyButton } from "./CodeTabs";
+import { ProviderLogo } from "@/components/ProviderLogo";
 
 export const modelHref = (id: string) => `/models/${pathID(id)}`;
 
@@ -13,6 +14,7 @@ export function ModelRow({ m, compactRow = false }: { m: ModelInfo; compactRow?:
     <li className="group relative grid gap-3 px-4 py-4 hover:bg-accent/50 md:grid-cols-[minmax(0,1fr)_6rem_8rem_6rem] md:items-start md:gap-6">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <ProviderLogo model={m.id} author={m.owned_by} size={20} />
           <Link
             href={modelHref(m.id)}
             className="font-medium [overflow-wrap:anywhere] after:absolute after:inset-0 after:content-[''] hover:underline focus-visible:outline-2 focus-visible:outline-ring"

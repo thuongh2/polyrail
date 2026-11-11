@@ -439,6 +439,102 @@ export function kbApi(org: string) {
   };
 }
 
+// ---- provider keys and alert channels (docs/KEYS.md) ----
+
+export type KeyStatus = "available" | "cooldown" | "quarantined" | "disabled";
+/** One stored key as GET …/providers/{id}/keys lists it; the value is never returned. */
+export type ProviderKeyView = {
+  id: string;
+  name: string;
+  /** First 4 chars + "****" + last 4; the key name for cloud types. */
+  masked: string;
+  weight: number;
+  models?: string[];
+  enabled: boolean;
+  status: KeyStatus;
+  status_reason?: string;
+  cooldown_until?: string;
+  last_used_at?: string;
+  stats_24h: { requests: number; errors: number; avg_latency_ms: number };
+};
+export type KeyAddResult = { added: number; duplicates: number; invalid: number };
+export type KeyTest = { ok: boolean; status: number; latency_ms: number; error?: string };
+export type KeyBulkAction = "enable" | "disable" | "delete" | "test" | "clear";
+/** One per-id entry of POST …/keys/bulk; test results carry the KeyTest fields. */
+export type KeyBulkResult = { id: string; ok: boolean; error?: string; latency_ms?: number };
+export type KeyStatPoint = { hour: string; requests: number; errors: number; avg_latency_ms: number; in_tokens: number; out_tokens: number };
+export type KeyPatch = { enabled?: boolean; weight?: number; name?: string; models?: string[] };
+
+/** A bare array or a {data}/{results} envelope as an array (empty when neither). */
+const arrayOf = <T>(r: unknown): T[] => {
+  if (Array.isArray(r)) return r as T[];
+  const o = (r ?? {}) as { data?: T[]; results?: T[] };
+  return o.data ?? o.results ?? [];
+};
+
+/** A list endpoint's array; anything else (such as the SPA page from a server without the route) is an error. */
+const listOr = <T>(what: string) => (r: unknown): T[] => {
+  if (!Array.isArray(r) && !Array.isArray((r as { data?: unknown })?.data)) throw new ApiError(404, `${what} not available on this server.`);
+  return arrayOf<T>(r);
+};
+
+/** Keys of one provider; `providers` is the scope's providers collection (see providersPath). */
+export function keysApi(providers: string, providerId: string) {
+  const b = `${providers}/${encodeURIComponent(providerId)}/keys`;
+  const k = (id: string) => `${b}/${encodeURIComponent(id)}`;
+  return {
+    list: () => get<unknown>(b).then(listOr<ProviderKeyView>("Key management is")),
+    add: (keys: string, opts: { weight?: number; models?: string[] } = {}) => api<KeyAddResult>("POST", b, { keys, ...opts }),
+    update: (id: string, body: KeyPatch) => api<ProviderKeyView>("PATCH", k(id), body),
+    remove: (id: string) => api("DELETE", k(id)),
+    bulk: (action: KeyBulkAction, ids: string[]) => api<unknown>("POST", `${b}/bulk`, { action, ids }).then(arrayOf<KeyBulkResult>),
+    test: (id: string, model?: string) => api<KeyTest>("POST", `${k(id)}/test`, model ? { model } : {}),
+    stats: (id: string, hours = 72) => get<unknown>(`${k(id)}/stats?hours=${hours}`).then(listOr<KeyStatPoint>("Key statistics are")),
+  };
+}
+
+export type AlertEvent = "key.quarantined" | "key.recovered" | "provider.unavailable" | "budget.exceeded" | "request.failed";
+/** An alert channel; its shoutrrr URL is write-only, the list shows the service name only. */
+export type AlertChannel = {
+  id: string;
+  org_id?: string;
+  name: string;
+  service?: string;
+  events: string[];
+  enabled: boolean;
+  failures: number;
+  created_at: string;
+};
+export type AlertInput = { name?: string; url?: string; events?: string[]; enabled?: boolean };
+export type AlertTest = { ok: boolean; error?: string };
+
+/** Alert channels of a scope: PLATFORM or orgBase(org). */
+export function alertsApi(scopeBase: string) {
+  const b = `${scopeBase}/alerts`;
+  const a = (id: string) => `${b}/${encodeURIComponent(id)}`;
+  return {
+    list: () => get<unknown>(b).then(listOr<AlertChannel>("Alert channels are")),
+    create: (body: AlertInput) => api<AlertChannel>("POST", b, body),
+    update: (id: string, body: AlertInput) => api<AlertChannel>("PATCH", a(id), body),
+    remove: (id: string) => api("DELETE", a(id)),
+    test: (id: string) => api<AlertTest>("POST", `${a(id)}/test`),
+  };
+}
+
+/** "3 minutes ago" style relative time; "–" when absent. */
+export function ago(t?: string, now = Date.now()) {
+  const d = t ? new Date(t).getTime() : NaN;
+  if (Number.isNaN(d)) return "–";
+  const s = Math.round((d - now) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  const abs = Math.abs(s);
+  if (abs < 60) return rtf.format(s, "second");
+  if (abs < 3600) return rtf.format(Math.round(s / 60), "minute");
+  if (abs < 86400) return rtf.format(Math.round(s / 3600), "hour");
+  if (abs < 86400 * 30) return rtf.format(Math.round(s / 86400), "day");
+  return new Date(d).toLocaleDateString();
+}
+
 /** Human size for byte counts. */
 export function bytes(n: number | undefined) {
   const v = n ?? 0;

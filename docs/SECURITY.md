@@ -109,7 +109,7 @@ the UI build in `internal/web/dist` was being regenerated concurrently.
 
 ## Guardrails: credential masking, prompt injection, compression (2026-11-11)
 
-Per-org, opt-in (`docs/API.md` → Guardrails, D14).
+Per-org, opt-in (`docs/API.md` → Guardrails, D15).
 
 - **Credential masker** (`mask_secrets`): fixed, precompiled patterns for provider keys, cloud and
   SaaS tokens, JWTs and PEM private keys, replaced with `[REDACTED:<type>]` before the request

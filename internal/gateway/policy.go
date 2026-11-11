@@ -35,7 +35,8 @@ type EffectivePolicy struct {
 	res         []*regexp.Regexp
 }
 
-// PolicyRef names an applied policy and how it reached the key: org_default, member, key.
+// PolicyRef names an applied policy and how it reached the key: org_default,
+// workspace_default, member, key.
 type PolicyRef struct {
 	ID   string   `json:"id"`
 	Name string   `json:"name"`
@@ -50,11 +51,12 @@ type EffectiveFilter struct {
 }
 
 // EffectiveBudget is one policy budget on one scope: the spend of the member who created the key
-// (all their keys) or of the key alone.
+// (all their keys), of the key alone, or of every key of the key's workspace (a workspace
+// default policy, D31; subject = workspace id, "default" for the default workspace).
 type EffectiveBudget struct {
 	PolicyID    string    `json:"policy_id"`
 	Policy      string    `json:"policy"`
-	Scope       string    `json:"scope"`   // member | key
+	Scope       string    `json:"scope"`   // member | key | workspace
 	Subject     string    `json:"subject"` // user id or key id
 	LimitMicros int64     `json:"limit_micros"`
 	Interval    string    `json:"interval"`
@@ -82,6 +84,10 @@ func compilePolicy(k store.APIKey, pols []store.Policy) (*EffectivePolicy, error
 		}
 		if slices.Contains(p.KeyIDs, k.ID) {
 			via = append(via, "key")
+		}
+		inWS := p.IsWorkspaceDefault && store.WSID(p.WorkspaceID) == store.WSID(k.WorkspaceID)
+		if inWS {
+			via = append(via, "workspace_default")
 		}
 		if len(via) == 0 {
 			continue
@@ -118,12 +124,16 @@ func compilePolicy(k store.APIKey, pols []store.Policy) (*EffectivePolicy, error
 		}
 		if b := p.Budget; b != nil {
 			eb := EffectiveBudget{PolicyID: p.ID, Policy: p.Name, LimitMicros: b.LimitMicros, Interval: b.Interval, IncludeBYOK: b.IncludeBYOK}
+			if inWS { // one budget for the whole workspace
+				eb.Scope, eb.Subject = "workspace", store.WSRef(p.WorkspaceID)
+				ep.Budgets = append(ep.Budgets, eb)
+			}
 			perMember := member && (slices.Contains(via, "org_default") || slices.Contains(via, "member"))
 			if perMember {
 				eb.Scope, eb.Subject = "member", k.CreatedBy
 				ep.Budgets = append(ep.Budgets, eb)
 			}
-			if slices.Contains(via, "key") || !perMember { // a key without a creator is budgeted per key
+			if slices.Contains(via, "key") || (!perMember && !inWS) { // a key without a creator is budgeted per key
 				eb.Scope, eb.Subject = "key", k.ID
 				ep.Budgets = append(ep.Budgets, eb)
 			}

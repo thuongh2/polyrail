@@ -158,22 +158,46 @@ func (s *Snapshot) providerType(m store.Model, name string) string {
 	return ""
 }
 
-// Model resolves a live model id for an org: org-private first, then public.
-func (s *Snapshot) Model(orgID, id string) (store.Model, bool) {
-	if m, ok := s.Models[orgID+"|"+id]; ok && s.Live(m) {
+// liveIn reports whether workspace ws of org can use model m: a live public model, or a live org
+// model of that workspace with a target provider usable there (D31).
+func (s *Snapshot) liveIn(m store.Model, ws string) bool {
+	if m.OrgID == "" {
+		return s.Live(m)
+	}
+	if !m.Enabled || store.WSID(m.WorkspaceID) != store.WSID(ws) {
+		return false
+	}
+	for _, t := range m.Targets {
+		if p, ok := s.Providers[t.ProviderID]; ok && p.UsableIn(m.OrgID, ws) {
+			return true
+		}
+	}
+	return false
+}
+
+// Model resolves a live model id for workspace ws ("" = default) of an org: org-private first,
+// then public.
+func (s *Snapshot) Model(orgID, ws, id string) (store.Model, bool) {
+	if m, ok := s.Models[orgID+"|"+id]; ok && s.liveIn(m, ws) {
 		return m, true
 	}
 	m, ok := s.Models["_|"+id]
 	return m, ok && s.Live(m)
 }
 
-// Visible lists the live models an org can use, sorted by id.
-func (s *Snapshot) Visible(orgID string) []store.Model {
+// Preset returns the preset slug of org when workspace ws may use it.
+func (s *Snapshot) Preset(orgID, ws, slug string) (store.Preset, bool) {
+	p, ok := s.Presets[orgID+"|"+slug]
+	return p, ok && store.WSID(p.WorkspaceID) == store.WSID(ws)
+}
+
+// Visible lists the live models workspace ws of an org can use, sorted by id.
+func (s *Snapshot) Visible(orgID, ws string) []store.Model {
 	seen := map[string]bool{}
 	var out []store.Model
 	for _, owner := range []string{orgID, "_"} {
 		for _, m := range s.Models {
-			if (m.OrgID == owner || (owner == "_" && m.OrgID == "")) && !seen[m.ID] && s.Live(m) {
+			if (m.OrgID == owner || (owner == "_" && m.OrgID == "")) && !seen[m.ID] && s.liveIn(m, ws) {
 				seen[m.ID] = true
 				out = append(out, m)
 			}

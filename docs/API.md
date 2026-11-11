@@ -382,16 +382,17 @@ needs the header `X-GW-CSRF: 1`. Org routes also accept a management token (belo
 | POST | `/api/orgs/{org}/credits {usd, note}` | operator |
 | GET/POST | `/api/orgs/{org}/members` | viewer / admin |
 | PUT/DELETE | `/api/orgs/{org}/members/{user}` | admin (owners only change owners) |
-| GET/POST | `/api/orgs/{org}/keys` | viewer / member (secret returned once); members and viewers list only keys they created, admins and owners all |
-| PATCH | `/api/orgs/{org}/keys/{id}` | admin, or the member who created it (rename/revoke only) |
-| POST | `/api/orgs/{org}/keys/{id}/rotate {grace_seconds?}` | admin, or the member who created it → `{key, secret}` (new secret shown once) |
+| GET/POST | `/api/orgs/{org}/keys` | workspace viewer / member (secret returned once); members and viewers list only keys they created, workspace admins all of their workspaces (Workspaces) |
+| PATCH | `/api/orgs/{org}/keys/{id}` | workspace admin, or the member who created it (rename/revoke only) |
+| POST | `/api/orgs/{org}/keys/{id}/rotate {grace_seconds?}` | workspace admin, or the member who created it → `{key, secret}` (new secret shown once) |
+| * | `/api/orgs/{org}/workspaces…` | see Workspaces |
 | GET/POST | `/api/orgs/{org}/mgmt-tokens` | admin, session only (management tokens, below; secret returned once) |
 | PATCH/DELETE | `/api/orgs/{org}/mgmt-tokens/{id}` | admin, session only (`{name?, revoked?}`; revocation is one-way) |
 
 Key bodies: `name`, `rpm`, `tpm`, `monthly_budget_usd`, `models` (allowlist), `mcp_servers` (MCP server
 names the key may use, intersected with the org grant; empty or absent = every granted server),
-`kb_ids` (knowledge bases that ground the key's requests: KBs of the org, at most 3; admins only, on
-create too), `expires_in_days`, `revoked`. On PATCH only admins may change limits, `models`,
+`kb_ids` (knowledge bases that ground the key's requests: KBs of the key's workspace, at most 3;
+workspace admins only, on create too), `workspace_id` (create only), `expires_in_days`, `revoked`. On PATCH only admins may change limits, `models`,
 `mcp_servers` or `kb_ids`.
 
 Key rotation keeps the key id and every setting (name, limits, `models`, `mcp_servers`, `kb_ids`,
@@ -400,14 +401,14 @@ keeps working for `grace_seconds` (0–86400, default 0 = stops at once) and is 
 (`401 expired_api_key`); a secret from an earlier rotation stops at once. The key gains `rotated_at`
 and `prev_valid_until`. A revoked key cannot be rotated (400). Audited as `key.rotate`.
 
-| GET/POST/PUT/DELETE | `/api/orgs/{org}/providers[/{id}]` | admin |
+| GET/POST/PUT/DELETE | `/api/orgs/{org}/providers[/{id}]` | workspace admin of the provider's workspace |
 | POST | `/api/orgs/{org}/providers/{id}/discover`, `/import` | admin (org-owned providers only) |
-| GET | `/api/orgs/{org}/models` | viewer |
-| POST/PUT/DELETE | `/api/orgs/{org}/models[/{vendor/name}]` | admin |
-| GET | `/api/orgs/{org}/usage?days=30[&group=end_user]` | viewer |
-| GET | `/api/orgs/{org}/presets`, `/presets/{slug}` | viewer (list is a bare JSON array) |
-| POST | `/api/orgs/{org}/presets` | admin (201; 409 when the slug exists) |
-| PUT/DELETE | `/api/orgs/{org}/presets/{slug}` | admin (PUT replaces; 404 when missing) |
+| GET | `/api/orgs/{org}/models` | viewer (private models of the caller's workspaces) |
+| POST/PUT/DELETE | `/api/orgs/{org}/models[/{vendor/name}]` | workspace admin |
+| GET | `/api/orgs/{org}/usage?days=30[&group=end_user|workspace][&workspace=]` | viewer |
+| GET | `/api/orgs/{org}/presets`, `/presets/{slug}` | workspace viewer (list is a bare JSON array) |
+| POST | `/api/orgs/{org}/presets` | workspace admin (201; 409 when the slug exists) |
+| PUT/DELETE | `/api/orgs/{org}/presets/{slug}` | workspace admin (PUT replaces; 404 when missing) |
 | GET | `/api/orgs/{org}/logs?limit=100` | viewer |
 | GET | `/api/orgs/{org}/audit` | admin |
 | GET/POST | `/api/orgs/{org}/webhooks` | admin (signing secret returned once on create) |
@@ -458,6 +459,80 @@ model, dimensions or chunking re-embeds every document. Search returns a bare ar
 value or a list of values. Mutations are audited (`kb.create`, `kb.update`, `kb.delete`,
 `kb.reindex`, `kb.doc.add`, `kb.doc.delete`). Unknown `/api/…` paths answer JSON 404
 `{"error":{"message":"not found"}}`.
+
+### Workspaces (D31)
+
+An org holds workspaces (OpenRouter workspaces). Every org has exactly one **default workspace**
+with the id `default` (created with the org, or on first read for older orgs); everything stored
+before workspaces belongs to it. These carry a `workspace_id` and are scoped to it: API keys, org
+(BYOK) providers, private models, policies, presets, trace exports, knowledge bases and
+(optionally) management tokens. Responses omit `workspace_id` for the default workspace; inputs
+accept `default`, a workspace id, or nothing (= default). Alert channels, webhooks, members,
+credits, guardrails, the semantic cache, content logging, SSO and SCIM stay org-level.
+
+Roles: org owners and admins are `admin` of every workspace. Every org member is in the default
+workspace with their org role. Other workspaces have explicit members (`admin`, `member`,
+`viewer`). Only org owners/admins create, rename and delete workspaces; workspace admins manage
+their workspace's members, keys, BYOK providers, private models, policies, presets and trace
+exports.
+
+| Method | Path | Who |
+|---|---|---|
+| GET | `/api/orgs/{org}/workspaces` | any member → the workspaces the caller is in: `[{id, org_id, name, slug, is_default, created_at, role}]`, default first |
+| POST | `/api/orgs/{org}/workspaces {name, slug}` | org admin → 201 (slug `^[a-z0-9][a-z0-9-]{0,62}$`, unique per org; 409 when taken; at most 100) |
+| GET | `/api/orgs/{org}/workspaces/{ws}` | workspace viewer (404 for workspaces the caller is not in) |
+| PATCH | `/api/orgs/{org}/workspaces/{ws} {name?, slug?}` | org admin (the default keeps slug `default`) |
+| DELETE | `/api/orgs/{org}/workspaces/{ws}` | org admin → 204 when empty; **409** `{"error": {"message", "counts": {"api_keys": 2, "providers": 1, …}}}` while it holds any key, provider, model, policy, preset, trace export, knowledge base or limited management token (nothing is cascade-deleted); 400 for the default |
+| GET | `/api/orgs/{org}/workspaces/{ws}/members` | workspace admin → `[{user_id, email, name, role, via}]`, `via` = `org_role` (owners/admins; everyone in the default), `member` (added) or `idp` (group mapping) |
+| PUT | `/api/orgs/{org}/workspaces/{ws}/members/{user} {role}` | workspace admin; the user must be an org member; not on the default workspace (400) |
+| DELETE | `/api/orgs/{org}/workspaces/{ws}/members/{user}` | workspace admin |
+
+Scoped resources: create bodies take `workspace_id` (the caller needs that workspace's role:
+member for keys, admin for the rest; an unknown id → 400, a workspace the caller is not in → 404).
+Updates keep the stored workspace; naming another → 400 (`workspace_id cannot change`). List
+endpoints (`keys`, `providers`, `models`, `policies`, `presets`, `trace-exports`, `kbs`) take
+`?workspace=<id>`; without it they show every workspace the caller may see (admin-only lists answer
+403 to someone who administers no workspace). Keys: workspace admins see every key of the
+workspace, members and viewers only keys they created. `GET /api/orgs/{org}/logs` and
+`/logs/export.csv` take `?workspace=` (request logs carry the key's `workspace_id`).
+
+Request path (`/v1`): a key uses public models, and the private models and presets of its own
+workspace. An org provider serves keys and models of its workspace only, unless
+`shared_across_workspaces: true` (set by org admins only), which lets every workspace's models
+target it. Private models may only target providers usable in their workspace (400 otherwise), and
+the gateway re-checks at request time (unsharing a provider stops other workspaces at once). Model
+ids and preset slugs stay unique per org. A key's `kb_ids`, `X-GW-KB` and `/v1/vector_stores` see
+only knowledge bases of the key's workspace.
+
+Policies: `is_org_default` policies apply to every key of every workspace (org admins only; they
+live in the default workspace). A policy with `workspace_id` and `is_workspace_default: true`
+applies to every key of that workspace, and its budget is a **workspace budget**: one counter for
+all keys of the workspace (effective policy budget `scope: "workspace"`, `subject` = workspace id or
+`default`). Member and key assignments work as before; assigned keys must be in the policy's
+workspace.
+
+Trace exports: an org export in a workspace receives only that workspace's requests; exports of
+the default workspace receive every workspace's requests.
+
+Usage: `GET /api/orgs/{org}/usage?group=workspace` adds `"workspaces"` rows (key = workspace id,
+`default` for the default); `?workspace=<id>` limits totals, daily and key rows to that workspace's
+keys (`models` is empty then: rollups are per key and per model, not both). CSV export:
+`group=workspace`, and `?workspace=` with `group=key|creator|workspace|day` (not `model`, 400).
+
+Management tokens: `POST …/mgmt-tokens` takes `workspace_id` to limit a token to one workspace
+(`default` included). A limited token acts with the lower of its role and its creator's role in
+that workspace, only on the workspace-aware routes above (keys, providers, models, policies,
+presets, trace exports, workspaces list/members); org routes (members, usage, logs, webhooks, …)
+answer 403. Resources it creates default to its workspace; other workspaces answer 404.
+
+`/api/auth/me` (and `/api/auth/session`) list per org `workspaces: [{id, name, slug, is_default,
+role, …}]` the user is in.
+
+SSO / SCIM group mappings (`PUT /api/orgs/{org}/sso/group-mappings`) may set `workspace_id`: users
+in that IdP group get `role` (default `member`) in that workspace; the org role is set only by
+mappings without `workspace_id`. A group may have one org mapping and one per workspace. Group
+changes (SCIM) and SAML sign-ins add, update or remove these `idp` memberships; memberships added
+by hand are left alone. The default workspace cannot be mapped (every member is in it).
 
 ### Management tokens
 

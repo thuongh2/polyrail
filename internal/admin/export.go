@@ -94,8 +94,18 @@ func (a *API) exportUsage(w http.ResponseWriter, r *http.Request) {
 	if group == "" {
 		group = "model"
 	}
-	if group != "model" && group != "key" && group != "creator" && group != "day" || (org == "_" && (group == "key" || group == "creator")) {
-		fail(w, fmt.Errorf("%w: group must be model, key, creator or day (platform: model or day)", store.ErrInvalid))
+	if group != "model" && group != "key" && group != "creator" && group != "day" && group != "workspace" ||
+		(org == "_" && (group == "key" || group == "creator" || group == "workspace")) {
+		fail(w, fmt.Errorf("%w: group must be model, key, creator, workspace or day (platform: model or day)", store.ErrInvalid))
+		return
+	}
+	keyWS, only, err := a.usageWorkspaces(r, org, group == "workspace")
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if only != nil && group == "model" {
+		fail(w, fmt.Errorf("%w: usage by model cannot be filtered by workspace (rollups are per key or per model)", store.ErrInvalid))
 		return
 	}
 	from, to, err := exportRange(r, 30)
@@ -144,7 +154,12 @@ func (a *API) exportUsage(w http.ResponseWriter, r *http.Request) {
 		var total store.Agg
 		for k, v := range m {
 			rest := strings.TrimPrefix(k, prefix)
+			if only != nil && (!strings.HasPrefix(rest, "k/") || !only(keyWS[rest[2:]])) {
+				continue
+			}
 			switch {
+			case only != nil && group == "day": // one workspace: the day total is its keys' sum
+				total.Add(v)
 			case rest == "t":
 				total = v
 			case strings.HasPrefix(rest, "m/"):
@@ -154,8 +169,11 @@ func (a *API) exportUsage(w http.ResponseWriter, r *http.Request) {
 				if group == "model" {
 					rows[rest[2:]] = v
 				}
-			case strings.HasPrefix(rest, "k/") && (group == "key" || group == "creator"):
+			case strings.HasPrefix(rest, "k/") && (group == "key" || group == "creator" || group == "workspace"):
 				name := rest[2:]
+				if group == "workspace" {
+					name = store.WSRef(keyWS[name])
+				}
 				if group == "creator" {
 					if name = creator[name]; name == "" {
 						name = "unknown"
@@ -200,12 +218,22 @@ func (a *API) exportLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-GW-Row-Cap", strconv.Itoa(maxExportLogs))
 	cw := csvHeaders(w, fmt.Sprintf("logs-%s-%s.csv", store.Day(from), store.Day(to)))
 	rc := http.NewResponseController(w)
+	ws, filter := "", r.URL.Query().Get("workspace") != ""
+	if filter {
+		if ws, err = a.resolveWS(r, r.URL.Query().Get("workspace")); err != nil {
+			fail(w, err)
+			return
+		}
+	}
 	if err := writeRow(cw, "id", "at", "key_id", "model", "provider", "upstream_model", "status", "error", "in_tokens",
 		"out_tokens", "cost_usd", "latency_ms", "cached", "stream", "kb_chunks", "end_user"); err != nil {
 		return
 	}
 	n := 0
 	err = a.S.EachLog(r.Context(), org, from, to, func(l store.RequestLog) (bool, error) {
+		if filter && l.Workspace != ws {
+			return true, nil
+		}
 		n++
 		if err := writeRow(cw, l.ID, l.At.UTC().Format(time.RFC3339Nano), l.KeyID, l.Model, l.Provider, l.Upstream,
 			strconv.Itoa(l.Status), l.Error, strconv.Itoa(l.InTokens), strconv.Itoa(l.OutTokens),

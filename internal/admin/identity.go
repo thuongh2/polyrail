@@ -457,11 +457,12 @@ func (a *API) putGroupMappings(w http.ResponseWriter, r *http.Request) {
 	for i := range in {
 		m := &in[i]
 		m.Group, m.WorkspaceID = strings.TrimSpace(m.Group), strings.TrimSpace(m.WorkspaceID)
-		if m.Group == "" || len(m.Group) > 256 || seen[strings.ToLower(m.Group)] {
-			fail(w, fmt.Errorf("%w: each mapping needs a unique group name (at most 256 characters)", store.ErrInvalid))
+		gk := strings.ToLower(m.Group) + "\x00" + store.WSRef(store.WSID(m.WorkspaceID)) // one org mapping and one per workspace per group
+		if m.Group == "" || len(m.Group) > 256 || seen[gk] {
+			fail(w, fmt.Errorf("%w: each mapping needs a group name (at most 256 characters), unique per workspace", store.ErrInvalid))
 			return
 		}
-		seen[strings.ToLower(m.Group)] = true
+		seen[gk] = true
 		if m.Role == "" && m.WorkspaceID == "" {
 			fail(w, fmt.Errorf("%w: mapping %q needs a role", store.ErrInvalid, m.Group))
 			return
@@ -471,6 +472,14 @@ func (a *API) putGroupMappings(w http.ResponseWriter, r *http.Request) {
 				fail(w, err)
 				return
 			}
+		}
+		if m.WorkspaceID != "" { // the IdP group adds its users to this workspace with Role (default member)
+			x, err := a.S.GetWorkspace(r.Context(), r.PathValue("org"), m.WorkspaceID)
+			if err != nil || x.IsDefault {
+				fail(w, fmt.Errorf("%w: mapping %q: workspace %q not found (every member is in the default workspace already)", store.ErrInvalid, m.Group, m.WorkspaceID))
+				return
+			}
+			m.WorkspaceID = x.ID
 		}
 	}
 	org := r.PathValue("org")

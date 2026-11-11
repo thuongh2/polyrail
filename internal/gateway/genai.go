@@ -258,7 +258,7 @@ func genaiModel(m store.Model) gemini.GeminiModel {
 
 // genaiVisible lists the chat and embedding models this key may use.
 func (g *Gateway) genaiVisible(p *principal) []store.Model {
-	return slices.DeleteFunc(g.snap.Load().Visible(p.Org.ID), func(m store.Model) bool {
+	return slices.DeleteFunc(g.snap.Load().Visible(p.Org.ID, p.ws()), func(m store.Model) bool {
 		return (m.Kind != "chat" && m.Kind != "embedding") || (len(p.Key.Models) > 0 && !slices.Contains(p.Key.Models, m.ID))
 	})
 }

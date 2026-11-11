@@ -154,6 +154,24 @@ func TestExportFiltersAndContentGating(t *testing.T) {
 	}
 }
 
+func TestExportWorkspaceFilter(t *testing.T) {
+	s, o := newStore(t)
+	org := put(t, s, store.TraceExport{OrgID: o.ID, Endpoint: "http://a/v1/traces", SampleRate: 1, Enabled: true})
+	ws := put(t, s, store.TraceExport{OrgID: o.ID, WorkspaceID: "w1", Endpoint: "http://b/v1/traces", SampleRate: 1, Enabled: true})
+	e := New(s, true, 1000)
+	if err := e.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	tr := sampleTrace()
+	tr.Log.OrgID = o.ID
+	e.Export(tr) // a default-workspace key
+	tr.Log.Workspace, tr.Log.ID = "w1", "fedcba9876543210"
+	e.Export(tr)
+	if a, b := len(e.sinks[org.ID].buf), len(e.sinks[ws.ID].buf); a != 2 || b != 1 {
+		t.Fatalf("default-workspace export %d spans (want 2), w1 export %d (want 1)", a, b)
+	}
+}
+
 func TestFairShare(t *testing.T) {
 	s, o := newStore(t)
 	other := &store.Org{Name: "other"}

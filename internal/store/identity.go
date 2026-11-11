@@ -28,7 +28,7 @@ type Domain struct {
 }
 
 // GroupMapping maps an IdP group (SCIM group displayName or SAML groups attribute value) to an
-// org role. WorkspaceID is stored for workspaces (a later wave) and not used yet.
+// org role, or with WorkspaceID to a role in that workspace (D31; the org role is unchanged).
 type GroupMapping struct {
 	Group       string `json:"group"`
 	Role        Role   `json:"role"`

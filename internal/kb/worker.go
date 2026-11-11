@@ -119,7 +119,7 @@ func (s *Service) process(ctx context.Context, owner string, job *store.KBJob, d
 			n += len(inputs[end])
 			end++
 		}
-		vecs, err := s.emb.Embed(ctx, job.OrgID, doc.KeyID, k.EmbedModel, k.Dimensions, inputs[start:end])
+		vecs, err := s.emb.Embed(store.WithWorkspace(ctx, k.WorkspaceID), job.OrgID, doc.KeyID, k.EmbedModel, k.Dimensions, inputs[start:end])
 		if errors.Is(err, ErrInsufficientCredits) {
 			fail("insufficient credits", true)
 			return

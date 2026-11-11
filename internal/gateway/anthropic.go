@@ -117,7 +117,7 @@ func (g *Gateway) AnthropicModels(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := anthropic.AnthropicListModelsResponse{Data: []anthropic.AnthropicModel{}}
-	for _, m := range g.snap.Load().Visible(p.Org.ID) {
+	for _, m := range g.snap.Load().Visible(p.Org.ID, p.ws()) {
 		if m.Kind == "chat" && (len(p.Key.Models) == 0 || slices.Contains(p.Key.Models, m.ID)) {
 			out.Data = append(out.Data, anthropic.AnthropicModel{ID: m.ID, Type: "model", DisplayName: m.Name, CreatedAt: m.CreatedAt.UTC()})
 		}

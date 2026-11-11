@@ -233,9 +233,15 @@ func TestSAMLLogin(t *testing.T) {
 	expect(t, f.do(t, "owner", "PUT", "/api/orgs/"+org+"/sso/saml", `{"enabled":true,"idp_metadata_xml":"<x/>"}`), 400, "bad metadata")
 	expect(t, f.do(t, "owner", "PUT", "/api/orgs/"+org+"/sso/saml", `{"enabled":true,"idp_metadata_url":"http://127.0.0.1:1/m"}`), 400, "metadata URL on a private address")
 	samlOrg(t, f, idp, `,"attribute_groups":"groups"`)
-	expect(t, f.do(t, "owner", "PUT", "/api/orgs/"+org+"/sso/group-mappings", `[{"group":"Platform Admins","role":"admin","workspace_id":"ws1"}]`), 200, "group mappings")
+	expect(t, f.do(t, "owner", "PUT", "/api/orgs/"+org+"/sso/group-mappings", `[{"group":"Platform Admins","role":"admin","workspace_id":"ws1"}]`), 400, "unknown workspace")
+	ws1 := &store.Workspace{OrgID: org, Name: "One", Slug: "one"}
+	if err := f.s.CreateWorkspace(context.Background(), ws1); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, f.do(t, "owner", "PUT", "/api/orgs/"+org+"/sso/group-mappings",
+		`[{"group":"Platform Admins","role":"admin"},{"group":"Platform Admins","role":"viewer","workspace_id":"`+ws1.ID+`"}]`), 200, "group mappings")
 	sso := f.do(t, "owner", "GET", "/api/orgs/"+org+"/sso", "")
-	if strings.Contains(sso.body, "PRIVATE KEY") || !strings.Contains(sso.body, "BEGIN CERTIFICATE") || !strings.Contains(sso.body, `"workspace_id":"ws1"`) {
+	if strings.Contains(sso.body, "PRIVATE KEY") || !strings.Contains(sso.body, "BEGIN CERTIFICATE") || !strings.Contains(sso.body, `"workspace_id":"`+ws1.ID+`"`) {
 		t.Fatalf("sso view: %s", sso.body)
 	}
 
@@ -261,6 +267,9 @@ func TestSAMLLogin(t *testing.T) {
 	}
 	if m, err := f.s.GetMember(context.Background(), org, u.ID); err != nil || m.Role != store.RoleAdmin {
 		t.Fatalf("membership: %+v %v", m, err)
+	}
+	if wm, err := f.s.GetWorkspaceMember(context.Background(), org, ws1.ID, u.ID); err != nil || wm.Role != store.RoleViewer || !wm.IdP {
+		t.Fatalf("workspace membership from the group mapping: %+v %v", wm, err)
 	}
 	if _, ok := f.a.sign.verify("sess", sess.Value); !ok {
 		t.Fatal("session cookie does not verify")

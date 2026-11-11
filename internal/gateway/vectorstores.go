@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/polyrail/polyrail/internal/kb"
@@ -52,6 +53,11 @@ func (g *Gateway) vsAuth(w http.ResponseWriter, r *http.Request) *principal {
 	}
 	if e == nil {
 		e = g.admit(r.Context(), p)
+	}
+	if e == nil && r.PathValue("id") != "" { // a vector store of another workspace does not exist for this key (D31)
+		if k, err := g.KB.GetKB(r.Context(), p.Org.ID, r.PathValue("id")); err == nil && store.WSID(k.WorkspaceID) != p.ws() {
+			e = kbError(store.ErrNotFound)
+		}
 	}
 	if e != nil {
 		writeError(w, e)
@@ -208,7 +214,7 @@ func (g *Gateway) CreateVectorStore(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		req.Name = "vector store"
 	}
-	k := &store.KB{OrgID: p.Org.ID, Name: req.Name, EmbedModel: req.EmbeddingModel, Dimensions: req.Dimensions,
+	k := &store.KB{OrgID: p.Org.ID, WorkspaceID: p.ws(), Name: req.Name, EmbedModel: req.EmbeddingModel, Dimensions: req.Dimensions,
 		CreatedByKey: p.Key.ID, Metadata: req.Metadata}
 	if cs := req.ChunkingStrategy; cs != nil && cs.Type == "static" && cs.Static != nil {
 		k.ChunkChars, k.OverlapChars = cs.Static.MaxChunkSizeTokens*4, cs.Static.ChunkOverlapTokens*4
@@ -239,6 +245,7 @@ func (g *Gateway) ListVectorStores(w http.ResponseWriter, r *http.Request) {
 		writeError(w, kbError(err))
 		return
 	}
+	ks = slices.DeleteFunc(ks, func(k store.KB) bool { return store.WSID(k.WorkspaceID) != p.ws() })
 	data := make([]vsObject, 0, len(ks))
 	for i := range ks {
 		o, err := g.vsOf(r, &ks[i])

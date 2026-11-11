@@ -116,21 +116,22 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/orgs/{org}/members", a.org(store.RoleAdmin, a.addMember))
 	mux.HandleFunc("PUT /api/orgs/{org}/members/{user}", a.org(store.RoleAdmin, a.setMemberRole))
 	mux.HandleFunc("DELETE /api/orgs/{org}/members/{user}", a.org(store.RoleAdmin, a.removeMember))
-	mux.HandleFunc("GET /api/orgs/{org}/keys", a.org(store.RoleViewer, a.listKeys))
-	mux.HandleFunc("POST /api/orgs/{org}/keys", a.org(store.RoleMember, a.createKey))
-	mux.HandleFunc("PATCH /api/orgs/{org}/keys/{id}", a.org(store.RoleMember, a.patchKey))
-	mux.HandleFunc("POST /api/orgs/{org}/keys/{id}/rotate", a.org(store.RoleMember, a.rotateKey))
-	mux.HandleFunc("GET /api/orgs/{org}/providers", a.org(store.RoleAdmin, a.listProviders))
-	mux.HandleFunc("POST /api/orgs/{org}/providers", a.org(store.RoleAdmin, a.putProvider))
-	mux.HandleFunc("GET /api/orgs/{org}/providers/{id}", a.org(store.RoleAdmin, a.getProvider))
-	mux.HandleFunc("PUT /api/orgs/{org}/providers/{id}", a.org(store.RoleAdmin, a.putProvider))
-	mux.HandleFunc("DELETE /api/orgs/{org}/providers/{id}", a.org(store.RoleAdmin, a.deleteProvider))
+	// workspace-aware routes (a.ws, workspaces.go): handlers check the caller's workspace role
+	mux.HandleFunc("GET /api/orgs/{org}/keys", a.ws(a.listKeys))
+	mux.HandleFunc("POST /api/orgs/{org}/keys", a.ws(a.createKey))
+	mux.HandleFunc("PATCH /api/orgs/{org}/keys/{id}", a.ws(a.patchKey))
+	mux.HandleFunc("POST /api/orgs/{org}/keys/{id}/rotate", a.ws(a.rotateKey))
+	mux.HandleFunc("GET /api/orgs/{org}/providers", a.ws(a.listProviders))
+	mux.HandleFunc("POST /api/orgs/{org}/providers", a.ws(a.putProvider))
+	mux.HandleFunc("GET /api/orgs/{org}/providers/{id}", a.ws(a.getProvider))
+	mux.HandleFunc("PUT /api/orgs/{org}/providers/{id}", a.ws(a.putProvider))
+	mux.HandleFunc("DELETE /api/orgs/{org}/providers/{id}", a.ws(a.deleteProvider))
 	mux.HandleFunc("POST /api/orgs/{org}/providers/{id}/discover", a.org(store.RoleAdmin, a.discoverModels))
 	mux.HandleFunc("POST /api/orgs/{org}/providers/{id}/import", a.org(store.RoleAdmin, a.importModels))
-	mux.HandleFunc("GET /api/orgs/{org}/models", a.org(store.RoleViewer, a.listModels))
-	mux.HandleFunc("POST /api/orgs/{org}/models", a.org(store.RoleAdmin, a.putModel))
-	mux.HandleFunc("PUT /api/orgs/{org}/models/{id...}", a.org(store.RoleAdmin, a.putModel))
-	mux.HandleFunc("DELETE /api/orgs/{org}/models/{id...}", a.org(store.RoleAdmin, a.deleteModel))
+	mux.HandleFunc("GET /api/orgs/{org}/models", a.ws(a.listModels))
+	mux.HandleFunc("POST /api/orgs/{org}/models", a.ws(a.putModel))
+	mux.HandleFunc("PUT /api/orgs/{org}/models/{id...}", a.ws(a.putModel))
+	mux.HandleFunc("DELETE /api/orgs/{org}/models/{id...}", a.ws(a.deleteModel))
 	mux.HandleFunc("GET /api/orgs/{org}/usage", a.org(store.RoleViewer, a.usageReport))
 	mux.HandleFunc("GET /api/orgs/{org}/usage/export.csv", a.org(store.RoleViewer, a.exportUsage))
 	mux.HandleFunc("GET /api/orgs/{org}/logs", a.org(store.RoleViewer, a.listLogs))
@@ -174,6 +175,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerPresets(mux)
 	a.registerMgmt(mux)
 	a.registerIdentity(mux)
+	a.registerWorkspaces(mux)
 
 	// Unknown API paths answer JSON 404 instead of falling through to the UI's index.html.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, http.StatusNotFound, "not found") })
@@ -233,8 +235,13 @@ func (a *API) platform(h http.HandlerFunc) http.HandlerFunc {
 
 // org requires membership of {org} with at least min role. Operators act as owners everywhere.
 // Non-members get 404 so org ids cannot be probed. A management token (mgmt.go) authenticates
-// instead of the session when sent as the bearer.
+// instead of the session when sent as the bearer; workspace-limited tokens only pass
+// workspace-aware routes (a.ws).
 func (a *API) org(min store.Role, h http.HandlerFunc) http.HandlerFunc {
+	return a.orgAuth(min, false, h)
+}
+
+func (a *API) orgAuth(min store.Role, wsAware bool, h http.HandlerFunc) http.HandlerFunc {
 	sess := a.authed(func(w http.ResponseWriter, r *http.Request) {
 		u, orgID := user(r), r.PathValue("org")
 		var rl store.Role
@@ -260,7 +267,7 @@ func (a *API) org(min store.Role, h http.HandlerFunc) http.HandlerFunc {
 	})
 	return func(w http.ResponseWriter, r *http.Request) {
 		if tok := mgmtBearer(r); tok != "" {
-			a.tokenOrg(min, h, w, r, tok)
+			a.tokenOrg(min, wsAware, h, w, r, tok)
 			return
 		}
 		sess(w, r)
@@ -395,14 +402,15 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type orgRef struct {
-		ID   string     `json:"id"`
-		Name string     `json:"name"`
-		Role store.Role `json:"role"`
+		ID         string          `json:"id"`
+		Name       string          `json:"name"`
+		Role       store.Role      `json:"role"`
+		Workspaces []workspaceView `json:"workspaces"` // the workspaces the user is in, with their role (D31)
 	}
 	orgs := []orgRef{}
 	for id, rl := range roles {
 		if o, err := a.S.GetOrg(r.Context(), id); err == nil {
-			orgs = append(orgs, orgRef{id, o.Name, rl})
+			orgs = append(orgs, orgRef{id, o.Name, rl, a.workspaceRefs(r.Context(), id, u.ID, rl)})
 		}
 	}
 	sort.Slice(orgs, func(i, j int) bool { return orgs[i].Name < orgs[j].Name })
@@ -575,7 +583,7 @@ func (a *API) checkSemanticCache(org string, sc *store.SemanticCache) (*store.Se
 	if sc.Model == "" {
 		return nil, nil
 	}
-	if m, ok := a.G.Snapshot().Model(org, sc.Model); !ok || m.Kind != "embedding" {
+	if m, ok := a.G.Snapshot().Model(org, "", sc.Model); !ok || m.Kind != "embedding" { // the org-level cache uses the default workspace's models
 		return nil, fmt.Errorf("%w: semantic_cache.model must be an embedding model available to the organization", store.ErrInvalid)
 	}
 	out := *sc
@@ -780,9 +788,19 @@ func (a *API) listKeys(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if role(r).Rank() < store.RoleAdmin.Rank() { // members and viewers see only keys they created
-		keys = slices.DeleteFunc(keys, func(k store.APIKey) bool { return k.CreatedBy != user(r).ID })
+	show, err := a.wsFilter(r, store.RoleViewer)
+	if err != nil {
+		fail(w, err)
+		return
 	}
+	admin, err := a.wsFilter(r, store.RoleAdmin)
+	if err != nil {
+		admin = func(string) bool { return false }
+	}
+	// workspace admins see every key of their workspaces; members and viewers only keys they created
+	keys = slices.DeleteFunc(keys, func(k store.APIKey) bool {
+		return !show(k.WorkspaceID) || (!admin(k.WorkspaceID) && k.CreatedBy != user(r).ID)
+	})
 	if keys == nil {
 		keys = []store.APIKey{}
 	}
@@ -813,11 +831,14 @@ func (a *API) rotateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	org, id := r.PathValue("org"), r.PathValue("id")
 	cur, err := a.S.GetKey(r.Context(), org, id)
+	if err == nil {
+		err = a.wsCan(r, cur.WorkspaceID, store.RoleMember)
+	}
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	if role(r).Rank() < store.RoleAdmin.Rank() && cur.CreatedBy != user(r).ID {
+	if a.wsCan(r, cur.WorkspaceID, store.RoleAdmin) != nil && cur.CreatedBy != user(r).ID {
 		fail(w, errForbidden)
 		return
 	}
@@ -845,7 +866,8 @@ type keyInput struct {
 	MCPServers       *[]string `json:"mcp_servers"`
 	ExpiresInDays    *int      `json:"expires_in_days"`
 	Revoked          *bool     `json:"revoked"`
-	KBIDs            *[]string `json:"kb_ids"` // admin only; validated by checkKBIDs
+	KBIDs            *[]string `json:"kb_ids"`       // admin only; validated by checkKBIDs
+	WorkspaceID      string    `json:"workspace_id"` // create only ("" = default workspace)
 }
 
 func (in keyInput) apply(k *store.APIKey) {
@@ -889,10 +911,18 @@ func (a *API) createKey(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if !a.keyKBs(w, r, &in) {
+	ws, err := a.resolveWS(r, in.WorkspaceID)
+	if err == nil {
+		err = a.wsCan(r, ws, store.RoleMember)
+	}
+	if err != nil {
+		fail(w, err)
 		return
 	}
-	k := &store.APIKey{OrgID: r.PathValue("org"), CreatedBy: user(r).ID, Prefix: secret[:12]}
+	if !a.keyKBs(w, r, &in, ws) {
+		return
+	}
+	k := &store.APIKey{OrgID: r.PathValue("org"), WorkspaceID: ws, CreatedBy: user(r).ID, Prefix: secret[:12]}
 	in.Revoked = nil
 	in.apply(k)
 	if strings.TrimSpace(k.Name) == "" {
@@ -915,18 +945,24 @@ func (a *API) patchKey(w http.ResponseWriter, r *http.Request) {
 	}
 	org, id := r.PathValue("org"), r.PathValue("id")
 	cur, err := a.S.GetKey(r.Context(), org, id)
+	if err == nil {
+		err = a.wsCan(r, cur.WorkspaceID, store.RoleMember)
+	}
+	if err == nil {
+		_, err = a.keepWS(r, cur.WorkspaceID, in.WorkspaceID)
+	}
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	if role(r).Rank() < store.RoleAdmin.Rank() {
+	if a.wsCan(r, cur.WorkspaceID, store.RoleAdmin) != nil {
 		// members may rename or revoke their own keys, not lift limits an admin set
 		if cur.CreatedBy != user(r).ID || in.RPM != nil || in.TPM != nil || in.MonthlyBudgetUSD != nil || in.Models != nil || in.MCPServers != nil || in.ExpiresInDays != nil || in.KBIDs != nil {
 			fail(w, errForbidden)
 			return
 		}
 	}
-	if !a.keyKBs(w, r, &in) {
+	if !a.keyKBs(w, r, &in, store.WSID(cur.WorkspaceID)) {
 		return
 	}
 	k, err := a.S.UpdateKey(r.Context(), org, id, func(k *store.APIKey) error { in.apply(k); return nil })
@@ -1108,9 +1144,14 @@ func (a *API) listProviders(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	show, err := a.wsFilter(r, store.RoleAdmin)
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	out := []store.Provider{}
 	for _, p := range ps {
-		if p.OrgID == owner(r) {
+		if p.OrgID == owner(r) && show(p.WorkspaceID) {
 			out = append(out, redact(p))
 		}
 	}
@@ -1122,6 +1163,10 @@ func (a *API) getProvider(w http.ResponseWriter, r *http.Request) {
 	p, err := a.S.GetProvider(r.Context(), r.PathValue("id"))
 	if err != nil || p.OrgID != owner(r) {
 		fail(w, store.ErrNotFound)
+		return
+	}
+	if err := a.wsCan(r, p.WorkspaceID, store.RoleAdmin); err != nil {
+		fail(w, err)
 		return
 	}
 	writeJSON(w, 200, redact(*p))
@@ -1147,6 +1192,12 @@ func (a *API) putProvider(w http.ResponseWriter, r *http.Request) {
 		if o, err := a.S.GetProvider(r.Context(), p.ID); err == nil && o.OrgID == p.OrgID {
 			old = o
 		}
+	}
+	if p.OrgID == "" {
+		p.WorkspaceID, p.SharedAcrossWorkspaces = "", false // platform providers are public
+	} else if err := a.providerWS(r, &p, old); err != nil {
+		fail(w, err)
+		return
 	}
 	if err := checkKeyConfig(&p, old, p.OrgID != "", p.OrgID == "" || a.cfg.AllowPrivateURLs); err != nil {
 		fail(w, err)
@@ -1177,6 +1228,10 @@ func (a *API) deleteProvider(w http.ResponseWriter, r *http.Request) {
 	p, err := a.S.GetProvider(r.Context(), id)
 	if err != nil || p.OrgID != owner(r) {
 		fail(w, store.ErrNotFound)
+		return
+	}
+	if err := a.wsCan(r, p.WorkspaceID, store.RoleAdmin); err != nil {
+		fail(w, err)
 		return
 	}
 	if err := a.S.DeleteProvider(r.Context(), id); err != nil {
@@ -1220,6 +1275,12 @@ func (a *API) listModels(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	show, err := a.wsFilter(r, store.RoleViewer)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	ms = slices.DeleteFunc(ms, func(m store.Model) bool { return m.OrgID != "" && !show(m.WorkspaceID) })
 	out := make([]modelView, 0, len(ms))
 	for _, m := range ms {
 		v := modelView{ModelInfo: gateway.Info(m), Enabled: m.Enabled, Owner: "platform"}
@@ -1247,6 +1308,22 @@ func (a *API) putModel(w http.ResponseWriter, r *http.Request) {
 		fail(w, fmt.Errorf("%w: model id must look like vendor/name (letters, digits, . _ : - /)", store.ErrInvalid))
 		return
 	}
+	if m.OrgID == "" {
+		m.WorkspaceID = ""
+	} else {
+		var err error
+		if old, gerr := a.S.GetModel(r.Context(), m.OrgID, m.ID); gerr == nil {
+			if err = a.wsCan(r, old.WorkspaceID, store.RoleAdmin); err == nil {
+				m.WorkspaceID, err = a.keepWS(r, old.WorkspaceID, m.WorkspaceID)
+			}
+		} else if m.WorkspaceID, err = a.resolveWS(r, m.WorkspaceID); err == nil {
+			err = a.wsCan(r, m.WorkspaceID, store.RoleAdmin)
+		}
+		if err != nil {
+			fail(w, err)
+			return
+		}
+	}
 	if err := a.S.PutModel(r.Context(), &m); err != nil {
 		fail(w, err)
 		return
@@ -1259,7 +1336,11 @@ var reModelID = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._:/-]+$`)
 
 func (a *API) deleteModel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, err := a.S.GetModel(r.Context(), owner(r), id); err != nil {
+	m, err := a.S.GetModel(r.Context(), owner(r), id)
+	if err == nil {
+		err = a.wsCan(r, m.WorkspaceID, store.RoleAdmin)
+	}
+	if err != nil {
 		fail(w, err)
 		return
 	}
@@ -1274,7 +1355,7 @@ func (a *API) deleteModel(w http.ResponseWriter, r *http.Request) {
 func (a *API) publicModels(w http.ResponseWriter, r *http.Request) {
 	out := []gateway.ModelInfo{}
 	snap := a.G.Snapshot()
-	for _, m := range snap.Visible("") {
+	for _, m := range snap.Visible("", "") {
 		if m.OrgID == "" {
 			out = append(out, snap.Info(m))
 		}
@@ -1323,12 +1404,17 @@ func (a *API) usageReport(w http.ResponseWriter, r *http.Request) {
 	}
 	org := r.PathValue("org")
 	group := r.URL.Query().Get("group")
-	if group != "" && (group != "end_user" || org == "_") {
-		writeErr(w, http.StatusBadRequest, "group must be end_user (organization usage only)")
+	if group != "" && ((group != "end_user" && group != "workspace") || org == "_") {
+		writeErr(w, http.StatusBadRequest, "group must be end_user or workspace (organization usage only)")
+		return
+	}
+	keyWS, only, err := a.usageWorkspaces(r, org, group == "workspace")
+	if err != nil {
+		fail(w, err)
 		return
 	}
 	daily := []usageRow{}
-	byModel, byKey, byUser := map[string]store.Agg{}, map[string]store.Agg{}, map[string]store.Agg{}
+	byModel, byKey, byUser, byWS := map[string]store.Agg{}, map[string]store.Agg{}, map[string]store.Agg{}, map[string]store.Agg{}
 	var total store.Agg
 	now := time.Now()
 	for d := days - 1; d >= 0; d-- {
@@ -1343,6 +1429,19 @@ func (a *API) usageReport(w http.ResponseWriter, r *http.Request) {
 		for k, v := range m {
 			rest := strings.TrimPrefix(k, prefix)
 			switch {
+			case only != nil: // one workspace: its keys' rollups make the totals (no per-model rows)
+				if !strings.HasPrefix(rest, "k/") || !only(keyWS[rest[2:]]) {
+					continue
+				}
+				dayTotal.Add(v)
+				cur := byKey[rest[2:]]
+				cur.Add(v)
+				byKey[rest[2:]] = cur
+				if group == "workspace" {
+					cur := byWS[store.WSRef(keyWS[rest[2:]])]
+					cur.Add(v)
+					byWS[store.WSRef(keyWS[rest[2:]])] = cur
+				}
 			case rest == "t":
 				dayTotal = v
 			case strings.HasPrefix(rest, "m/"):
@@ -1356,6 +1455,11 @@ func (a *API) usageReport(w http.ResponseWriter, r *http.Request) {
 				cur := byKey[rest[2:]]
 				cur.Add(v)
 				byKey[rest[2:]] = cur
+				if group == "workspace" {
+					cur := byWS[store.WSRef(keyWS[rest[2:]])]
+					cur.Add(v)
+					byWS[store.WSRef(keyWS[rest[2:]])] = cur
+				}
 			}
 		}
 		total.Add(dayTotal)
@@ -1375,6 +1479,9 @@ func (a *API) usageReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out := map[string]any{"total": row("total", total), "daily": daily, "models": rows(byModel), "keys": rows(byKey)}
+	if group == "workspace" {
+		out["workspaces"] = rows(byWS) // key: workspace id ("default" for the default workspace)
+	}
 	if group == "end_user" {
 		eu := rows(byUser)
 		out["end_users"] = eu[:min(len(eu), 1000)] // shortcut: top 1000 by cost; page when someone needs the tail
@@ -1391,6 +1498,14 @@ func (a *API) listLogs(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fail(w, err)
 		return
+	}
+	if q := r.URL.Query().Get("workspace"); q != "" {
+		ws, err := a.resolveWS(r, q)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		logs = slices.DeleteFunc(logs, func(l store.RequestLog) bool { return l.Workspace != ws })
 	}
 	if logs == nil {
 		logs = []store.RequestLog{}

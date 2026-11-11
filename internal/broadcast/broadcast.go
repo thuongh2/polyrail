@@ -249,7 +249,8 @@ func (e *Exporter) Export(tr gateway.Trace) {
 	kicked := false
 	for _, s := range append(slices.Clip(e.byOrg[l.OrgID]), e.byOrg[""]...) {
 		c := s.cfg
-		if !c.Enabled || (len(c.KeyIDs) > 0 && !slices.Contains(c.KeyIDs, l.KeyID)) || !sampled(l.ID, c.SampleRate) {
+		if !c.Enabled || (len(c.KeyIDs) > 0 && !slices.Contains(c.KeyIDs, l.KeyID)) || !sampled(l.ID, c.SampleRate) ||
+			(store.WSID(c.WorkspaceID) != "" && store.WSID(c.WorkspaceID) != l.Workspace) { // workspace exports see their keys only (D31)
 			continue
 		}
 		if e.total >= e.capacity || e.pending[c.OrgID] >= share {

@@ -38,3 +38,9 @@ models → that org's providers. Prevents tenants re-pricing platform capacity (
 
 **D11 Cost rounding.** Per-request cost is rounded to the nearest micro-USD (unbiased over many
 requests); stored as int64 micro-USD.
+
+**D12 Web UI: React + Vite + Tailwind + shadcn/ui, prebuilt and embedded.** The owner asked for an
+OpenRouter-like UI on shadcn. Built files are committed in `internal/web/dist` so Go builds need no
+Node; no chart or state libraries (hand-written SVG charts, `useAsync`), wouter for routing, console
+lazy-loaded. Initial JS 74 kB gzip. CSP keeps `script-src 'self'`; styles allow inline attributes
+(Radix positioning).

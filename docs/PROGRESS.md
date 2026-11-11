@@ -23,6 +23,14 @@ Legend: [ ] todo · [x] done (evidence: the tests named in docs/TESTING.md, run 
 - [x] T15 ClickHouse raw log sink (tested against a fake HTTP server only)
 - [x] T16 compose for scale mode (not run here)
 
+## Milestone 3 — OpenRouter-style UI (2026-11-11)
+- [x] T17 Provider health rollups + `/api/public/models/{id}` and `/api/public/status` (backend agent, tests)
+- [x] T18 Vite + React + Tailwind + shadcn scaffold, SPA serving from Go (`internal/web`, test)
+- [x] T19 Public pages: home, models with filters, model detail (providers, 72 h uptime, API samples), status, docs, login (public UI agent)
+- [x] T20 Console: activity, logs, playground (streaming chat), keys, credits, members, settings, audit, account (console UI agent)
+- [x] T21 Platform: providers, models with routing editor, organizations, users, MCP (platform UI agent)
+- [x] T22 UI review (slop, a11y, security): open redirect in login fixed, clipboard over http, contrast tokens, bundle 74 kB gzip
+
 ## Reviews
 - [x] Security review → docs/SECURITY.md; all high/medium fixed or mitigated with tests
 - [x] Anti-slop review → 15 findings fixed (docs aligned with code, seam trimmed, duplicates removed, swallowed errors surfaced, UI states)

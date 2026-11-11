@@ -1,3 +1,5 @@
+import { modelHref } from "@/components/public/ModelRow";
+import { Link } from "wouter";
 import { useMemo, useState } from "react";
 import { Pencil, Plus, Trash2, X } from "lucide-react";
 import type { Scope } from "@/App";
@@ -124,9 +126,9 @@ export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
                     <TableRow key={m.id}>
                       <TableCell className="min-w-48">
                         {m.owner === "platform" && m.enabled ? (
-                          <a href={`/models/${m.id}`} className="font-medium underline-offset-4 hover:underline">
+                          <Link href={modelHref(m.id)} className="font-medium underline-offset-4 hover:underline">
                             {m.name}
-                          </a>
+                          </Link>
                         ) : (
                           <span className="font-medium">{m.name}</span>
                         )}

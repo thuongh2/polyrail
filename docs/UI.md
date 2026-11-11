@@ -33,4 +33,4 @@ charts are small SVG components. No new runtime dependency without a reason in d
 
 Public: `/`, `/models`, `/models/<vendor>/<name>`, `/status`, `/docs`, `/login`, `/signup`.
 Console: `/app/activity|logs|playground|keys|credits|models|providers|members|settings|webhooks|audit|account`,
-operators: `/app/platform/activity|orgs|providers|models|users|mcp|audit`.
+operators: `/app/platform/activity|orgs|providers|proxies|models|users|mcp|audit`.

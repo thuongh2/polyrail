@@ -77,6 +77,31 @@ addresses are reachable: the gateway still checks org provider URLs before each 
 connect-time private-address block applies only to direct connections, so configure the proxy to
 deny internal ranges if org admins can add providers (docs/SECURITY.md "Outbound proxy").
 
+### Proxy pools
+
+To spread egress over several proxies and survive one going down, create a pool in Platform →
+Proxies (members, strategy, fail-closed) and either pick it in a platform provider's Proxy section or
+make it the default for every provider:
+
+```sh
+UPSTREAM_PROXY_POOL=egress-eu        # pool name or id; wins over UPSTREAM_PROXY_URL
+PROXY_HEALTH_INTERVAL=10m            # TCP probe of each member (default)
+```
+
+The gateway runs a CONNECT forwarder on `127.0.0.1` (random port, per-process credentials) that
+providers on a pool use as their proxy; it picks a member for each new upstream connection, so with
+keep-alive many requests share one member. A member that cannot be reached is set aside (60 s,
+doubling to 10 min) and the next one is tried (at most 3 per connection); three failures in a row
+mark it down until a probe reaches it. With every member unusable a fail-closed pool refuses the
+call (Bifrost moves on to the model's next target); a fail-open pool connects directly. Provider
+errors (429, 5xx) travel inside the tunnel and never change the selection. Watch
+`gw_proxy_dials_total{pool,result}` (`ok`, `fail`, `refused`, `direct`) and
+`gw_proxy_member_up{pool,member}`; the logs say `proxy member set aside`, `proxy member down` and
+`proxy pool exhausted`. Health, cursors and sticky picks are per node. Pools tunnel with CONNECT only:
+every Bifrost model client tunnels `http://` targets too, but a provider whose SDK uses net/http
+(Bedrock) must use an `https://` endpoint. Through a pool, org providers' targets are checked public
+and pinned to the checked address by the gateway itself.
+
 ## Upgrading Bifrost core
 
 The gateway pins `github.com/maximhq/bifrost/core v1.15.2`, which needs Go 1.27 (the Dockerfile

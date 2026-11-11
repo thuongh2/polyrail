@@ -360,6 +360,28 @@ and its host must resolve to public addresses (unless `ALLOW_PRIVATE_PROVIDER_UR
 always allowed. `GET /api/auth/config` returns `tenant_proxy` (bool). Changing the proxy restarts
 that provider's Bifrost client on the next catalog reload (about 2 s).
 
+Proxy pool (platform providers only): `proxy_pool: "<pool id>"` rotates the provider's upstream
+connections across a pool's members (below). It cannot be combined with `proxy` (400), must name an
+existing pool (400), and org providers cannot set it (400). Precedence: own `proxy` or `proxy_pool` >
+`UPSTREAM_PROXY_POOL` > `UPSTREAM_PROXY_URL` > direct; `no_proxy: true` skips both global settings.
+
+### Proxy pools (operator only)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/admin/proxy-pools` | Pools with each member's `health` on this node: `state` (`up`, `down`, `set_aside`, `unknown`), `latency_ms`, `set_aside_until` |
+| POST | `/api/admin/proxy-pools` | Create: `{name, strategy, sticky_minutes, fail_closed, members: [{url, username, password*, ca_cert_pem, label, enabled}]}` |
+| PUT | `/api/admin/proxy-pools/{id}` | Replace; send member `id`s to keep members (and, with the same `url` and `username`, their stored password) |
+| DELETE | `/api/admin/proxy-pools/{id}` | 400 while a provider names the pool |
+| POST | `/api/admin/proxy-pools/{id}/test` | `{target: "host:port"}` (default `api.openai.com:443`): opens and closes a tunnel through each member; `{target, results: [{member_id, label, ok, latency_ms, error}]}`. Nothing is sent through the tunnel |
+
+`name` is unique (case-insensitive) and at most 100 characters. `strategy`: `round-robin` (default),
+`random`, `sticky` (keep one member for `sticky_minutes`, 1–1440, default 30) or `latency` (lowest
+measured connect time; unmeasured members first). `fail_closed` (default `true`): when no member is
+usable the call is refused (the model's next target is tried) instead of connecting directly. 1–100
+members; member `url` is `http://`, `https://` or `socks5://host[:port]`; `password` is write-only.
+Mutations and tests are audited (`proxy_pool.put`, `proxy_pool.delete`, `proxy_pool.test`).
+
 `*` = secret. `deployments` maps model name → deployment / inference profile; when set, only those
 models are served by that key. `GET /api/auth/config` lists the types per scope in
 `provider_types.platform` / `provider_types.org`, and in `provider_types.org_fixed_url` the org types

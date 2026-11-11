@@ -204,3 +204,27 @@ secret pattern. Org providers get their own proxy only with `ALLOW_TENANT_PROXY`
 host (docs/SECURITY.md "Outbound proxy"). A proxy change restarts that provider's client through
 `Reload` → `BF.UpdateProvider`, like a `base_url` change. If wrong: per-key proxies or proxy pools
 would need Bifrost changes; everything else is in `internal/gateway/proxy.go`.
+
+**D23 Proxy pools: rotation and egress reliability (OmniRoute port, scoped).** Owner request: configure
+and rotate proxies like OmniRoute. Ported: an operator-managed pool registry (`store.ProxyPool`,
+platform-only, member passwords sealed), assigned per platform provider (`proxy_pool`, exclusive with
+`proxy`) or as the default for every provider (`UPSTREAM_PROXY_POOL`, id or name); precedence is
+own proxy/pool > global pool > `UPSTREAM_PROXY_URL` > direct, `no_proxy` opts out; strategies
+round-robin, random, sticky (`sticky_minutes`, default 30) and latency (EWMA of connect time); only
+usable members are candidates; a member whose dial fails is set aside 60 s, doubling to 600 s;
+three consecutive failures (dials or probes) mark it down until a good TCP probe
+(`PROXY_HEALTH_INTERVAL`, default 10m, 2 s connect); `fail_closed` (default true) refuses when no
+member is usable instead of connecting directly. Mechanism: Bifrost takes one static proxy per
+provider, so providers on a pool get a loopback CONNECT forwarder (127.0.0.1, random port, provider
+id + per-process token as proxy credentials) that picks a member per tunnel and dials it with
+Bifrost's own `network.DialViaProxyTLS` (http/https CONNECT, SOCKS5). Rotation is per new upstream
+connection (keep-alive reuses one); cursors and health are per node. Tenant tunnels are resolved and
+refused when the target is not public, then pinned to the checked IP. Not ported (tech-lead ruling,
+binding): rotating to another exit on a provider 429 or per-IP quota set-aside, spreading accounts
+across egress IPs or observing accounts per exit, free public proxy lists, proxy subscriptions /
+sing-box, throwaway edge relays, stealth fingerprinting: these evade provider rate limits or terms.
+The forwarder sees only TLS tunnels, so a provider 429 cannot move the selection (test
+`TestProvider429DoesNotRotate`). Pool events are logs + `gw_proxy_dials_total` /
+`gw_proxy_member_up`; no platform webhook system was invented (org webhooks are per org). If wrong:
+shared cursors/health need Redis; per-request rotation would need Bifrost to open a connection per
+request.

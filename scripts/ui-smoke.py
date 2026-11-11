@@ -10,7 +10,7 @@ base, email, password = sys.argv[1].rstrip("/"), sys.argv[2], sys.argv[3]
 public = ["/", "/models", "/status", "/docs"]
 console = ["activity", "logs", "playground", "keys", "credits", "models", "kbs", "providers", "members",
            "settings", "webhooks", "audit", "account", "platform/activity", "platform/orgs", "platform/providers",
-           "platform/models", "platform/users", "platform/mcp", "platform/audit"]
+           "platform/models", "platform/users", "platform/mcp", "platform/proxies", "platform/audit"]
 failures, errors = [], []
 
 def check(pg, what):

@@ -193,11 +193,36 @@ export type Provider = {
   proxy?: ProviderProxy;
   /** Connect directly even when the gateway has a global proxy. */
   no_proxy?: boolean;
+  /** Proxy pool id (platform providers only; exclusive with proxy). */
+  proxy_pool?: string;
   enabled: boolean;
   created_at: string;
 };
 
 export type ProviderProxy = { url: string; username?: string; password?: string; ca_cert_pem?: string };
+
+export type ProxyStrategy = "round-robin" | "random" | "sticky" | "latency";
+/** This node's view of a pool member: state from dials and health probes. */
+export type ProxyHealth = { state: "up" | "down" | "set_aside" | "unknown"; latency_ms?: number; set_aside_until?: string };
+export type ProxyMember = {
+  id: string;
+  url: string;
+  username?: string;
+  ca_cert_pem?: string;
+  label?: string;
+  enabled: boolean;
+  health?: ProxyHealth;
+};
+export type ProxyPool = {
+  id: string;
+  name: string;
+  strategy: ProxyStrategy;
+  sticky_minutes: number;
+  fail_closed: boolean;
+  members: ProxyMember[];
+  created_at: string;
+};
+export type ProxyTestResult = { member_id: string; label?: string; ok: boolean; latency_ms: number; error?: string };
 
 /** input/output_price_micros override the model price for the cost strategy only (billing uses the model price). */
 export type Target = { provider_id: string; model: string; weight: number; input_price_micros?: number; output_price_micros?: number };

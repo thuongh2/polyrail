@@ -42,6 +42,12 @@ type Config struct {
 	Proxy *GlobalProxy
 	// AllowTenantProxy lets org providers set their own (public) proxy.
 	AllowTenantProxy bool
+	// ProxyPool is the default proxy pool (id or name, UPSTREAM_PROXY_POOL) for providers without
+	// their own proxy or pool; it wins over Proxy. ProxyNoProxy (UPSTREAM_NO_PROXY) applies to it.
+	ProxyPool    string
+	ProxyNoProxy string
+	// ProxyHealthInterval is how often pool members are probed (0: never).
+	ProxyHealthInterval time.Duration
 }
 
 // Events receives org events for webhooks (internal/webhook). Emit must not block.
@@ -58,13 +64,14 @@ type Gateway struct {
 	KB    *kb.Service // nil: no knowledge-base grounding
 	cfg   Config
 
-	snap atomic.Pointer[Snapshot]
-	auth *ttlCache[*principal]
-	resp *ttlCache[[]byte]
-	rt   *router
-	sem  *semCache
-	mcp  mcpState
-	idem idemStore
+	snap  atomic.Pointer[Snapshot]
+	auth  *ttlCache[*principal]
+	resp  *ttlCache[[]byte]
+	rt    *router
+	sem   *semCache
+	mcp   mcpState
+	idem  idemStore
+	pools *poolForwarder
 }
 
 type principal struct {
@@ -95,9 +102,15 @@ func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipe
 	if err != nil {
 		return nil, err
 	}
+	if g.pools, err = newPoolForwarder(ctx, g.snap.Load, cfg.ProxyPool, cfg.AllowPrivateURLs, cfg.ProxyHealthInterval); err != nil {
+		return nil, err
+	}
+	if _, ok := snap.pool(cfg.ProxyPool); cfg.ProxyPool != "" && !ok {
+		slog.Warn("UPSTREAM_PROXY_POOL names no pool yet: providers using it fail closed until it exists", "pool", cfg.ProxyPool)
+	}
 	g.BF, err = bifrost.Init(ctx, schemas.BifrostConfig{
 		Account: &account{snap: g.snap.Load, concurrency: cfg.Concurrency, buffer: cfg.Buffer, allowPrivate: cfg.AllowPrivateURLs,
-			proxy: cfg.Proxy, tenantProxy: cfg.AllowTenantProxy},
+			proxy: cfg.Proxy, tenantProxy: cfg.AllowTenantProxy, pools: g.pools, poolNoProxy: cfg.ProxyNoProxy},
 		Logger:    bifrost.NewDefaultLogger(schemas.LogLevelWarn),
 		MCPConfig: mcpCfg,
 	})
@@ -141,7 +154,8 @@ func (g *Gateway) Reload(ctx context.Context) error {
 	g.auth.Clear() // key revocations and org changes take effect now
 	for id, p := range next.Providers {
 		old, ok := prev.Providers[id]
-		if ok && old.BaseURL == p.BaseURL && old.TimeoutSeconds == p.TimeoutSeconds && proxyOf(old) == proxyOf(p) && old.NoProxy == p.NoProxy {
+		if ok && old.BaseURL == p.BaseURL && old.TimeoutSeconds == p.TimeoutSeconds && proxyOf(old) == proxyOf(p) && old.NoProxy == p.NoProxy &&
+			old.ProxyPool == p.ProxyPool {
 			continue // keys are read per request; only network config needs a provider restart
 		}
 		if ok {

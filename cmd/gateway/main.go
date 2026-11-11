@@ -155,6 +155,13 @@ func run() error {
 		return err
 	}
 	tenantProxy := envBool("ALLOW_TENANT_PROXY")
+	probeEvery, err := time.ParseDuration(env("PROXY_HEALTH_INTERVAL", "10m"))
+	if err != nil || probeEvery < 0 {
+		return errors.New("PROXY_HEALTH_INTERVAL must be a duration like 10m (0 turns probes off)")
+	}
+	if pool := env("UPSTREAM_PROXY_POOL", ""); pool != "" {
+		slog.Info("upstream proxy pool", "pool", pool)
+	}
 	g, err := gateway.New(ctx, s, lim, up, gateway.Config{
 		MaxBodyBytes: int64(envInt("MAX_BODY_MB", 8)) << 20,
 		Concurrency:  envInt("PROVIDER_CONCURRENCY", 64),
@@ -165,6 +172,10 @@ func run() error {
 		AllowPrivateURLs: allowPrivate,
 		Proxy:            proxy,
 		AllowTenantProxy: tenantProxy,
+
+		ProxyPool:           env("UPSTREAM_PROXY_POOL", ""),
+		ProxyNoProxy:        env("UPSTREAM_NO_PROXY", ""),
+		ProxyHealthInterval: probeEvery,
 	})
 	if err != nil {
 		return err

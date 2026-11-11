@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, get, orgBase, PLATFORM, type Provider, type ProviderKey } from "@/lib/api";
+import { api, get, orgBase, PLATFORM, type Provider, type ProviderKey, type ProxyPool } from "@/lib/api";
 import { useAsync } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 import { providerLabel } from "@/lib/providers";
@@ -89,6 +89,11 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
                         {p.proxy?.url && (
                           <Badge variant="outline" title={`Upstream calls go through ${p.proxy.url}`}>
                             via proxy
+                          </Badge>
+                        )}
+                        {p.proxy_pool && (
+                          <Badge variant="outline" title={`Upstream calls rotate through proxy pool ${p.proxy_pool}`}>
+                            via proxy pool
                           </Badge>
                         )}
                       </span>
@@ -272,6 +277,10 @@ function ProviderDialog({
   const [proxyPass, setProxyPass] = useState("");
   const [proxyCA, setProxyCA] = useState(provider?.proxy?.ca_cert_pem ?? "");
   const [noProxy, setNoProxy] = useState(provider?.no_proxy ?? false);
+  // Proxy pools are operator-managed (Platform → Proxies) and only platform providers use them.
+  const [pool, setPool] = useState(provider?.proxy_pool ?? "");
+  const pools = useAsync(() => (scope === "platform" ? get<ProxyPool[]>(PLATFORM + "/proxy-pools") : Promise.resolve([] as ProxyPool[])), [scope]);
+  const single = ownProxy && !pool;
   // A stored password is kept while the proxy URL and username stay the same.
   const keepsProxyPass = !!provider?.proxy?.username && provider.proxy.url === proxyURL.trim() && provider.proxy.username === proxyUser.trim();
 
@@ -283,7 +292,7 @@ function ProviderDialog({
       base_url: isCloud(type) || fixedURL(type) ? "" : baseURL.trim(),
       timeout_seconds: timeout ? Number(timeout) : 0,
       proxy:
-        ownProxy && proxyURL.trim()
+        single && proxyURL.trim()
           ? {
               url: proxyURL.trim(),
               username: proxyUser.trim() || undefined,
@@ -292,6 +301,7 @@ function ProviderDialog({
             }
           : undefined,
       no_proxy: noProxy,
+      proxy_pool: pool || undefined,
       enabled,
       // Cloud types: the form edits the first key; other stored keys are kept as they are.
       // Otherwise new values replace every stored key; none entered keeps the stored ones (by id).
@@ -395,12 +405,32 @@ function ProviderDialog({
           <Label htmlFor="provider-enabled">Enabled</Label>
         </div>
       </div>
-      <details className="rounded-md border px-3 py-2" open={!!provider?.proxy?.url || !!provider?.no_proxy}>
+      <details className="rounded-md border px-3 py-2" open={!!provider?.proxy?.url || !!provider?.no_proxy || !!provider?.proxy_pool}>
         <summary className="cursor-pointer rounded-sm text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
           Proxy
         </summary>
         <div className="mt-3 grid gap-4 pb-1">
-          {ownProxy && (
+          {scope === "platform" && (
+            <div className="grid content-start gap-1.5">
+              <Label htmlFor="provider-proxy-pool">Proxy pool</Label>
+              <Select value={pool || "none"} onValueChange={(v) => setPool(v === "none" ? "" : v)}>
+                <SelectTrigger id="provider-proxy-pool" className="w-full" aria-describedby="provider-proxy-pool-hint">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None: a single proxy below, or the global default</SelectItem>
+                  {(pools.data ?? []).map((x) => (
+                    <SelectItem key={x.id} value={x.id}>{x.name} ({x.members.length} member{x.members.length === 1 ? "" : "s"})</SelectItem>
+                  ))}
+                  {pool && !pools.data?.some((x) => x.id === pool) && <SelectItem value={pool}>{pool}</SelectItem>}
+                </SelectContent>
+              </Select>
+              <p id="provider-proxy-pool-hint" className="text-xs text-muted-foreground">
+                Rotates new connections across the pool's proxies. Manage pools on the Proxies page.
+              </p>
+            </div>
+          )}
+          {single && (
             <>
               <Field label="Proxy URL" hint="http://, https:// or socks5://host:port. Empty uses the gateway's global proxy, if any.">
                 {(id, hint) => (
@@ -445,11 +475,11 @@ function ProviderDialog({
             </>
           )}
           <div className="flex items-center gap-3">
-            <Switch id="provider-no-proxy" checked={noProxy} onCheckedChange={setNoProxy} disabled={ownProxy && !!proxyURL.trim()} />
+            <Switch id="provider-no-proxy" checked={noProxy} onCheckedChange={setNoProxy} disabled={(single && !!proxyURL.trim()) || !!pool} />
             <Label htmlFor="provider-no-proxy">Don't use the global proxy</Label>
           </div>
           <p className="text-xs text-muted-foreground">
-            The global proxy is set by the operator (UPSTREAM_PROXY_URL). With this on, the provider connects directly.
+            The global proxy is set by the operator (UPSTREAM_PROXY_POOL or UPSTREAM_PROXY_URL). With this on, the provider connects directly.
           </p>
         </div>
       </details>

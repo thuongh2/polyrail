@@ -61,7 +61,10 @@ type fixture struct {
 	okHits  *atomic.Int64
 }
 
-func setup(t *testing.T) *fixture {
+func setup(t *testing.T) *fixture { t.Helper(); return setupWith(t, nil) }
+
+// setupWith is setup with a hook that adjusts the gateway Config before New.
+func setupWith(t *testing.T, adjust func(*Config)) *fixture {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -104,7 +107,11 @@ func setup(t *testing.T) *fixture {
 	}
 	up := usage.New(kv, 100, 20*time.Millisecond, usage.StoreSink{S: s})
 	t.Cleanup(up.Close)
-	f.g, err = New(ctx, s, limits.NewLocal(), up, Config{MaxBodyBytes: 1 << 20, Concurrency: 4, Buffer: 16, CacheMB: 4, PollInterval: 50 * time.Millisecond})
+	cfg := Config{MaxBodyBytes: 1 << 20, Concurrency: 4, Buffer: 16, CacheMB: 4, PollInterval: 50 * time.Millisecond}
+	if adjust != nil {
+		adjust(&cfg)
+	}
+	f.g, err = New(ctx, s, limits.NewLocal(), up, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

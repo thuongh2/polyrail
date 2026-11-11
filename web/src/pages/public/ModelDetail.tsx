@@ -9,7 +9,7 @@ import { EmptyState, ErrorState, LoadingRows } from "@/components/states";
 import { apiBase, CodeBlock, CodeTabs, CopyButton, requestSamples } from "@/components/public/CodeTabs";
 import { StatusBadge, latency } from "@/components/public/StatusBadge";
 import { UptimeBar, UptimeLegend } from "@/components/public/UptimeBar";
-import { ApiError, compact, fmt, pct, perMillion, publicApi, type ModelDetail as Detail } from "@/lib/api";
+import { ApiError, compact, fmt, kindLabel, pct, perMillion, perMinute, publicApi, type ModelDetail as Detail } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 
 const tps = (v: number | null) => (v == null ? "–" : `${compact(Math.round(v))} tok/s`);
@@ -44,7 +44,8 @@ export default function ModelDetail({ id }: { id: string }) {
 
   const d = state.data;
   const m = d.model;
-  const embedding = m.kind === "embedding";
+  const noOutput = m.kind !== "chat" && Number(m.pricing.output) === 0;
+  const unit = m.kind === "speech" ? "1M chars" : "1M";
 
   return (
     <div className="min-w-0">
@@ -59,8 +60,8 @@ export default function ModelDetail({ id }: { id: string }) {
           <CopyButton text={m.id} label="Copy model id" />
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
-          <Badge variant="secondary">{embedding ? "Embedding" : "Chat"}</Badge>
-          {(m.modalities ?? ["text"]).map((x) => (
+          <Badge variant="secondary">{kindLabel[m.kind] ?? m.kind}</Badge>
+          {(m.kind === "chat" || m.kind === "embedding") && (m.modalities ?? ["text"]).map((x) => (
             <Badge key={x} variant="outline">
               {x === "image" ? "Image input" : x === "text" ? "Text input" : x}
             </Badge>
@@ -71,8 +72,12 @@ export default function ModelDetail({ id }: { id: string }) {
           <Meta label="Created" value={m.created ? new Date(m.created * 1000).toLocaleDateString() : "–"} />
           <Meta label="Context" value={m.context_length ? `${fmt(m.context_length)} tokens` : "–"} />
           <Meta label="Max output" value={m.max_output_tokens ? `${fmt(m.max_output_tokens)} tokens` : "–"} />
-          <Meta label="Input price" value={`${perMillion(m.pricing.input)} / 1M`} />
-          <Meta label="Output price" value={embedding ? "–" : `${perMillion(m.pricing.output)} / 1M`} />
+          {m.pricing.audio_minute ? (
+            <Meta label="Audio price" value={perMinute(m.pricing.audio_minute)} />
+          ) : (
+            <Meta label="Input price" value={`${perMillion(m.pricing.input)} / ${unit}`} />
+          )}
+          <Meta label="Output price" value={noOutput ? "–" : `${perMillion(m.pricing.output)} / 1M`} />
         </dl>
       </header>
 
@@ -138,7 +143,8 @@ function Overview({ d }: { d: Detail }) {
         <h2 id="price-h" className="mb-3 text-lg font-semibold">
           Pricing
         </h2>
-        <div className="rounded-lg border">
+        {!(m.pricing.audio_minute && Number(m.pricing.input) === 0 && Number(m.pricing.output) === 0) && (
+        <div className="mb-3 rounded-lg border">
         <Table>
           <TableHeader>
             <TableRow>
@@ -148,11 +154,35 @@ function Overview({ d }: { d: Detail }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            <PriceRow label="Input" p={m.pricing.input} />
-            {m.kind === "chat" && <PriceRow label="Output" p={m.pricing.output} />}
+            <PriceRow label={m.kind === "speech" ? "Input (tokens or characters)" : "Input"} p={m.pricing.input} />
+            {(m.kind === "chat" || Number(m.pricing.output) > 0) && <PriceRow label="Output" p={m.pricing.output} />}
           </TableBody>
         </Table>
         </div>
+        )}
+        {m.pricing.audio_minute && (
+          <div className="rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Audio</TableHead>
+                  <TableHead className="text-right">Per minute</TableHead>
+                  <TableHead className="text-right">Per hour</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow>
+                  <TableCell>Input audio</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">{perMinute(m.pricing.audio_minute).replace(" / min", "")}</TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">{perMillion(String(Number(m.pricing.audio_minute) * 60))}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+        )}
+        {m.kind === "speech" && (
+          <p className="mt-2 text-xs text-muted-foreground">When the provider reports no token usage, input is billed per 1M characters of text.</p>
+        )}
       </section>
     </div>
   );
@@ -265,6 +295,8 @@ function ApiTab({ d }: { d: Detail }) {
         <p className="text-muted-foreground">
           Create a key in the console and send it as <code className="font-mono text-foreground">Authorization: Bearer</code>.{" "}
           {m.kind === "chat" && "Add \"stream\": true for server-sent events. "}
+          {m.kind === "speech" && "The response body is the audio file; the provider is in the x-gateway-provider header. "}
+          {m.kind === "transcription" && "Send the audio as multipart form data; the response is JSON with the text. "}
           <Link href="/docs" className="text-foreground underline underline-offset-4">
             Full reference
           </Link>

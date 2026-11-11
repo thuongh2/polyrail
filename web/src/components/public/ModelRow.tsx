@@ -1,14 +1,14 @@
 import { pathID } from "@/lib/api";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
-import { compact, perMillion, type ModelInfo } from "@/lib/api";
+import { compact, kindLabel, perMillion, perMinute, type ModelInfo } from "@/lib/api";
 import { CopyButton } from "./CodeTabs";
 
 export const modelHref = (id: string) => `/models/${pathID(id)}`;
 
 /** One catalog entry: name, copyable id, description, then context and prices aligned in columns on wide screens. */
 export function ModelRow({ m, compactRow = false }: { m: ModelInfo; compactRow?: boolean }) {
-  const embedding = m.kind === "embedding";
+  const noOutput = m.kind !== "chat" && Number(m.pricing.output) === 0;
   return (
     <li className="group relative grid gap-3 px-4 py-4 hover:bg-accent/50 md:grid-cols-[minmax(0,1fr)_6rem_6rem_6rem] md:items-start md:gap-6">
       <div className="min-w-0">
@@ -19,7 +19,7 @@ export function ModelRow({ m, compactRow = false }: { m: ModelInfo; compactRow?:
           >
             {m.name}
           </Link>
-          {embedding && <Badge variant="secondary">Embedding</Badge>}
+          {m.kind !== "chat" && <Badge variant="secondary">{kindLabel[m.kind] ?? m.kind}</Badge>}
           {m.modalities?.includes("image") && <Badge variant="outline">Image input</Badge>}
         </div>
         <div className="relative z-10 mt-0.5 flex w-fit max-w-full items-center gap-1">
@@ -38,8 +38,8 @@ export function ModelRow({ m, compactRow = false }: { m: ModelInfo; compactRow?:
       </div>
       <dl className="grid grid-cols-3 gap-2 text-sm md:contents">
         <Stat label="Context" value={m.context_length ? compact(m.context_length) : "–"} />
-        <Stat label="Input / 1M" value={perMillion(m.pricing.input)} />
-        <Stat label="Output / 1M" value={embedding ? "–" : perMillion(m.pricing.output)} />
+        <Stat label="Input / 1M" value={m.pricing.audio_minute ? perMinute(m.pricing.audio_minute) : perMillion(m.pricing.input)} />
+        <Stat label="Output / 1M" value={noOutput ? "–" : perMillion(m.pricing.output)} />
       </dl>
     </li>
   );

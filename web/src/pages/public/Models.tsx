@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DataState, EmptyState, PageHeader } from "@/components/states";
 import { ModelListHead, ModelRow } from "@/components/public/ModelRow";
-import { publicApi, type ModelInfo } from "@/lib/api";
+import { kindLabel, publicApi, type ModelInfo } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 
@@ -83,7 +83,7 @@ export default function Models() {
     <>
       <PageHeader
         title="Models"
-        description="Every public model on this gateway. Prices are USD per 1M tokens; call any of them by id through /v1."
+        description="Every public model on this gateway. Prices are USD per 1M tokens (per 1M characters for text to speech, per minute where marked); call any of them by id through /v1."
       />
       <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-8">
         <div className="lg:hidden">
@@ -93,17 +93,13 @@ export default function Models() {
           </Button>
         </div>
         <aside id="model-filters" aria-label="Filters" className={cn("space-y-6 lg:block", !open && "hidden")}>
-          <Group label="Kind">
-            <Segmented
-              value={kind}
-              onChange={setKind}
-              options={[
-                ["", "All"],
-                ["chat", "Chat"],
-                ["embedding", "Embedding"],
-              ]}
-            />
-          </Group>
+          <SelectFilter
+            id="f-kind"
+            label="Kind"
+            value={kind || ANY}
+            onChange={(v) => setKind(v === ANY ? "" : v)}
+            options={[{ v: ANY, label: "All" }, ...Object.entries(kindLabel).map(([v, label]) => ({ v, label }))]}
+          />
           <Group label="Input modality">
             <Segmented
               value={modality}

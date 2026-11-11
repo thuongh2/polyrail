@@ -73,3 +73,29 @@ func TestChatUsageCachesEarlierTurns(t *testing.T) {
 		t.Fatal("single turn reported cached tokens")
 	}
 }
+
+func TestChatReplyModes(t *testing.T) {
+	parse := func(body string) chatReq {
+		var req chatReq
+		if err := json.Unmarshal([]byte(body), &req); err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+	text, calls := chatReply(parse(`{"messages":[{"role":"user","content":[{"type":"text","text":"look"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AA"}}]}]}`))
+	if calls != nil || !strings.Contains(text, "1 image(s)") || !strings.Contains(text, "```go") || !strings.Contains(text, "[1]") {
+		t.Fatalf("markdown reply: %q", text)
+	}
+	text, _ = chatReply(parse(`{"messages":[{"role":"user","content":"x"}],"response_format":{"type":"json_schema","json_schema":{"name":"p","schema":{"type":"object","properties":{"n":{"type":"integer"},"tags":{"type":"array","items":{"type":"string"}}}}}}}`))
+	if text != `{"n":42,"tags":["mock tags"]}` {
+		t.Fatalf("json_schema reply: %s", text)
+	}
+	_, calls = chatReply(parse(`{"messages":[{"role":"user","content":"x"}],"tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}}]}`))
+	if len(calls) != 1 || calls[0].(map[string]any)["function"].(map[string]any)["arguments"] != `{"city":"mock city"}` {
+		t.Fatalf("tool calls: %v", calls)
+	}
+	text, calls = chatReply(parse(`{"messages":[{"role":"tool","tool_call_id":"call_mock_1","content":"{\"temp\":21}"}],"tools":[{"type":"function","function":{"name":"get_weather"}}]}`))
+	if calls != nil || !strings.Contains(text, `{"temp":21}`) {
+		t.Fatalf("tool result reply: %q %v", text, calls)
+	}
+}

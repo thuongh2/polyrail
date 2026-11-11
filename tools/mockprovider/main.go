@@ -3,6 +3,7 @@
 // It answers chat and text completions (streaming or not), the Responses API, embeddings, text to
 // speech (a short WAV tone), transcriptions (a fixed sentence), images (1x1 PNGs), rerank, token
 // counting (OpenAI and Anthropic paths) and OCR (Mistral path) without calling any real model.
+// Chat answers (chat.go) are Markdown, JSON for response_format, or tool calls when tools are offered.
 // Multi-turn chats report the earlier turns as prompt-cache reads (chatUsage).
 // Files, batches and videos (OpenAI async paths) are served by package asyncmock.
 package main
@@ -137,20 +138,14 @@ func embeddings(w http.ResponseWriter, r *http.Request) {
 		"usage": map[string]int{"prompt_tokens": tokens, "total_tokens": tokens}})
 }
 
-type chatReq struct {
-	Stream   bool `json:"stream"`
-	Messages []struct {
-		Content any `json:"content"`
-	} `json:"messages"`
-}
-
 // chatUsage is the deterministic usage of a chat answer: the last message plus 5 prompt tokens,
 // and every earlier message counted as a prompt-cache read (as if a provider had cached the
 // conversation prefix), so a multi-turn chat reports prompt_tokens_details.cached_tokens (D32).
 func chatUsage(req chatReq, reply string) map[string]any {
 	in, cached := 5, 0
 	for i, m := range req.Messages {
-		n := len(fmt.Sprint(m.Content)) / 4
+		text, images := textOf(m.Content)
+		n := len(text)/4 + 85*images // an image part counts like OpenAI's low-detail image
 		if i < len(req.Messages)-1 {
 			cached += n
 		}
@@ -329,39 +324,7 @@ func main() {
 		writeJSON(w, map[string]any{"model": "mock", "pages": []any{map[string]any{"index": 0, "markdown": "# Mock OCR\n\nThis is the mock text of page 1."}},
 			"usage_info": map[string]int{"pages_processed": 1, "doc_size_bytes": 0}})
 	})
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		var req chatReq
-		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
-		last := ""
-		if n := len(req.Messages); n > 0 {
-			last = fmt.Sprint(req.Messages[n-1].Content)
-		}
-		reply := "This is the mock provider. You said: " + last
-		usage := chatUsage(req, reply)
-		if !req.Stream {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id": "mock-1", "object": "chat.completion", "created": 1, "model": "mock",
-				"choices": []any{map[string]any{"index": 0, "message": map[string]string{"role": "assistant", "content": reply}, "finish_reason": "stop"}},
-				"usage":   usage,
-			})
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		chunk := func(v map[string]any) {
-			b, _ := json.Marshal(v)
-			fmt.Fprintf(w, "data: %s\n\n", b)
-			w.(http.Flusher).Flush()
-		}
-		for _, word := range strings.SplitAfter(reply, " ") {
-			chunk(map[string]any{"id": "mock-1", "object": "chat.completion.chunk", "created": 1, "model": "mock",
-				"choices": []any{map[string]any{"index": 0, "delta": map[string]string{"content": word}}}})
-		}
-		chunk(map[string]any{"id": "mock-1", "object": "chat.completion.chunk", "created": 1, "model": "mock",
-			"choices": []any{map[string]any{"index": 0, "delta": map[string]string{}, "finish_reason": "stop"}},
-			"usage":   usage})
-		fmt.Fprint(w, "data: [DONE]\n\n")
-	})
+	http.HandleFunc("/", chat)               // chat completions (chat.go)
 	asyncmock.Register(http.DefaultServeMux) // files, batches, videos
 	if err := http.ListenAndServe("127.0.0.1:9901", keyFaults(http.DefaultServeMux)); err != nil {
 		log.Fatalf("mockprovider: %v (is another mock already running on 9901?)", err)

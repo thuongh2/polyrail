@@ -442,3 +442,16 @@ models with a catalog id when they are 0, and only those fields (an operator-set
 who *cleared* a price gets it back on the next sync — set it to the input price to pin it).
 If wrong: per-TTL write prices are an additive field; a Postgres agg table rewrite is not needed for
 more counters (same `ADD COLUMN IF NOT EXISTS` path).
+
+**D33 Playground Markdown renderer.** Owner: the Playground showed raw Markdown ("#### 3.", "**Scale**", "[4]").
+Rulings: (1) `react-markdown` 10.1.0 + `remark-gfm` 4.0.1 (exact pins, MIT, unified ecosystem) instead of a
+hand-written parser: GFM tables, task lists, nested lists and streaming-safe re-parsing are easy to get wrong,
+and the library renders to React elements without `dangerouslySetInnerHTML`. (2) Loaded only by the chat
+answer renderer as its own lazy chunk (about 50 KB gzip), so neither the public pages nor the Playground's
+first paint pay for it; until it arrives an answer shows as plain text. (3) Safety: `skipHtml` (raw HTML never
+renders), a `urlTransform` that keeps http(s)/mailto links and https images only, links open in a new tab with
+`noopener noreferrer nofollow`, remote images load only on click with `referrerPolicy=no-referrer`.
+(4) No syntax highlighter: the small ones cover few languages and the full ones exceed ~15 KB gzip; code blocks
+get a language label and copy button. If wrong: swap the renderer behind `MarkdownView`
+(`web/src/pages/console/playground/chat/Markdown.tsx`).
+

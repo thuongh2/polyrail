@@ -278,3 +278,33 @@ filters compose by also having to pass; if none is left the request gets 403
 `allowed_regions` is stored for W2 data regions. Org guardrails and key limits stay and apply on top.
 If wrong: per-org policy counts beyond ~100 or per-request compile cost would move compilation into
 the catalog snapshot; budgets that must count spend before assignment need counters for every key.
+
+**D27 OpenRouter-compatible request routing (W1-B).** Requests on chat completions, Responses and
+completions accept OpenRouter's `models`, `provider`, `:nitro` / `:floor`, `@preset/<slug>`,
+`usage.include` and `user` (docs/API.md "Request routing"), in `internal/gateway/reqroute.go`.
+Rulings: (1) `models` fallbacks become one Bifrost fallback chain (each model's targets planned by
+its own strategy, then the next model's), not a loop of upstream calls: one call, streams fail over
+before the first byte as today, and the served target's `Via` names the model to bill
+(`store.Target.Via`, `json:"-"`, never stored); per-model health and breakers stay correct
+(`ownerOf`). Upstream error text is withheld when any model in the chain is org-private. (2) The
+`provider` object is strict: unknown fields and bad values are 400 `invalid_routing`, so a typo in
+`ignore` or `zdr` never routes somewhere the caller excluded. (3) Filters always apply; `order`
+then `sort` replace the strategy's order; open circuits stay last; `allow_fallbacks: false` keeps
+one target per model. (4) Throughput is a new per-node EWMA of whole-request output tokens/s
+(`targetStats.tps`); percentile objects use `p50` only; `quantizations` is accepted and ignored and
+`require_parameters` checks declared modalities only — no metadata exists for the rest.
+(5) Privacy filters read the policy engine's `Provider.Privacy *ProviderPrivacy{ZDR, TrainsOnData,
+RetentionDays, Region}` (D26; one type); `data_collection: deny` drops `trains_on_data` or
+`retention_days > 0` unless ZDR, and undeclared privacy fails both request filters as it fails the
+policy rules. Order: policy filter (`resolve`), then request filters, then ordering; a request can
+only tighten its key's policy.
+(6) Presets are org-scoped KV records in the catalog snapshot (`preset/<org>/<slug>`, version
+bump, ≤ 200 per org); request `models` / `provider` replace the preset's, params fill only unset
+fields. (7) `usage.cost` / `cost_micros` are added only with `usage: {"include": true}` (the parity
+doc's semantics), so existing clients see unchanged bodies; cost equals the billed amount.
+(8) `user` is stored as `RequestLog.end_user` (128 bytes) and rolled up per day under
+`enduser/<day>/<org>/<user>`, a prefix separate from `agg/` so the normal usage report never scans
+it and log retention prunes it by range; ClickHouse gains an `end_user` column (`ADD COLUMN IF NOT
+EXISTS`). It is also the cache-affinity key when the request has no prompt key or prefix.
+If wrong: a per-model upstream loop would allow different request params per model (presets per
+fallback); end-user rollups may need a cap per org if tenants send unbounded distinct ids.

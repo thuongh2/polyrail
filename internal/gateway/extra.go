@@ -29,7 +29,7 @@ func (g *Gateway) target(w http.ResponseWriter, p *principal, id, kind string) (
 
 // targetFor is target with a cache-affinity key source (see plan).
 func (g *Gateway) targetFor(w http.ResponseWriter, p *principal, id, kind string, affinity func() string) (store.Model, []store.Target, *Snapshot, bool) {
-	m, ts, e := g.resolve(p, id, kind, affinity)
+	m, ts, e := g.resolveRoute(p, id, kind, affinity)
 	if e == nil {
 		e = g.admit(context.Background(), p)
 	}
@@ -81,7 +81,7 @@ func (g *Gateway) guardIn(w http.ResponseWriter, p *principal, m store.Model, in
 
 // upstreamFailed settles, records and writes a Bifrost error.
 func (g *Gateway) upstreamFailed(w http.ResponseWriter, bctx *schemas.BifrostContext, snap *Snapshot, p *principal, m store.Model, ts []store.Target, berr *schemas.BifrostError, start time.Time) {
-	ae := fromBifrost(berr, m.OrgID != "")
+	ae := fromBifrost(berr, privateRoute(m, ts))
 	g.settleErr(bctx, snap, m, ts, berr, start)
 	g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 	writeError(w, ae)
@@ -277,6 +277,12 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
+	body, rr, e := g.routeBody(p, body, "completions")
+	if e != nil {
+		writeError(w, e)
+		return
+	}
+	p = p.withRoute(rr)
 	var req openai.OpenAITextCompletionRequest
 	if err := sonic.Unmarshal(body, &req); err != nil || req.Model == "" || req.Prompt == nil {
 		writeError(w, errf(400, "invalid_request_error", "bad_request", "body must be a completion request with model and prompt"))
@@ -337,9 +343,12 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 		l.InTokens, l.OutTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	}
 	l.Provider = g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
-	setCost(w, g.record(p, m, l, start))
-	resp.Model = m.ID
-	writeJSONHidden(w, l.Provider, resp)
+	used := usedModel(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, resp.ExtraFields.RoutingInfo.Model)
+	micros := g.record(p, used, l, start)
+	setCost(w, micros)
+	w.Header().Set("X-GW-Route", routeHeader(used, l.Provider, resp.ExtraFields.RoutingInfo.Model))
+	resp.Model = used.ID
+	writeRouted(w, p, l.Provider, resp, micros)
 }
 
 // ---- Responses API: POST /v1/responses (chat-kind models) ----
@@ -356,6 +365,12 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
+	body, rr, e := g.routeBody(p, body, "responses")
+	if e != nil {
+		writeError(w, e)
+		return
+	}
+	p = p.withRoute(rr)
 	var req openai.OpenAIResponsesRequest
 	if err := sonic.Unmarshal(body, &req); err != nil || req.Model == "" {
 		writeError(w, errf(400, "invalid_request_error", "bad_request", "body must be a responses request with model and input"))
@@ -405,9 +420,12 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
 	}
 	l.Provider = g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
-	setCost(w, g.record(p, m, l, start))
-	resp.Model = m.ID
-	writeJSONHidden(w, l.Provider, resp)
+	used := usedModel(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, resp.ExtraFields.RoutingInfo.Model)
+	micros := g.record(p, used, l, start)
+	setCost(w, micros)
+	w.Header().Set("X-GW-Route", routeHeader(used, l.Provider, resp.ExtraFields.RoutingInfo.Model))
+	resp.Model = used.ID
+	writeRouted(w, p, l.Provider, resp, micros)
 }
 
 // prepareResponses applies guardrails, knowledge-base grounding (when r is set), the org's
@@ -476,14 +494,16 @@ func (g *Gateway) pump(w http.ResponseWriter, bctx *schemas.BifrostContext, snap
 	l := store.RequestLog{Status: 200, Stream: true}
 	var served schemas.ModelProvider
 	gone, named := false, false
+	used := m
 	for c := range ch { // always drain: Bifrost owns the channel
 		if gone {
 			continue
 		}
 		var event string
 		var payload any
+		hasUsage := false
 		if c.BifrostError != nil {
-			ae := fromBifrost(c.BifrostError, m.OrgID != "")
+			ae := fromBifrost(c.BifrostError, privateRoute(m, ts))
 			l.Status, l.Error = ae.status, ae.msg
 			event, payload = errorBody(w, ae)
 		} else {
@@ -495,12 +515,14 @@ func (g *Gateway) pump(w http.ResponseWriter, bctx *schemas.BifrostContext, snap
 			}
 			if served == "" && prov != "" {
 				w.Header().Set("x-gateway-provider", snap.Providers[snap.byBifrost[prov]].Name)
+				used = usedModel(snap, m, ts, prov, "")
 			}
 			if prov != "" {
 				served = prov
 			}
+			setModel(payload, used.ID)
 			if u != nil {
-				l.InTokens, l.OutTokens = u.in, u.out
+				l.InTokens, l.OutTokens, hasUsage = u.in, u.out, true
 			}
 		}
 		frame, ok := payload.(sseFrames)
@@ -510,6 +532,9 @@ func (g *Gateway) pump(w http.ResponseWriter, bctx *schemas.BifrostContext, snap
 			data, err := hideExtra(payload)
 			if err != nil {
 				continue
+			}
+			if hasUsage {
+				data = p.withCost(data, billed(used, l.InTokens, l.OutTokens))
 			}
 			if event != "" {
 				frame, named = fmt.Appendf(nil, "event: %s\n", event), true
@@ -527,5 +552,5 @@ func (g *Gateway) pump(w http.ResponseWriter, bctx *schemas.BifrostContext, snap
 		_ = rc.Flush()
 	}
 	l.Provider = g.settle(bctx, snap, m, ts, served, targetFault(l.Status), start, l.InTokens, l.OutTokens)
-	g.record(p, m, l, start)
+	g.record(p, used, l, start)
 }

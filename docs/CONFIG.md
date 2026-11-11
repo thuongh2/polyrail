@@ -22,6 +22,7 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `MAX_BODY_MB` | `8` | Largest accepted API request body. |
 | `PROVIDER_CONCURRENCY` | `64` | Concurrent upstream requests per provider (Bifrost workers). |
 | `PROVIDER_BUFFER` | `256` | Queued requests per provider before callers wait. |
+| `WEBHOOK_QUEUE` | `1000` | Webhook events buffered before new events are dropped (`gateway_webhook_deliveries_total{result="dropped"}`). |
 | `USAGE_QUEUE` | `10000` | Request-log rows buffered before rows are dropped (billing counters are never dropped). |
 | `METRICS_TOKEN` | – | If set, `/metrics` requires `Authorization: Bearer <token>`. |
 | `LOG_LEVEL` | `info` | `debug` for more. |

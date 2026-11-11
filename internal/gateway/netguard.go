@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"syscall"
 	"time"
 
 	"github.com/agent-gateway/agent-gateway/internal/store"
@@ -55,6 +56,18 @@ func CheckPublicURL(raw string) error {
 		}
 	}
 	return nil
+}
+
+// PublicDialer refuses non-public addresses at connect time, after DNS resolution, so a host
+// that rebinds between validation and connect still cannot reach internal networks.
+func PublicDialer(timeout time.Duration) *net.Dialer {
+	return &net.Dialer{Timeout: timeout, Control: func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil || blockedIP(net.ParseIP(host)) {
+			return ErrPrivateAddress
+		}
+		return nil
+	}}
 }
 
 // hostCheck re-validates tenant provider URLs at request time, cached briefly.

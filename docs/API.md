@@ -61,6 +61,20 @@ status 400 `INVALID_ARGUMENT`, 401 `UNAUTHENTICATED`, 402 `FAILED_PRECONDITION`,
 404 `NOT_FOUND`, 429 `RESOURCE_EXHAUSTED`, 502/503 `UNAVAILABLE`, other `INTERNAL`; stream errors are a
 `data:` frame of the same shape.
 
+### Semantic cache
+
+Opt-in per org (`PATCH /api/orgs/{org}` with `semantic_cache`, below). A non-stream
+`/v1/chat/completions` request qualifies only when it sets `temperature` to `0` explicitly, has no
+`tools`, no `response_format` of type `json_schema` and uses no MCP tools. The gateway embeds the
+system/developer text plus the last user message (first 8,000 characters) with the org's embedding
+model through the normal Bifrost embeddings path; that call is logged and billed to the key like an
+`/v1/embeddings` request (the key's `models` allowlist does not apply to it). If a previous answer of
+the same chat model and org has cosine similarity ≥ `threshold`, it is returned with headers
+`X-GW-Cache: semantic` and `X-GW-Cache-Score: 0.9501`, logged as a cache hit (cost 0). Otherwise the
+upstream answer is stored for `ttl_seconds`. Embedding errors fail open (the request goes upstream).
+Entries live in the node's memory: at most 1,000 per org (least recently used evicted), all orgs
+together within `RESPONSE_CACHE_MB`; `RESPONSE_CACHE_MB=0` turns the semantic cache off too.
+
 ## Async: files, batches, videos (API key)
 
 Upstream file, batch and video ids are global per provider account, so the gateway never shows or
@@ -139,7 +153,55 @@ names the key may use, intersected with the org grant; empty or absent = every g
 | GET | `/api/orgs/{org}/usage?days=30` | viewer |
 | GET | `/api/orgs/{org}/logs?limit=100` | viewer |
 | GET | `/api/orgs/{org}/audit` | admin |
+| GET/POST | `/api/orgs/{org}/webhooks` | admin (signing secret returned once on create) |
+| PATCH/DELETE | `/api/orgs/{org}/webhooks/{id}` | admin |
+| POST | `/api/orgs/{org}/webhooks/{id}/test` | admin (sends `test.ping` now → `{"ok","status","error"?}`) |
 | * | `/api/admin/providers`, `/api/admin/models`, `/api/admin/usage`, `/api/admin/audit`, `/api/admin/users`, `/api/admin/mcp` | operator |
+
+Org PATCH body: `name`, `guardrails`, `max_tokens_cap`, `prepaid`, `mcp_servers`, and
+`semantic_cache: {model, threshold, ttl_seconds}`: `model` must be an embedding model the org can use,
+`threshold` 0.5–0.999 (default 0.92), `ttl_seconds` 1–86400 (default 3600). `{"model": ""}` turns it off.
+
+### Webhooks
+
+Body: `url`, `events` (any of `request.failed`, `budget.exceeded`, `key.created`, `key.revoked`,
+`test.ping`, or `"*"`), `enabled` (default true). Create returns `{"webhook", "secret"}`; the secret
+(`whsec_…`) is encrypted at rest and never shown again. At most 20 webhooks per org. The URL must be
+`https` on a host that resolves only to public addresses (any `http(s)` URL when the operator sets
+`ALLOW_PRIVATE_PROVIDER_URLS=true`); it is checked again before every delivery, and the connection
+itself refuses private addresses. Redirects are not followed and response bodies are discarded.
+
+Events (`data` never contains prompt or completion text):
+
+| Type | When | `data` |
+|---|---|---|
+| `request.failed` | a request failed upstream after all fallbacks (at most once per org and model per minute) | `model`, `status`, `code` (`provider_error`), `key_id` |
+| `budget.exceeded` | a request is rejected with 402 for org credits or a key's monthly budget (at most once per org, code and key per minute) | `code` (`insufficient_credits` \| `key_budget_exceeded`), `key_id` (key budget only) |
+| `key.created`, `key.revoked` | an API key is created / revoked | `key_id`, `name`, `prefix` |
+| `test.ping` | `POST …/webhooks/{id}/test` | `webhook_id` |
+
+Delivery: `POST` with JSON `{"id":"evt_…","type","created":<unix>,"org_id","data":{…}}` and headers
+`X-GW-Event` (type), `X-GW-Delivery` (event id, the same on retries), `X-GW-Signature:
+t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<raw body>")>`. Timeout 10 s; network errors and 5xx are
+retried 3 times (1 s, 2 s, 4 s); other non-2xx answers are not retried. After 10 consecutive failed
+deliveries the webhook is disabled (`enabled: false`); PATCH `{"enabled": true}` re-enables it and
+resets `failures`. Events wait in a bounded in-memory queue (`WEBHOOK_QUEUE`, default 1000); when it
+is full they are dropped and counted in `gateway_webhook_deliveries_total{result="dropped"}`.
+Delivery is at most once per node restart: queued events are lost on shutdown.
+
+Verify a delivery (reject old timestamps to stop replays):
+
+```python
+import hmac, hashlib, time
+
+def verify(secret: str, header: str, body: bytes, tolerance=300) -> bool:
+    parts = dict(p.split("=", 1) for p in header.split(","))
+    t = parts["t"]
+    if abs(time.time() - int(t)) > tolerance:
+        return False
+    want = hmac.new(secret.encode(), t.encode() + b"." + body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(want, parts["v1"])
+```
 
 Provider bodies: `name`, `type`, `base_url`, `timeout_seconds`, `enabled`, `keys: [{id, name, value,
 weight, models}]`. `value` and every secret below are write-only: encrypted at rest, never returned;

@@ -39,16 +39,23 @@ type Config struct {
 	AllowPrivateURLs bool
 }
 
+// Events receives org events for webhooks (internal/webhook). Emit must not block.
+type Events interface {
+	Emit(orgID, typ string, data map[string]any)
+}
+
 type Gateway struct {
 	S     *store.Store
 	Usage *usage.Pipeline
 	Lim   limits.Limiter
 	BF    *bifrost.Bifrost
+	Hooks Events // nil: no webhooks
 	cfg   Config
 
 	snap atomic.Pointer[Snapshot]
 	auth *ttlCache[*principal]
 	resp *ttlCache[[]byte]
+	sem  *semCache
 	br   *breaker
 	mcp  mcpState
 }
@@ -68,6 +75,7 @@ func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipe
 	g := &Gateway{S: s, Usage: up, Lim: lim, cfg: cfg,
 		auth: newTTLCache[*principal](50_000, 0),
 		resp: newTTLCache[[]byte](100_000, cfg.CacheMB<<20),
+		sem:  newSemCache(cfg.CacheMB << 20),
 		br:   newBreaker(),
 	}
 	snap, err := loadSnapshot(ctx, s)
@@ -203,6 +211,12 @@ func newBifrostCtx(r *http.Request) *schemas.BifrostContext {
 // InvalidateAuth drops cached API key principals so key and org changes apply on this node now.
 func (g *Gateway) InvalidateAuth() { g.auth.Clear() }
 
+func (g *Gateway) emit(orgID, typ string, data map[string]any) {
+	if g.Hooks != nil {
+		g.Hooks.Emit(orgID, typ, data)
+	}
+}
+
 // ---- auth, limits, budget ----
 
 func bearer(r *http.Request) string {
@@ -251,6 +265,7 @@ func (g *Gateway) admit(ctx context.Context, p *principal) *apiError {
 			return errf(503, "api_error", "store_unavailable", "temporarily unavailable")
 		}
 		if spent >= p.Org.CreditsMicros {
+			g.emit(p.Org.ID, "budget.exceeded", map[string]any{"code": "insufficient_credits"})
 			return errf(402, "insufficient_quota", "insufficient_credits", "organization is out of credits")
 		}
 	}
@@ -260,6 +275,7 @@ func (g *Gateway) admit(ctx context.Context, p *principal) *apiError {
 			return errf(503, "api_error", "store_unavailable", "temporarily unavailable")
 		}
 		if spent >= p.Key.MonthlyBudget {
+			g.emit(p.Org.ID, "budget.exceeded", map[string]any{"code": "key_budget_exceeded", "key_id": p.Key.ID})
 			return errf(402, "insufficient_quota", "key_budget_exceeded", "API key monthly budget exceeded")
 		}
 	}
@@ -360,6 +376,10 @@ func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start 
 		_, _ = g.Lim.Incr(context.Background(), "t:"+p.Key.ID, int64(l.InTokens+l.OutTokens))
 	}
 	g.Usage.Record(l)
+	if l.Error != "" && l.Status >= 400 && l.Status != 499 && !strings.HasPrefix(l.Error, "guardrail") {
+		// upstream failure after all fallbacks; no prompt or upstream text in the payload
+		g.emit(p.Org.ID, "request.failed", map[string]any{"model": m.ID, "status": l.Status, "code": "provider_error", "key_id": p.Key.ID})
+	}
 	label, prov := m.ID, l.Provider
 	if m.OrgID != "" { // private model ids and provider names stay out of the shared metrics
 		label, prov = "private", "private"
@@ -457,6 +477,14 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var sem *semPending
+	if !usesMCP {
+		var hit bool
+		if sem, hit = g.semanticCache(w, r, p, m, breq, start); hit {
+			return
+		}
+	}
+
 	resp, berr := g.BF.ChatCompletionRequest(bctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
@@ -480,6 +508,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if cacheKey != "" {
 		g.resp.Set(cacheKey, out, len(out), ttl)
 	}
+	g.semStore(sem, out)
 	g.record(p, m, l, start)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("x-gateway-provider", provName)

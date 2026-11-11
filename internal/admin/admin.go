@@ -24,6 +24,7 @@ import (
 	"github.com/agent-gateway/agent-gateway/internal/limits"
 	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/agent-gateway/agent-gateway/internal/usage"
+	"github.com/agent-gateway/agent-gateway/internal/webhook"
 	"github.com/maximhq/bifrost/core/mcp"
 )
 
@@ -38,12 +39,13 @@ type Config struct {
 }
 
 type API struct {
-	S    *store.Store
-	G    *gateway.Gateway
-	Lim  limits.Limiter
-	cfg  Config
-	sign signer
-	oidc *oidcClient
+	S     *store.Store
+	G     *gateway.Gateway
+	Lim   limits.Limiter
+	Hooks *webhook.Dispatcher // nil: webhooks are stored but nothing is sent
+	cfg   Config
+	sign  signer
+	oidc  *oidcClient
 }
 
 func New(ctx context.Context, s *store.Store, g *gateway.Gateway, lim limits.Limiter, cfg Config) (*API, error) {
@@ -109,6 +111,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/orgs/{org}/usage", a.org(store.RoleViewer, a.usageReport))
 	mux.HandleFunc("GET /api/orgs/{org}/logs", a.org(store.RoleViewer, a.listLogs))
 	mux.HandleFunc("GET /api/orgs/{org}/audit", a.org(store.RoleAdmin, a.listAudit))
+	mux.HandleFunc("GET /api/orgs/{org}/webhooks", a.org(store.RoleAdmin, a.listWebhooks))
+	mux.HandleFunc("POST /api/orgs/{org}/webhooks", a.org(store.RoleAdmin, a.createWebhook))
+	mux.HandleFunc("PATCH /api/orgs/{org}/webhooks/{id}", a.org(store.RoleAdmin, a.patchWebhook))
+	mux.HandleFunc("DELETE /api/orgs/{org}/webhooks/{id}", a.org(store.RoleAdmin, a.deleteWebhook))
+	mux.HandleFunc("POST /api/orgs/{org}/webhooks/{id}/test", a.org(store.RoleAdmin, a.testWebhook))
 
 	// platform (operator) scope; org "_" means public resources
 	mux.HandleFunc("GET /api/admin/providers", a.operator(a.platform(a.listProviders)))
@@ -416,9 +423,19 @@ func (a *API) patchOrg(w http.ResponseWriter, r *http.Request) {
 		MaxTokensCap *int              `json:"max_tokens_cap"`
 		Prepaid      *bool             `json:"prepaid"`
 		MCPServers   *[]string         `json:"mcp_servers"`
+		// SemanticCache with an empty model turns the semantic cache off.
+		SemanticCache *store.SemanticCache `json:"semantic_cache"`
 	}
 	if !decode(w, r, &in) {
 		return
+	}
+	var semCache *store.SemanticCache
+	if in.SemanticCache != nil {
+		var err error
+		if semCache, err = a.checkSemanticCache(r.PathValue("org"), in.SemanticCache); err != nil {
+			fail(w, err)
+			return
+		}
 	}
 	if (in.Prepaid != nil || in.MCPServers != nil) && !user(r).Operator {
 		fail(w, errForbidden)
@@ -447,6 +464,9 @@ func (a *API) patchOrg(w http.ResponseWriter, r *http.Request) {
 		}
 		if in.MCPServers != nil {
 			o.MCPServers = *in.MCPServers
+		}
+		if in.SemanticCache != nil {
+			o.SemanticCache = semCache
 		}
 		return nil
 	})
@@ -709,6 +729,7 @@ func (a *API) createKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.audit(r, k.OrgID, "key.create", k.ID, k.Name)
+	a.emit(k.OrgID, webhook.KeyCreated, map[string]any{"key_id": k.ID, "name": k.Name, "prefix": k.Prefix})
 	writeJSON(w, http.StatusCreated, map[string]any{"key": k, "secret": secret})
 }
 
@@ -737,6 +758,9 @@ func (a *API) patchKey(w http.ResponseWriter, r *http.Request) {
 	}
 	a.G.InvalidateAuth() // revocation and new limits apply on this node immediately
 	a.audit(r, org, "key.update", id, fmt.Sprintf("revoked=%v rpm=%d tpm=%d", k.Revoked, k.RPM, k.TPM))
+	if k.Revoked && !cur.Revoked {
+		a.emit(org, webhook.KeyRevoked, map[string]any{"key_id": k.ID, "name": k.Name, "prefix": k.Prefix})
+	}
 	writeJSON(w, 200, k)
 }
 

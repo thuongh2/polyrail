@@ -49,14 +49,22 @@ type Guardrails struct {
 }
 
 type Org struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	Prepaid       bool       `json:"prepaid"`        // if true, requests need credits
-	CreditsMicros int64      `json:"credits_micros"` // total credits granted, micro-USD
-	MaxTokensCap  int        `json:"max_tokens_cap,omitempty"`
-	Guardrails    Guardrails `json:"guardrails"`
-	MCPServers    []string   `json:"mcp_servers,omitempty"` // MCP server names this org may use ("*" = all); set by operators
-	CreatedAt     time.Time  `json:"created_at"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Prepaid       bool           `json:"prepaid"`        // if true, requests need credits
+	CreditsMicros int64          `json:"credits_micros"` // total credits granted, micro-USD
+	MaxTokensCap  int            `json:"max_tokens_cap,omitempty"`
+	Guardrails    Guardrails     `json:"guardrails"`
+	MCPServers    []string       `json:"mcp_servers,omitempty"` // MCP server names this org may use ("*" = all); set by operators
+	SemanticCache *SemanticCache `json:"semantic_cache,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+}
+
+// SemanticCache opts an org into answering near-duplicate prompts from cache (gateway/semcache.go).
+type SemanticCache struct {
+	Model      string  `json:"model"`       // embedding model id visible to the org
+	Threshold  float64 `json:"threshold"`   // cosine similarity needed for a hit, 0.5..0.999
+	TTLSeconds int     `json:"ttl_seconds"` // entry lifetime
 }
 
 type User struct {
@@ -383,7 +391,7 @@ func (s *Store) ListOrgs(ctx context.Context, after string, limit int) ([]Org, e
 	return listJSON[Org](ctx, s.KV, "org/", after, limit)
 }
 
-// DeleteOrg removes the org, its memberships, API keys, private providers and models.
+// DeleteOrg removes the org, its memberships, API keys, private providers, models and webhooks.
 func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	members, err := s.ListMembers(ctx, id)
 	if err != nil {
@@ -398,6 +406,10 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 		return err
 	}
 	models, err := listJSON[Model](ctx, s.KV, "model/"+id+"/", "", 0)
+	if err != nil {
+		return err
+	}
+	hooks, err := listJSON[storedWebhook](ctx, s.KV, "hook/"+id+"/", "", 0)
 	if err != nil {
 		return err
 	}
@@ -420,6 +432,9 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 		}
 		for _, m := range models {
 			del = append(del, "model/"+id+"/"+m.ID)
+		}
+		for _, h := range hooks {
+			del = append(del, hookKey(id, h.ID))
 		}
 		for _, k := range del {
 			if err := tx.Delete(k); err != nil {

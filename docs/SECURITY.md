@@ -115,3 +115,33 @@ admit, guard text and record; upstream errors are hidden for org-private provide
 bodies are bounded by `MAX_BODY_BYTES`; OCR `document_url`/`image_url` and chat image URLs are
 fetched by the provider or by Bifrost's SSRF-hardened fetcher; discovery/import are scoped to the
 route's owner; Databricks/vLLM/Ollama/SGLang URLs come only from the checked `base_url`.
+
+## Webhooks and semantic cache (2026-11-11, developer notes for review)
+
+Webhooks make the gateway send HTTP requests to tenant-chosen URLs (trust boundary 3), and the
+semantic cache shares answers between requests of one org.
+
+- **SSRF.** A webhook URL must be `https` on a host whose every DNS answer is public
+  (`gateway.CheckPublicURL`), checked on create/update and again before every delivery attempt. The
+  delivery client dials through `gateway.PublicDialer`, whose `Control` hook refuses blocked ranges
+  after resolution, so DNS rebinding between check and connect cannot reach loopback, RFC 1918,
+  link-local (cloud metadata) or other blocked nets. Redirects are not followed, no egress proxy is
+  used (it would hide the destination from the dial check), URLs with userinfo are refused.
+  `ALLOW_PRIVATE_PROVIDER_URLS=true` lifts the https and public-address rules (dev setups).
+  [TestSSRFGuard, TestWebhookURLNeedsPublicHTTPS]
+- **No response oracle.** Receiver bodies are read (≤ 64 KiB) and discarded; the test endpoint
+  reports only the status code and a generic error, so a webhook cannot be used to read internal
+  services.
+- **Signing.** Each org webhook has a 256-bit random secret, sealed with the `MASTER_KEY` Box like
+  provider keys, `json:"-"` in API output and returned once on create. Signatures are
+  HMAC-SHA256 over `"<unix ts>.<body>"`; receivers should check the timestamp window to stop replays
+  (snippet in docs/API.md). Audit entries record only the webhook host (paths often carry tokens).
+- **Payloads** never contain prompt or completion text or upstream error messages: `request.failed`
+  carries model id, status, a fixed code and key id.
+- **Abuse bounds.** At most 20 webhooks per org; bounded queue (drop + metric); 10 s timeout and 3
+  retries per delivery; auto-disable after 10 consecutive failures; `request.failed` and
+  `budget.exceeded` deduplicated per minute (dedupe map capped at 10k keys).
+- **Semantic cache isolation.** Entries are keyed by org and chat model and only served to the same
+  org. Only `temperature: 0` requests without tools, MCP or `json_schema` output qualify. A
+  near-match can return another member's answer to a semantically similar prompt within the same
+  org; orgs opt in knowing this. Memory is bounded per org (1,000) and globally (`RESPONSE_CACHE_MB`).

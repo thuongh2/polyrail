@@ -74,7 +74,8 @@ if [ "$DEMO" = 1 ]; then
   H=(-s -b "$JAR" -c "$JAR" -H "Content-Type: application/json" -H "X-GW-CSRF: 1")
   id() { grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4; }
   curl "${H[@]}" -X POST "$B/api/auth/login" -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" >/dev/null
-  if ! curl "${H[@]}" "$B/api/admin/providers" | grep -q '"name":"demo-mock"'; then
+  PROVIDERS=$(curl "${H[@]}" "$B/api/admin/providers") # not piped into grep -q: an early grep exit fails the pipe under pipefail
+  if [[ "$PROVIDERS" != *'"name":"demo-mock"'* ]]; then
     PROV=$(curl "${H[@]}" -X POST "$B/api/admin/providers" \
       -d '{"name":"demo-mock","type":"openai","base_url":"http://127.0.0.1:9901","keys":[{"value":"not-needed"}],"enabled":true}' | id)
     for m in "demo/fast:Demo Fast:chat:150000:600000:0" "demo/large:Demo Large:chat:2500000:10000000:0" \

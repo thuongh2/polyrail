@@ -39,6 +39,7 @@ type Config struct {
 	AllowTenantProxy bool // let org providers set their own outbound proxy
 	LogRetentionDays int
 	OIDC             *OIDCConfig
+	PublicURL        string // external base URL (no trailing slash): SAML SP and SCIM URLs
 }
 
 type API struct {
@@ -52,10 +53,21 @@ type API struct {
 	cfg    Config
 	sign   signer
 	oidc   *oidcClient
+	scim   http.Handler
+	// LookupTXT resolves DNS TXT records for domain verification (nil: the system resolver).
+	LookupTXT func(ctx context.Context, name string) ([]string, error)
+	// MetadataClient fetches SAML IdP metadata URLs (nil: an SSRF-guarded client).
+	MetadataClient *http.Client
 }
 
 func New(ctx context.Context, s *store.Store, g *gateway.Gateway, lim limits.Limiter, cfg Config) (*API, error) {
+	cfg.PublicURL = strings.TrimRight(cfg.PublicURL, "/")
 	a := &API{S: s, G: g, Lim: lim, cfg: cfg, sign: newSigner(cfg.MasterKey)}
+	sc, err := a.newSCIMServer()
+	if err != nil {
+		return nil, err
+	}
+	a.scim = sc
 	if cfg.OIDC != nil {
 		c, err := newOIDC(ctx, *cfg.OIDC)
 		if err != nil {
@@ -157,6 +169,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerPolicies(mux)
 	a.registerPresets(mux)
 	a.registerMgmt(mux)
+	a.registerIdentity(mux)
 
 	// Unknown API paths answer JSON 404 instead of falling through to the UI's index.html.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, http.StatusNotFound, "not found") })
@@ -348,6 +361,8 @@ func (a *API) authConfig(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(org)
 	sort.Strings(fixed)
 	writeJSON(w, 200, map[string]any{"signup": a.cfg.AllowSignup, "sso": a.oidc != nil, "tenant_proxy": a.cfg.AllowTenantProxy,
+		// per-email discovery for the login page: GET /api/auth/sso?email= → {method, login_url, password_allowed}
+		"sso_discovery":  "/api/auth/sso",
 		"provider_types": map[string][]string{"platform": platform, "org": org, "org_fixed_url": fixed},
 		// alert channel services in this build (smtp and generic need -tags alertsfull) per scope
 		"alert_services": map[string][]string{"platform": alert.Services(), "org": alert.TenantServices(a.cfg.AllowPrivateURLs)}})

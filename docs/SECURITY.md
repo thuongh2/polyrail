@@ -394,3 +394,46 @@ TestCheckURLTenantServices, TestSendNtfyHTTP, TestDispatcherDedupeScopeAndAutoDi
   read any org's content (they act as owners). Only `/v1/chat/completions` is captured.
   [TestContentSealedPurgedAndOrgDelete, TestContentLoggingOptIn, TestContentLoggingStream,
   TestContentLoggingSettingAndRead]
+
+## Enterprise identity: domains, SAML, SCIM (2026-11-11, W2-E, D29, developer notes for review)
+
+- **Account takeover across orgs.** A user account is global, so an org's IdP must never vouch for
+  someone else's email. SAML sign-in and SCIM provisioning accept only emails on a domain the org
+  verified by DNS TXT (`_polyrail-verify.<domain>`), and a domain is verified by one org at most
+  (`vdomain/<name>` claim, checked in the same transaction). Platform operators are refused on
+  tenant SAML (an org IdP could otherwise assert an operator's email on its own domain).
+  [TestDomainClaimIsExclusive, TestDomainVerification, TestSAMLLogin]
+- **SAML assertion checks** are crewjam/saml v0.6.3's: XML signature against the metadata
+  certificate (response or assertion), audience = SP entity id, Destination/Recipient = ACS URL,
+  NotBefore/NotOnOrAfter and IssueInstant windows, issuer = IdP entity id, InResponseTo = the request
+  id in this browser's signed `gw_saml` cookie (IdP-initiated only when the org enables it; it allows
+  login CSRF into the IdP user's account, hence off by default). SHA-1 signatures are refused.
+  Accepted assertion ids are recorded in the KV (`once/`) until they expire, so a replay fails on
+  every node. Only the HTTP-POST binding is read; the artifact binding (a server-side fetch to an
+  IdP-chosen URL) is never used. Parse errors are logged, not returned. [TestSAMLLogin: replay,
+  missing cookie, IdP-initiated off, foreign signature, unverified domain, operator]
+- **Tenant metadata URL (SSRF).** Fetched only when an owner saves it: https only, `CheckPublicURL`
+  at save and `PublicDialer` at connect, no redirects, no proxy, 1 MiB, 10 s; the response body is
+  never echoed (errors say "could not fetch" or the HTTP status). `ALLOW_PRIVATE_PROVIDER_URLS`
+  relaxes it as for providers.
+- **Secrets.** The SP private key (RSA-2048) is stored sealed with `MASTER_KEY` in
+  `ident/<org>/spkey` together with its certificate (first writer wins, so concurrent first reads
+  agree on one key); only the certificate is returned. The SCIM token (`pr-scim-` + 32 random bytes)
+  is shown once and stored as SHA-256, compared in constant time; rotating it ends the old one.
+- **SCIM blast radius.** A SCIM token acts on its own org only: it can add users on the org's
+  verified domains to the org, change their org role (never an owner's) and remove them from the
+  org. It cannot disable a global account, change an email, touch other orgs, or deprovision the
+  last owner. SCIM display-name updates skip operator accounts. Deprovisioning revokes the user's
+  API keys and management tokens in the org (`InvalidateAuth` drops cached principals) and leaves a
+  tombstone so SAML just-in-time sign-in cannot re-add the user; reactivation never re-enables
+  revoked credentials. Handler errors that are not SCIM errors become a bare 500 (details logged).
+  [TestSCIMProvisioning]
+- **Enforced SSO.** Password sign-in and sign-up for an enforced domain answer the same 403 for
+  wrong passwords, unknown accounts and non-operators, so the response reveals neither operators nor
+  valid passwords; an operator with the right password passes (break-glass, logged). Known limits:
+  sessions issued before enforcement stay valid until expiry (3 days) or sign-out; platform OIDC is
+  not affected; `GET /api/auth/sso` tells anyone which org id holds a verified domain (the login
+  page needs it; org ids grant nothing). [TestSSOEnforcementAndDiscovery]
+- **Linking.** SAML and SCIM link an existing account with the same email (the org proved control
+  of the domain, so of the mailbox). That account then reaches its other orgs through this IdP too;
+  this is the usual email-domain trust model.

@@ -23,6 +23,8 @@ const Members = lazy(() => import("@/pages/console/Members"));
 const Settings = lazy(() => import("@/pages/console/Settings"));
 const Audit = lazy(() => import("@/pages/console/Audit"));
 const Webhooks = lazy(() => import("@/pages/console/Webhooks"));
+const KnowledgeBases = lazy(() => import("@/pages/console/KnowledgeBases"));
+const KnowledgeBase = lazy(() => import("@/pages/console/KnowledgeBase"));
 const Account = lazy(() => import("@/pages/console/Account"));
 const ModelsAdmin = lazy(() => import("@/pages/platform/ModelsAdmin"));
 const ProvidersAdmin = lazy(() => import("@/pages/platform/ProvidersAdmin"));
@@ -68,6 +70,8 @@ export function App() {
                       <Route path="/members" component={page(Members)} />
                       <Route path="/settings" component={page(Settings)} />
                       <Route path="/webhooks" component={page(Webhooks)} />
+                      <Route path="/kbs" component={page(KnowledgeBases)} />
+                      <Route path="/kbs/:id">{(p) => <KnowledgeBase id={decodeURIComponent(p.id)} />}</Route>
                       <Route path="/audit" component={page(Audit, "org")} />
                       <Route path="/account" component={page(Account)} />
                       <Route path="/platform/activity" component={page(Activity, "platform")} />

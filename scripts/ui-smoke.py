@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 
 base, email, password = sys.argv[1].rstrip("/"), sys.argv[2], sys.argv[3]
 public = ["/", "/models", "/status", "/docs"]
-console = ["activity", "logs", "playground", "keys", "credits", "models", "providers", "members",
+console = ["activity", "logs", "playground", "keys", "credits", "models", "kbs", "providers", "members",
            "settings", "webhooks", "audit", "account", "platform/activity", "platform/orgs", "platform/providers",
            "platform/models", "platform/users", "platform/mcp", "platform/audit"]
 failures, errors = [], []

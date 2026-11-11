@@ -247,3 +247,10 @@ make sealed provider keys unreadable). An existing data dir therefore works with
 (docs/DEPLOY.md "Upgrading from agent-gateway"). The workspace folders are still named
 `agent-gateway`; that is a path, not the product name. If wrong: the kept identifiers can move to
 new names only with a dual-read period (accept both, emit the new one) and a release note.
+
+**D25 Key management, key monitoring, alert channels.** Owner request (gpt-load style key list).
+Design in docs/KEYS.md: per-key status (available / cooldown / quarantined / disabled), per-key
+hourly stats on the AddAgg pipeline, bulk add/test/enable APIs, and alert channels through
+`github.com/nicholas-fedor/shoutrrr` (one URL per channel: Telegram, Discord, Slack, Teams, email,
+ntfy, …) instead of hand-written integrations. Cooldown only stops sending to a failing key; it is
+not used to rotate around provider limits.

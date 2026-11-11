@@ -590,6 +590,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := g.snap.Load()
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
+	opencodeHeaders(bctx, r, p, snap, ts, func() string { return conversationSeed(req.Messages) })
 	usesMCP := g.withMCP(bctx, r, p)
 	w.Header().Set("x-gateway-request-id", store.NewID())
 

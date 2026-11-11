@@ -62,6 +62,7 @@ func (g *Gateway) AnthropicMessages(rw http.ResponseWriter, r *http.Request) {
 	if p = g.prepareResponses(w, r, p, m, ts, snap, breq, start); p == nil {
 		return
 	}
+	opencodeHeaders(bctx, r, p, snap, ts, func() string { return conversationSeed(breq.Input) })
 	if req.Stream != nil && *req.Stream {
 		ch, berr := g.BF.ResponsesStreamRequest(bctx, breq)
 		if berr != nil {

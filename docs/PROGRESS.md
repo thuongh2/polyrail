@@ -51,6 +51,16 @@ Result: idle RSS 30 MB; peak RSS 55 MB; `requests=5000 errors=0 rps=3645 p50=10.
 p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight to the mock:
 `rps=11281 p50=2.9ms`. The load generator and mock shared the machine with the gateway.
 
+## Milestone 4 — Bifrost core v1.15.2 (2026-11-11)
+- [x] T23 Go 1.27.3 built from the official tag (owner approved); core v1.2.38 → v1.15.2, all behaviour kept
+- [x] T24 Images, rerank, OCR, token counting (media.go)
+- [x] T25 Files, batches, videos with tenant-owned ids and exactly-once billing (async.go, store/jobs.go)
+- [x] T26 Google GenAI SDK drop-in, 16 more provider types, model discovery and import
+- [x] T27 UI for all new kinds, discovery dialog, image and rerank playground modes
+- [x] T28 Security review: H5 (upstream-URL SSRF via replicate/huggingface/gemini) and M9/M10 fixed
+- Resource smoke on v1.15.2 (same method as below, GOMAXPROCS=1): idle RSS 59 MB, peak 69 MB,
+  `requests=5000 errors=0 rps=7690 p50=5.3ms p95=12.7ms p99=17.7ms`. Binary 46 MB (was 33 MB).
+
 ## Next (not started)
 - OIDC test against a mock IdP; live MCP server test.
 - Semantic cache; Responses API, images, audio routes (Bifrost supports them).

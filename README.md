@@ -73,10 +73,10 @@ organizations, users and MCP servers. Built with shadcn/ui, light and dark.
 ## Measured footprint
 
 On the development machine, with `GOMAXPROCS=1` and a local mock provider (so the numbers show
-gateway overhead, not model latency): idle RSS about 30 MB, peak RSS 55 MB while serving 5,000
-chat requests at concurrency 50, about 3,600 requests per second, p50 10.9 ms, p99 55 ms, zero
-errors, and all 5,000 requests counted in usage. The load generator shared the same CPU. Your
-numbers will differ; `docs/PROGRESS.md` has the method.
+gateway overhead, not model latency), Bifrost core v1.15.2 build: idle RSS about 59 MB, peak 69 MB
+while serving 5,000 chat requests at concurrency 50, about 7,700 requests per second, p50 5.3 ms,
+p99 18 ms, zero errors. The load generator shared the same CPU. Your numbers will differ;
+`docs/PROGRESS.md` has the method.
 
 ## Documentation
 

@@ -298,6 +298,22 @@ enabled models (public for the platform route, org-private for the org route) wi
 `{provider, upstream}` → `{"created":[ids]}`. Every entry is validated first; an existing id is 409;
 a store error rolls back the models already created. Each model gets a `model.import` audit entry.
 
+Model catalog: the gateway embeds a production catalog generated from models.dev (D19). On a fresh
+store (no providers at all) it seeds it at startup unless `SEED_CATALOG=0`: one platform provider per
+vendor type with id `cat-<type>`, name = the type, no keys, **disabled**, and every catalog model as
+an enabled public model routed to them (several providers of one canonical model are targets of one
+model, strategy `priority`, first-party first). Audit: `catalog.seed`. `POST /api/admin/catalog/sync`
+(operator) does the same on an existing install: it adds the catalog providers and public models whose
+ids are missing and never changes existing ones → `{"providers_added":n,"models_added":n}`, audit
+`catalog.sync`; a second call adds nothing.
+
+Visibility rule: a model is listed (`GET /v1/models`, `/v1/models/query`, the Anthropic and GenAI
+model lists, `/api/public/models`, the public model page, the status page, an org's model list) and
+routable only when it is enabled **and** at least one of its targets' providers is enabled. A request
+for a model with no enabled provider gets the usual 404 `model_not_found`. So turning on a catalog
+provider (paste a key, enable it) is what makes its models appear. The platform model list
+(`/api/admin/models`) still shows every model.
+
 ```json
 {"name":"azure-eu","type":"azure","enabled":true,"keys":[{"value":"<azure key>","azure":{
   "endpoint":"https://my-res.openai.azure.com","api_version":"2024-10-21","deployments":{"gpt-4o":"prod-4o"}}}]}

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Run agent-gateway on this machine with a demo provider, so the console has data to show.
-#   ./scripts/run-local.sh            # demo: local mock provider + 2 demo models + an API key
-#   DEMO=0 ./scripts/run-local.sh     # no demo data; add your real providers in the console
+# Run agent-gateway on this machine. A fresh data dir gets the production model catalog (disabled
+# providers, no keys); add a key to a provider in the console and enable it to use its models.
+#   ./scripts/run-local.sh            # production catalog, no demo data
+#   DEMO=1 ./scripts/run-local.sh     # also a local mock provider + demo models + an API key
 #   PORT=9090 ./scripts/run-local.sh  # another port
 # Data and the generated .env.local live next to this script's repo root. Stop with Ctrl-C.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PORT=${PORT:-8080}
-DEMO=${DEMO:-1}
+DEMO=${DEMO:-0}
 B="http://127.0.0.1:$PORT"
 
 case "$(uname -s)-$(uname -m)" in
@@ -93,6 +94,8 @@ if [ "$DEMO" = 1 ]; then
   rm -f "$JAR"
   [ -f .demo-key ] && KEY_LINE="Demo API key: $(cat .demo-key)"
 fi
+MODEL=openai/gpt-4o-mini
+[ "$DEMO" = 1 ] && MODEL=demo/fast
 
 cat <<EOF
 
@@ -103,8 +106,13 @@ cat <<EOF
   Sign in:   $ADMIN_EMAIL / $ADMIN_PASSWORD     (saved in .env.local)
   $KEY_LINE
 
+  Models:    the model catalog is loaded but hidden until a provider is on. In the console open
+             Platform > Providers, edit a provider (e.g. openai), paste your API key and enable it;
+             its models then appear in the catalog and the API. Create an API key under Keys.
+             Data dir from an older version? Platform > Models > Load model catalog adds it.
+
   Try it:    curl http://localhost:$PORT/v1/chat/completions -H "Authorization: Bearer <key>" \\
-               -d '{"model":"demo/fast","messages":[{"role":"user","content":"hi"}]}'
+               -d '{"model":"$MODEL","messages":[{"role":"user","content":"hi"}]}'
 
   Logs in gateway.log. Press Ctrl-C to stop.
 EOF

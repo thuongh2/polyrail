@@ -139,3 +139,27 @@ float32; lookup is a linear dot-product scan of the org's ≤ 1,000 entries (≈
 1,536 dims, under a per-org lock), LRU eviction inside the org and a global byte budget of
 `RESPONSE_CACHE_MB` (separate from the response cache's own, SECURITY L18). No vector DB or ANN index: the ponytail ladder stops at a slice; revisit if
 orgs need more than ~10k entries or cross-node sharing. Fail open on any embedding error.
+
+**D19 Production model catalog from models.dev, hidden until a provider is enabled.** Owner request:
+a fresh gateway starts with the real catalog and no keys. Source: models.dev (MIT, credit in
+`internal/catalog/LICENSE.models.dev`), commit 3751776. `scripts/gencatalog.py` (Python 3.11
+`tomllib`: go.mod has no TOML library and this runs only at build time) writes
+`internal/catalog/catalog.json` (≈120 KB, `go:embed`). One gateway model per canonical models.dev id
+`<author>/<model>` (`base_model`, or the file id for a first-party file without one), so a model
+offered by several providers is one model with several targets: first-party first, then cheapest
+input price, OpenRouter last, strategy `priority` (fallback chain); the model price is the first-party
+price, else the cheapest. Kind from models.dev `type`, else modalities. Skipped: deprecated models,
+models without a positive price in a unit we bill (per-character TTS such as `tts-1`, megapixel
+images), realtime/live, deep-research and router models, rerank models (models.dev has no price for
+them), providers needing per-deployment config (azure, bedrock, vertex, sagemaker, cloudflare,
+databricks, ollama, vllm, sgl) and types models.dev lacks (parasail, replicate, byteplus, typesafe,
+runway, runware). OpenRouter only adds targets to models another provider offers (no
+OpenRouter-only models). Descriptions: first sentence of the OpenRouter `models.json` entry when the
+model matches, else models.dev's own. Seeding writes through the store (no admin key validation):
+providers `cat-<type>` (deterministic, so a second node's create fails with ErrExists and is skipped),
+disabled, keyless; models enabled. It runs only when the store has no providers (`SEED_CATALOG=0`
+off); `POST /api/admin/catalog/sync` adds missing ids for existing installs and never edits records.
+Visibility: `Snapshot.Live` = enabled and at least one target provider loaded (enabled); `Model()`
+and `Visible()` use it, so lists, public pages and routing agree, and a model with no live provider
+is `model_not_found`. The platform admin list still shows everything. Regenerate with
+`python3 scripts/gencatalog.py <models.dev checkout> <commit> > internal/catalog/catalog.json`.

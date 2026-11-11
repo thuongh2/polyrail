@@ -15,10 +15,13 @@ stateless replicas on Postgres + Valkey + ClickHouse when you need it.
 ./scripts/run-local.sh
 ```
 
-It starts the gateway plus a local mock provider, adds two demo models and an API key, sends a few
-requests so the dashboards have data, and prints the console URL and the sign-in it generated
-(kept in `.env.local`). Prebuilt binaries for macOS and Linux are in `bin/` in the release package;
-without them the script builds with Go. `DEMO=0` skips the demo data, `PORT=9090` changes the port.
+It starts the gateway, which loads the built-in model catalog (generated from
+[models.dev](https://models.dev)): every vendor provider is added disabled and without keys. Sign in
+with the credentials it prints (kept in `.env.local`), open Platform → Providers, paste an API key
+into a provider and enable it; its models then appear in the catalog and the API. Prebuilt binaries
+for macOS and Linux are in `bin/` in the release package; without them the script builds with Go.
+`DEMO=1` also starts a local mock provider with demo models, an API key and a few requests so the
+dashboards have data; `PORT=9090` changes the port.
 
 ## Quick start
 
@@ -30,10 +33,11 @@ export MASTER_KEY=$(openssl rand -hex 32) ADMIN_EMAIL=you@example.com ADMIN_PASS
 
 Open `http://localhost:8080/app/`, sign in, then:
 
-1. **Platform → Public providers**: add a provider (for example type `openai` with your key, or any
-   OpenAI-compatible endpoint such as vLLM, Ollama or DeepSeek as type `openai` + base URL).
-2. **Platform → Public models**: add a model with its id (`vendor/name`), prices per 1M tokens and
-   one or more routing targets.
+1. **Platform → Public providers**: the first start added every catalog provider, disabled. Edit one
+   (for example `openai`), paste your key and enable it: its catalog models become available. You
+   can also add any OpenAI-compatible endpoint such as vLLM or Ollama as a new provider.
+2. **Platform → Public models**: adjust catalog models (prices, routes) or add your own with an id
+   (`vendor/name`), prices per 1M tokens and one or more routing targets.
 3. **API keys**: create a key and call the API:
 
 ```sh

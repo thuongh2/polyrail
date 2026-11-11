@@ -1,7 +1,7 @@
 import { modelHref } from "@/components/public/ModelRow";
 import { Link } from "wouter";
 import { useMemo, useState } from "react";
-import { Pencil, Plus, Trash2, X } from "lucide-react";
+import { Download, Pencil, Plus, Trash2, X } from "lucide-react";
 import type { Scope } from "@/App";
 import { DataState, EmptyState, PageHeader } from "@/components/states";
 import { ConfirmDialog, EnabledText, Field, FormDialog } from "@/components/platform/kit";
@@ -17,7 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  api, compact, get, kindLabel, mainPrice, orgBase, pathID, perMillion, PLATFORM, type ModelInput, type ModelView, type Provider,
+  api, type CatalogSync, compact, get, kindLabel, mainPrice, orgBase, pathID, perMillion, PLATFORM, type ModelInput, type ModelView, type Provider,
   type Strategy, type Target,
 } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
@@ -37,6 +37,7 @@ export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
   const [q, setQ] = useQueryParam("q");
   const [editing, setEditing] = useState<ModelView | "new" | null>(null);
   const [deleting, setDeleting] = useState<ModelView | null>(null);
+  const [loadingCatalog, setLoadingCatalog] = useState(false);
 
   const editable = (m: ModelView) => admin && (scope === "platform" || m.owner === "org");
 
@@ -55,10 +56,20 @@ export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
       <Plus aria-hidden /> {scope === "platform" ? "Add public model" : "Add private model"}
     </Button>
   );
+  const actions = add && (
+    <>
+      {scope === "platform" && (
+        <Button variant="outline" onClick={() => setLoadingCatalog(true)}>
+          <Download aria-hidden /> Load model catalog
+        </Button>
+      )}
+      {add}
+    </>
+  );
 
   return (
     <>
-      <PageHeader title={title} description={description} actions={add || undefined} />
+      <PageHeader title={title} description={description} actions={actions || undefined} />
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Input
           type="search"
@@ -197,6 +208,27 @@ export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
         onConfirm={async () => {
           await api("DELETE", `${base}/${pathID(deleting!.id)}`);
           models.reload();
+        }}
+      />
+      <ConfirmDialog
+        open={loadingCatalog}
+        onOpenChange={setLoadingCatalog}
+        title="Load the model catalog?"
+        description={
+          <>
+            Adds the built-in catalog (from models.dev): one disabled provider per vendor, with no API key, and every
+            catalog model routed to them. Existing providers and models are not changed. Catalog models stay hidden
+            until you add an API key to their provider and enable it in Providers.
+          </>
+        }
+        confirmLabel="Load catalog"
+        destructive={false}
+        success={(r: CatalogSync) => `Added ${r.providers_added} providers and ${r.models_added} models`}
+        onConfirm={async () => {
+          const r = await api<CatalogSync>("POST", PLATFORM + "/catalog/sync");
+          models.reload();
+          providers.reload();
+          return r;
         }}
       />
     </>

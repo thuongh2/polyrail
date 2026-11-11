@@ -21,6 +21,13 @@ cp deploy/.env.example deploy/.env   # set MASTER_KEY, ADMIN_EMAIL, ADMIN_PASSWO
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
+First start: the gateway creates the operator from `ADMIN_EMAIL` / `ADMIN_PASSWORD` and loads the
+built-in model catalog (`SEED_CATALOG`, on by default): every vendor provider (OpenAI, Anthropic,
+Google, Mistral, Groq, …) is added **disabled and without keys**, with its models and prices. Sign in,
+open Platform → Providers, edit a provider, paste its API key and enable it; its models appear in
+the catalog and the API within 2 seconds. Installs that already have providers keep them as they are
+and can add the catalog with Platform → Models → Load model catalog.
+
 Put TLS in front with any reverse proxy (Caddy: `gateway.example.com { reverse_proxy 127.0.0.1:8080 }`)
 and set `PUBLIC_URL=https://gateway.example.com`. Streaming needs the proxy not to buffer responses;
 the gateway sends `X-Accel-Buffering: no` for nginx.

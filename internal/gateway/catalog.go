@@ -70,22 +70,36 @@ func loadSnapshot(ctx context.Context, s *store.Store) (*Snapshot, error) {
 	return snap, nil
 }
 
-// Model resolves a model id for an org: org-private first, then public.
+// Live reports whether a model is enabled and at least one of its targets' providers is loaded
+// (enabled). Catalog models of providers nobody has turned on stay hidden and unroutable.
+func (s *Snapshot) Live(m store.Model) bool {
+	if !m.Enabled {
+		return false
+	}
+	for _, t := range m.Targets {
+		if _, ok := s.Providers[t.ProviderID]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// Model resolves a live model id for an org: org-private first, then public.
 func (s *Snapshot) Model(orgID, id string) (store.Model, bool) {
-	if m, ok := s.Models[orgID+"|"+id]; ok && m.Enabled {
+	if m, ok := s.Models[orgID+"|"+id]; ok && s.Live(m) {
 		return m, true
 	}
 	m, ok := s.Models["_|"+id]
-	return m, ok && m.Enabled
+	return m, ok && s.Live(m)
 }
 
-// Visible lists models an org can use, sorted by id.
+// Visible lists the live models an org can use, sorted by id.
 func (s *Snapshot) Visible(orgID string) []store.Model {
 	seen := map[string]bool{}
 	var out []store.Model
 	for _, owner := range []string{orgID, "_"} {
 		for _, m := range s.Models {
-			if (m.OrgID == owner || (owner == "_" && m.OrgID == "")) && m.Enabled && !seen[m.ID] {
+			if (m.OrgID == owner || (owner == "_" && m.OrgID == "")) && !seen[m.ID] && s.Live(m) {
 				seen[m.ID] = true
 				out = append(out, m)
 			}

@@ -240,6 +240,8 @@ export type ImportModel = {
   input_price_micros: number;
   output_price_micros: number;
 };
+/** POST /api/admin/catalog/sync: how many catalog providers (disabled, keyless) and models were added. */
+export type CatalogSync = { providers_added: number; models_added: number };
 
 /** POST /v1/images/generations response, as the provider returns it. */
 export type ImageResult = { created?: number; data: { b64_json?: string; url?: string; revised_prompt?: string }[] };

@@ -17,7 +17,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  api, compact, get, kindLabel, mainPrice, orgBase, pathID, perMillion, PLATFORM, type ModelInput, type ModelView, type Provider, type Target,
+  api, compact, get, kindLabel, mainPrice, orgBase, pathID, perMillion, PLATFORM, type ModelInput, type ModelView, type Provider,
+  type Strategy, type Target,
 } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
@@ -202,11 +203,30 @@ export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
   );
 }
 
+/** Routing strategies with a one-line explanation each (docs/API.md "Routing"). */
+const strategies: { value: Strategy; label: string; help: string }[] = [
+  { value: "weighted", label: "Weighted", help: "Picks the primary at random in proportion to route weights." },
+  { value: "priority", label: "Priority", help: "Always tries routes in the order listed." },
+  { value: "round-robin", label: "Round robin", help: "Rotates the primary route on every request." },
+  { value: "random", label: "Random", help: "Picks the primary uniformly at random, ignoring weights." },
+  { value: "p2c", label: "Power of two choices", help: "Samples two routes and prefers the one with better success rate and latency." },
+  { value: "least-used", label: "Least used", help: "Prefers the route with the fewest requests in flight on this node." },
+  { value: "latency", label: "Lowest latency", help: "Prefers the route with the lowest average latency and error rate." },
+  { value: "cost", label: "Lowest cost", help: "Prefers the cheapest route, using per-route prices when set." },
+  { value: "cache-affinity", label: "Cache affinity", help: "Sends the same prompt prefix to the same route so provider prompt caches hit." },
+];
+
+// Route row columns: provider, upstream model, weight, [input price, output price,] remove.
+const plainCols = "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5rem_2.25rem]";
+const costCols = "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_4.5rem_5.5rem_5.5rem_2.25rem]";
+
 function Routes({ model, provName }: { model: ModelView; provName: Map<string, string> }) {
   if (!model.targets) return <span className="text-muted-foreground">Managed by the platform</span>;
   if (model.targets.length === 0) return <span className="text-destructive">No routes</span>;
+  const strategy = strategies.find((s) => s.value === (model.strategy || "weighted"));
   return (
     <ul className="space-y-0.5">
+      {model.targets.length > 1 && <li className="text-muted-foreground">{strategy?.label ?? model.strategy}</li>}
       {model.targets.map((t, i) => (
         <li key={i} className="whitespace-nowrap">
           <span>{provName.get(t.provider_id) ?? t.provider_id}</span>
@@ -242,7 +262,10 @@ const priceFields: Record<ModelInput["kind"], { tokens: boolean; audio?: boolean
   video: { tokens: false, video: true },
 };
 
-type TargetRow = { provider_id: string; model: string; weight: string };
+type TargetRow = { provider_id: string; model: string; weight: string; inPrice: string; outPrice: string };
+
+/** micro-USD per 1M tokens → the USD string shown in a price input ("" when unset). */
+const usdInput = (m?: number) => (m ? String(m / 1e6) : "");
 
 function ModelDialog({
   scope, base, model, providers, onClose, onSaved,
@@ -262,11 +285,20 @@ function ModelDialog({
   const [reqPrice, setReqPrice] = useState(model?.pricing.request ?? "");
   const [vidPrice, setVidPrice] = useState(model?.pricing.video_second ?? "");
   const [enabled, setEnabled] = useState(model?.enabled ?? true);
+  const [strategy, setStrategy] = useState<Strategy>(model?.strategy || "weighted");
+  const newRow = (): TargetRow => ({ provider_id: providers[0]?.id ?? "", model: "", weight: "1", inPrice: "", outPrice: "" });
   const [targets, setTargets] = useState<TargetRow[]>(
     model?.targets?.length
-      ? model.targets.map((t) => ({ provider_id: t.provider_id, model: t.model, weight: String(t.weight) }))
-      : [{ provider_id: providers[0]?.id ?? "", model: "", weight: "1" }],
+      ? model.targets.map((t) => ({
+          provider_id: t.provider_id,
+          model: t.model,
+          weight: String(t.weight),
+          inPrice: usdInput(t.input_price_micros),
+          outPrice: usdInput(t.output_price_micros),
+        }))
+      : [newRow()],
   );
+  const cost = strategy === "cost";
 
   const setTarget = (i: number, patch: Partial<TargetRow>) => setTargets((ts) => ts.map((t, j) => (j === i ? { ...t, ...patch } : t)));
   const toggleMod = (m: string, on: boolean) => setMods((ms) => (on ? [...new Set([...ms, m])] : ms.filter((x) => x !== m)));
@@ -293,7 +325,10 @@ function ModelDialog({
       if (!t.model.trim()) throw new Error(`Route ${i + 1}: enter the upstream model name.`);
       const w = Number(t.weight);
       if (!(w > 0)) throw new Error(`Route ${i + 1}: weight must be greater than 0.`);
-      return { provider_id: t.provider_id, model: t.model.trim(), weight: w };
+      // Route prices are kept even when another strategy is chosen, so switching back loses nothing.
+      const tin = t.inPrice.trim() ? micros(t.inPrice, `Route ${i + 1} input price`) : undefined;
+      const tout = t.outPrice.trim() ? micros(t.outPrice, `Route ${i + 1} output price`) : undefined;
+      return { provider_id: t.provider_id, model: t.model.trim(), weight: w, input_price_micros: tin, output_price_micros: tout };
     });
     if (ts.length === 0) throw new Error("Add at least one route.");
     const body: ModelInput = {
@@ -311,6 +346,7 @@ function ModelDialog({
       video_second_price_micros: pf.video ? micros(vidPrice, "Video price") : undefined,
       request_price_micros: pf.request || advanced ? micros(reqPrice, "Request price") : undefined,
       targets: ts,
+      strategy,
       enabled,
     };
     if (model) await api("PUT", `${base}/${pathID(model.id)}`, body);
@@ -426,10 +462,29 @@ function ModelDialog({
         </div>
       )}
 
+      <div className="grid gap-1.5 sm:max-w-sm">
+        <Label htmlFor="model-strategy">Routing strategy</Label>
+        <Select value={strategy} onValueChange={(v) => setStrategy(v as Strategy)}>
+          <SelectTrigger id="model-strategy" className="w-full" aria-describedby="model-strategy-help">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {strategies.map((s) => (
+              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p id="model-strategy-help" className="text-xs text-muted-foreground">
+          {strategies.find((s) => s.value === strategy)?.help} The other routes are failover in order.
+        </p>
+      </div>
+
       <fieldset className="grid gap-2">
         <legend className="text-sm font-medium">Routes</legend>
         <p className="text-xs text-muted-foreground">
-          Requests are spread across routes by weight; if one fails the next is tried.
+          {cost
+            ? "Route prices (USD per 1M tokens) rank routes for the cost strategy only; empty uses the model price. Billing always uses the model price."
+            : "The strategy picks the primary route; if it fails the next is tried."}
           {scope === "org" ? " Private models route to this organization's providers." : ""}
         </p>
         {providers.length === 0 ? (
@@ -442,13 +497,19 @@ function ModelDialog({
           </p>
         ) : (
           <div className="grid gap-2">
-            <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5rem_2.25rem] gap-2 text-xs text-muted-foreground sm:grid">
+            <div className={`hidden gap-2 text-xs text-muted-foreground sm:grid ${cost ? costCols : plainCols}`}>
               <span>Provider</span>
               <span>Upstream model</span>
               <span>Weight</span>
+              {cost && (
+                <>
+                  <span>Input $/1M</span>
+                  <span>Output $/1M</span>
+                </>
+              )}
             </div>
             {targets.map((t, i) => (
-              <div key={i} className="grid grid-cols-[minmax(0,1fr)_5rem_2.25rem] gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5rem_2.25rem]">
+              <div key={i} className={`grid grid-cols-[minmax(0,1fr)_5rem_2.25rem] gap-2 ${cost ? costCols : plainCols}`}>
                 <Select value={t.provider_id} onValueChange={(v) => setTarget(i, { provider_id: v })}>
                   <SelectTrigger aria-label={`Route ${i + 1} provider`} className="col-span-3 w-full sm:col-span-1">
                     <SelectValue placeholder="Provider" />
@@ -484,10 +545,33 @@ function ModelDialog({
                   variant="ghost"
                   aria-label={`Remove route ${i + 1}`}
                   disabled={targets.length === 1}
+                  className="sm:order-last"
                   onClick={() => setTargets((ts) => ts.filter((_, j) => j !== i))}
                 >
                   <X aria-hidden />
                 </Button>
+                {cost && (
+                  <div className="col-span-3 grid grid-cols-2 gap-2 sm:col-span-2">
+                    <Input
+                      aria-label={`Route ${i + 1} input price, USD per 1M tokens`}
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={t.inPrice}
+                      onChange={(e) => setTarget(i, { inPrice: e.target.value })}
+                      placeholder={inPrice || "Model"}
+                    />
+                    <Input
+                      aria-label={`Route ${i + 1} output price, USD per 1M tokens`}
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={t.outPrice}
+                      onChange={(e) => setTarget(i, { outPrice: e.target.value })}
+                      placeholder={outPrice || "Model"}
+                    />
+                  </div>
+                )}
               </div>
             ))}
             <div>
@@ -495,7 +579,7 @@ function ModelDialog({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setTargets((ts) => [...ts, { provider_id: providers[0]?.id ?? "", model: "", weight: "1" }])}
+                onClick={() => setTargets((ts) => [...ts, newRow()])}
               >
                 <Plus aria-hidden /> Add route
               </Button>

@@ -9,9 +9,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { api, get, orgBase, type Org } from "@/lib/api";
+import { api, get, orgBase, type Guardrails, type ModelView, type Org } from "@/lib/api";
 import { useAsync } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 
@@ -36,11 +37,12 @@ export default function Settings() {
 
   return (
     <>
-      <PageHeader title="Settings" description={admin ? "Organization name, output limits and guardrails." : "Only admins can change these settings."} />
+      <PageHeader title="Settings" description={admin ? "Organization name, output limits, guardrails and semantic cache." : "Only admins can change these settings."} />
       <DataState state={info} rows={5}>
         {(o) => (
           <>
             <SettingsForm org={o} base={base} readOnly={!admin} onSaved={info.reload} />
+            <SemanticCacheForm org={o} base={base} readOnly={!admin} onSaved={info.reload} />
             {can("owner") && <DangerZone org={o} base={base} />}
           </>
         )}
@@ -57,6 +59,9 @@ function SettingsForm({ org, base, readOnly, onSaved }: { org: Org; base: string
     maxChars: org.guardrails.max_input_chars ? String(org.guardrails.max_input_chars) : "",
     patterns: (org.guardrails.blocked_patterns ?? []).join("\n"),
     pii: !!org.guardrails.mask_pii,
+    secrets: !!org.guardrails.mask_secrets,
+    injection: org.guardrails.prompt_injection || "off",
+    compression: org.guardrails.compression || "off",
   });
   const [v, setV] = useState(init);
   const [busy, setBusy] = useState(false);
@@ -89,7 +94,14 @@ function SettingsForm({ org, base, readOnly, onSaved }: { org: Org; base: string
       await api("PATCH", base, {
         name: v.name.trim(),
         max_tokens_cap: cap,
-        guardrails: { max_input_chars: maxChars || undefined, blocked_patterns: patterns.length ? patterns : undefined, mask_pii: v.pii || undefined },
+        guardrails: {
+          max_input_chars: maxChars || undefined,
+          blocked_patterns: patterns.length ? patterns : undefined,
+          mask_pii: v.pii || undefined,
+          mask_secrets: v.secrets || undefined,
+          prompt_injection: v.injection === "off" ? undefined : (v.injection as Guardrails["prompt_injection"]),
+          compression: v.compression === "off" ? undefined : (v.compression as Guardrails["compression"]),
+        } satisfies Guardrails,
       });
       toast("Settings saved");
       onSaved();
@@ -141,6 +153,40 @@ function SettingsForm({ org, base, readOnly, onSaved }: { org: Org; base: string
               </div>
               <Switch id="s-pii" checked={v.pii} onCheckedChange={(c) => setV({ ...v, pii: c })} />
             </div>
+            <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+              <div>
+                <label htmlFor="s-secrets" className="text-sm font-medium">
+                  Mask secrets
+                </label>
+                <p className="text-xs text-muted-foreground">Replaces API keys, access tokens, JWTs and private keys in prompts with [REDACTED:type].</p>
+              </div>
+              <Switch id="s-secrets" checked={v.secrets} onCheckedChange={(c) => setV({ ...v, secrets: c })} />
+            </div>
+            <div className="grid items-start gap-4 sm:grid-cols-2">
+              <Field id="s-injection" label="Prompt injection" help="Scans user messages for known jailbreak phrasing. Warn adds a response header; block refuses the request.">
+                <Select value={v.injection} onValueChange={(x) => setV({ ...v, injection: x })} disabled={readOnly}>
+                  <SelectTrigger id="s-injection" className="w-full" aria-describedby="s-injection-help">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="off">Off</SelectItem>
+                    <SelectItem value="warn">Warn</SelectItem>
+                    <SelectItem value="block">Block</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field id="s-compression" label="Prompt compression" help="Lossless collapses extra whitespace and duplicate system messages in chat; code blocks and JSON are left alone.">
+                <Select value={v.compression} onValueChange={(x) => setV({ ...v, compression: x })} disabled={readOnly}>
+                  <SelectTrigger id="s-compression" className="w-full" aria-describedby="s-compression-help">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="off">Off</SelectItem>
+                    <SelectItem value="lossless">Lossless</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
           </div>
         </Section>
       </fieldset>
@@ -153,6 +199,96 @@ function SettingsForm({ org, base, readOnly, onSaved }: { org: Org; base: string
         <div className="mt-6 flex gap-2">
           <Button type="submit" disabled={busy || !dirty || !!patternErr}>
             {busy ? "Saving…" : "Save changes"}
+          </Button>
+          {dirty && (
+            <Button type="button" variant="ghost" onClick={() => setV(init())}>
+              Discard
+            </Button>
+          )}
+        </div>
+      )}
+    </form>
+  );
+}
+
+const OFF = "off";
+
+/** Semantic cache: its own save, so turning it on or off never resubmits guardrail edits. */
+function SemanticCacheForm({ org, base, readOnly, onSaved }: { org: Org; base: string; readOnly: boolean; onSaved: () => void }) {
+  const models = useAsync(() => get<ModelView[]>(`${base}/models`), [base]);
+  const sc = org.semantic_cache;
+  const init = () => ({ model: sc?.model || OFF, threshold: String(sc?.threshold ?? 0.92), ttl: String(sc?.ttl_seconds ?? 3600) });
+  const [v, setV] = useState(init);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setV(init()), [org]);
+  const dirty = JSON.stringify(v) !== JSON.stringify(init());
+  const embeddings = (models.data ?? []).filter((m) => m.kind === "embedding" && m.enabled);
+  // Keep the saved model selectable even if it is no longer listed, so the form shows the truth.
+  const options = sc?.model && !embeddings.some((m) => m.id === sc.model) ? [{ id: sc.model, name: sc.model }, ...embeddings] : embeddings;
+  const on = v.model !== OFF;
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    const threshold = Number(v.threshold);
+    const ttl = Number(v.ttl);
+    if (on && !(threshold >= 0.5 && threshold <= 0.999)) return setErr("Threshold must be between 0.5 and 0.999.");
+    if (on && !(Number.isInteger(ttl) && ttl >= 1 && ttl <= 86400)) return setErr("TTL must be a whole number of seconds from 1 to 86400.");
+    setBusy(true);
+    setErr("");
+    try {
+      await api("PATCH", base, { semantic_cache: on ? { model: v.model, threshold, ttl_seconds: ttl } : { model: "" } });
+      toast(on ? "Semantic cache saved" : "Semantic cache turned off");
+      onSaved();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="mt-8 max-w-2xl">
+      <fieldset disabled={readOnly} className="min-w-0">
+        <Section
+          title="Semantic cache"
+          description="Answers near-duplicate chat prompts sent with temperature 0 from earlier answers. Each lookup is one embedding request, billed like /v1/embeddings."
+        >
+          <div className="grid items-start gap-4 sm:grid-cols-3">
+            <Field id="sc-model" label="Embedding model" help={models.error ? <span className="text-destructive">{models.error.message}</span> : !models.loading && options.length === 0 ? "No embedding models are available to this organization." : undefined}>
+              <Select value={v.model} onValueChange={(x) => setV({ ...v, model: x })} disabled={readOnly}>
+                <SelectTrigger id="sc-model" className="w-full" aria-describedby="sc-model-help">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={OFF}>Off</SelectItem>
+                  {options.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field id="sc-threshold" label="Similarity threshold" help="0.5 to 0.999. Higher hits less often but more precisely.">
+              <Input id="sc-threshold" type="number" min={0.5} max={0.999} step={0.001} inputMode="decimal" disabled={!on} value={v.threshold} onChange={(e) => setV({ ...v, threshold: e.target.value })} aria-describedby="sc-threshold-help" />
+            </Field>
+            <Field id="sc-ttl" label="Entry lifetime (seconds)" help="1 to 86400.">
+              <Input id="sc-ttl" type="number" min={1} max={86400} step={1} inputMode="numeric" disabled={!on} value={v.ttl} onChange={(e) => setV({ ...v, ttl: e.target.value })} aria-describedby="sc-ttl-help" />
+            </Field>
+          </div>
+        </Section>
+      </fieldset>
+      {err && (
+        <p role="alert" className="mt-4 text-sm text-destructive">
+          {err}
+        </p>
+      )}
+      {!readOnly && (
+        <div className="mt-4 flex gap-2">
+          <Button type="submit" disabled={busy || !dirty}>
+            {busy ? "Saving…" : "Save semantic cache"}
           </Button>
           {dirty && (
             <Button type="button" variant="ghost" onClick={() => setV(init())}>

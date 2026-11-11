@@ -111,7 +111,16 @@ export const authApi = {
 
 // ---- console ----
 
-export type Guardrails = { max_input_chars?: number; blocked_patterns?: string[]; mask_pii?: boolean };
+export type Guardrails = {
+  max_input_chars?: number;
+  blocked_patterns?: string[];
+  mask_pii?: boolean;
+  mask_secrets?: boolean;
+  prompt_injection?: "" | "warn" | "block";
+  compression?: "" | "lossless";
+};
+/** Opt-in semantic cache; PATCH with model "" turns it off (then the org has no semantic_cache). */
+export type SemanticCache = { model: string; threshold: number; ttl_seconds: number };
 export type Org = {
   id: string;
   name: string;
@@ -120,6 +129,7 @@ export type Org = {
   max_tokens_cap?: number;
   guardrails: Guardrails;
   mcp_servers?: string[];
+  semantic_cache?: SemanticCache;
   created_at: string;
   spent_micros?: number; // GET /api/orgs/{org} only
   balance_micros?: number;
@@ -181,7 +191,10 @@ export type Provider = {
   created_at: string;
 };
 
-export type Target = { provider_id: string; model: string; weight: number };
+/** input/output_price_micros override the model price for the cost strategy only (billing uses the model price). */
+export type Target = { provider_id: string; model: string; weight: number; input_price_micros?: number; output_price_micros?: number };
+
+export type Strategy = "weighted" | "priority" | "round-robin" | "random" | "p2c" | "least-used" | "latency" | "cost" | "cache-affinity";
 // Model as written by the admin API (prices in micro-USD per 1M tokens).
 export type ModelInput = {
   id: string;
@@ -198,10 +211,11 @@ export type ModelInput = {
   request_price_micros?: number; // micro-USD per successful request, any kind
   video_second_price_micros?: number; // micro-USD per second of generated video
   targets: Target[];
+  strategy?: Strategy; // "weighted" when absent
   enabled: boolean;
 };
 // Model as listed by GET .../models (ModelInfo + management fields).
-export type ModelView = ModelInfo & { targets?: Target[]; enabled: boolean; owner: "platform" | "org" };
+export type ModelView = ModelInfo & { targets?: Target[]; strategy?: Strategy; enabled: boolean; owner: "platform" | "org" };
 
 /** One upstream model from POST …/providers/{id}/discover (prices in micro-USD per 1M tokens, when listed). */
 export type DiscoveredModel = {
@@ -260,6 +274,11 @@ export type RequestLog = {
   stream?: boolean;
   at: string;
 };
+
+export type WebhookEvent = "request.failed" | "budget.exceeded" | "key.created" | "key.revoked";
+/** Org webhook; the signing secret is returned only by create. Disabled automatically after 10 failed deliveries. */
+export type Webhook = { id: string; org_id: string; url: string; events: string[]; enabled: boolean; failures: number; created_at: string };
+export type WebhookTest = { ok: boolean; status: number; error?: string };
 
 export type AuditEntry = { id: string; org_id: string; actor_id: string; actor: string; action: string; target: string; detail?: string; at: string };
 

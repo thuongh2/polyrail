@@ -27,5 +27,5 @@ charts are small SVG components. No new runtime dependency without a reason in d
 ## Routes
 
 Public: `/`, `/models`, `/models/<vendor>/<name>`, `/status`, `/docs`, `/login`, `/signup`.
-Console: `/app/activity|logs|playground|keys|credits|models|providers|members|settings|audit|account`,
+Console: `/app/activity|logs|playground|keys|credits|models|providers|members|settings|webhooks|audit|account`,
 operators: `/app/platform/activity|orgs|providers|models|users|mcp|audit`.

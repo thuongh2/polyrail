@@ -19,12 +19,15 @@ export function BarChart({
   format,
   label,
   height = 200,
+  tone = "fill-signal",
 }: {
   bars: Bar[];
   /** Formats axis ticks; receives the tick value and the axis maximum (to keep decimals consistent). */
   format: (v: number, max: number) => string;
   label: string;
   height?: number;
+  /** Fill class of non-zero bars (a token, such as fill-danger for errors). */
+  tone?: "fill-signal" | "fill-danger" | "fill-warning";
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(640);
@@ -72,7 +75,7 @@ export function BarChart({
                 width={barW}
                 height={Math.max(0, h)}
                 rx={2}
-                className={b.value > 0 ? "fill-signal" : "fill-nodata"}
+                className={b.value > 0 ? tone : "fill-nodata"}
               >
                 <title>{b.title}</title>
               </rect>

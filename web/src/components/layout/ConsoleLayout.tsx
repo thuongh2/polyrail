@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import {
-  Activity, BarChart3, BookOpen, Boxes, Building2, CircleUserRound, CreditCard, FileText, KeyRound, LogOut, Menu,
+  Activity, BarChart3, Bell, BookOpen, Boxes, Building2, CircleUserRound, CreditCard, FileText, KeyRound, LogOut, Menu,
   MessageSquare, Network, PanelLeftClose, PanelLeftOpen, Plug, ScrollText, Server, Settings, ShieldCheck, UserRound,
   Users, Webhook, Wrench,
 } from "lucide-react";
@@ -35,6 +35,7 @@ const groups: { label: string; items: Item[]; operator?: boolean }[] = [
       { href: "/app/members", label: "Members", icon: Users },
       { href: "/app/settings", label: "Settings", icon: Settings },
       { href: "/app/webhooks", label: "Webhooks", icon: Webhook, min: "admin" },
+      { href: "/app/alerts", label: "Alerts", icon: Bell, min: "admin" },
       { href: "/app/audit", label: "Audit log", icon: ShieldCheck, min: "admin" },
     ],
   },
@@ -49,6 +50,7 @@ const groups: { label: string; items: Item[]; operator?: boolean }[] = [
       { href: "/app/platform/models", label: "Models", icon: Boxes },
       { href: "/app/platform/users", label: "Users", icon: UserRound },
       { href: "/app/platform/mcp", label: "MCP servers", icon: Wrench },
+      { href: "/app/platform/alerts", label: "Alerts", icon: Bell },
       { href: "/app/platform/audit", label: "Audit log", icon: ShieldCheck },
     ],
   },

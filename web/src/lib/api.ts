@@ -813,7 +813,8 @@ export const usdLimit = (micros: number) => (micros % 1e6 === 0 ? "$" + (micros 
 export function perMillion(p: string) {
   const v = Number(p);
   if (v === 0) return "Free";
-  return "$" + (v < 0.1 ? v.toFixed(3) : v < 10 ? v.toFixed(2) : v.toFixed(1)).replace(/\.?0+$/, (m) => (m.startsWith(".") ? "" : m));
+  // 4 significant digits, so $0.1875 (a cache write price) isn't shown as $0.19.
+  return "$" + Number(v.toPrecision(4)).toLocaleString("en-US", { maximumFractionDigits: 6 });
 }
 
 /** "$0.006 / min" from the API's USD-per-minute decimal string. */

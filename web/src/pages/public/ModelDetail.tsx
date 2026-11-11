@@ -223,7 +223,7 @@ function PriceRow({ label, p }: { label: string; p: string }) {
       <TableCell>{label}</TableCell>
       <TableCell className="text-right font-medium tabular-nums">{perMillion(p)}</TableCell>
       <TableCell className="text-right tabular-nums text-muted-foreground">
-        {per1k === 0 ? "Free" : "$" + per1k.toPrecision(2).replace(/\.?0+$/, "")}
+        {per1k === 0 ? "Free" : "$" + Number(per1k.toPrecision(4)).toLocaleString("en-US", { maximumFractionDigits: 9 })}
       </TableCell>
     </TableRow>
   );

@@ -55,6 +55,48 @@ docker compose -f deploy/docker-compose.scale.yml up -d --scale polyrail=3
 
 The nodes are stateless; put any HTTP load balancer in front. Use the same `MASTER_KEY` everywhere.
 
+## Regional deployment (data regions)
+
+To keep prompts in one region, run a separate deployment there (for example `eu.example.com` with
+its own data store in the EU) with `REGION_LOCK=europe`. That node then routes every request only to
+providers whose admin declared `privacy.region: europe` (eu, eu-west-1 and europe-west4 are stored as
+`europe`); providers without a region count as `global` and are not used. Requests for a model with
+no European provider get 403 `policy_no_eligible_provider` (`policy: "REGION_LOCK"`) instead of
+falling back elsewhere. Declare regions on providers (Platform → Providers → privacy, or
+`privacy.region` in the API) before turning the lock on. Org admins can do the same per key with
+a policy's `allowed_regions` on any deployment (docs/API.md "Policies"); the lock and policies
+both apply.
+
+## Trace exports (OpenTelemetry, Langfuse)
+
+Org admins (Settings) and operators (Platform, all orgs) can send one span per request to an OTLP
+collector; see docs/API.md "Trace exports". Examples (create with `POST /api/orgs/{org}/trace-exports`
+or `/api/admin/trace-exports`):
+
+```jsonc
+// Grafana Tempo / any OpenTelemetry Collector with the OTLP/HTTP receiver
+{"name":"tempo","type":"otlp","endpoint":"https://otel.example.com:4318/v1/traces",
+ "headers":{"Authorization":"Bearer <token>"}}
+// Grafana Cloud: OTLP gateway URL + basic auth of instance id and token
+{"name":"grafana","type":"otlp","endpoint":"https://otlp-gateway-prod-eu-west-2.grafana.net/otlp/v1/traces",
+ "headers":{"Authorization":"Basic <base64 of instance-id:token>"}}
+// Jaeger (v1.35+ accepts OTLP/HTTP on 4318)
+{"name":"jaeger","type":"otlp","endpoint":"https://jaeger.example.com:4318/v1/traces"}
+// Datadog: the Datadog Agent (or an OpenTelemetry Collector with the Datadog exporter) with its
+// OTLP/HTTP receiver on 4318 (otlp_config.receiver.protocols.http), behind TLS
+{"name":"datadog","type":"otlp","endpoint":"https://dd-agent.example.com:4318/v1/traces"}
+// Langfuse (cloud or self-hosted): its OTLP endpoint with the project's key pair
+{"name":"langfuse","type":"langfuse","endpoint":"https://cloud.langfuse.com",
+ "langfuse":{"public_key":"pk-lf-…","secret_key":"sk-lf-…"},"sample_rate":0.2}
+```
+
+Spans use OTLP/HTTP **JSON** (`Content-Type: application/json`); every OTLP/HTTP receiver must
+accept it; check the receiving side's docs for its exact URL. Endpoints must be public https unless
+`ALLOW_PRIVATE_PROVIDER_URLS=true`, so a collector on the same host or private network needs that
+flag (operators only should then have access, see CONFIG.md). Use `POST …/{id}/test` to check the
+connection. Prompt and completion text is exported only with `include_content` on an org that has
+content logging on.
+
 ## Hardening checklist
 
 - Serve over HTTPS and set `PUBLIC_URL` to the https URL (Secure cookies).

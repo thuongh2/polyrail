@@ -254,7 +254,7 @@ type ProviderPrivacy struct {
 	ZDR           bool   `json:"zdr"`                      // zero data retention: prompts and outputs are not stored
 	TrainsOnData  bool   `json:"trains_on_data"`           // prompts may be used for training
 	RetentionDays int    `json:"retention_days,omitempty"` // how long data is kept when not ZDR (0 = not stated)
-	Region        string `json:"region,omitempty"`         // where data is processed, e.g. us, eu (data regions, W2)
+	Region        string `json:"region,omitempty"`         // where data is processed: global (or empty), europe, us, other (NormalizeRegion)
 }
 
 // ProviderProxy is an outbound proxy. Password follows the Value/Sealed pattern: plaintext only on
@@ -535,7 +535,7 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	if err := s.deleteOrgTokens(ctx, id); err != nil {
 		return err
 	}
-	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id), "policy/"+id+"/", presetKey(id, ""), contentPrefix(id), contentIndex+id) {
+	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id), traceExportPrefix(id), "policy/"+id+"/", presetKey(id, ""), contentPrefix(id), contentIndex+id) {
 		if err := s.DeletePrefix(ctx, p); err != nil {
 			return err
 		}

@@ -139,6 +139,25 @@ func (s *Snapshot) Live(m store.Model) bool {
 	return false
 }
 
+// providerType is the type of the provider named name that served model m ("" when unknown):
+// one of m's targets, else (a fallback model's provider) any provider of that name.
+func (s *Snapshot) providerType(m store.Model, name string) string {
+	if name == "" {
+		return ""
+	}
+	for _, t := range m.Targets {
+		if p, ok := s.Providers[t.ProviderID]; ok && p.Name == name {
+			return p.Type
+		}
+	}
+	for _, p := range s.Providers {
+		if p.Name == name && (p.OrgID == "" || p.OrgID == m.OrgID) {
+			return p.Type
+		}
+	}
+	return ""
+}
+
 // Model resolves a live model id for an org: org-private first, then public.
 func (s *Snapshot) Model(orgID, id string) (store.Model, bool) {
 	if m, ok := s.Models[orgID+"|"+id]; ok && s.Live(m) {

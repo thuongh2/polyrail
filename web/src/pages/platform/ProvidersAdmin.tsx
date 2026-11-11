@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, get, orgBase, PLATFORM, type Provider, type ProviderKey } from "@/lib/api";
 import { useAsync } from "@/lib/hooks";
@@ -85,6 +86,11 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
                       <span className="flex items-center gap-2">
                         <ProviderLogo type={p.type} />
                         {p.name}
+                        {p.proxy?.url && (
+                          <Badge variant="outline" title={`Upstream calls go through ${p.proxy.url}`}>
+                            via proxy
+                          </Badge>
+                        )}
                       </span>
                     </TableCell>
                     <TableCell className="text-sm" title={p.type}>{providerLabel(p.type)}</TableCell>
@@ -259,6 +265,15 @@ function ProviderDialog({
   const sameType = !!provider && provider.type === type;
   const [cloud, setCloud] = useState<CloudForm>(() => cloudForm(provider && isCloud(provider.type) ? provider.keys?.[0] : undefined));
   const set = (k: keyof CloudForm) => (e: { target: { value: string } }) => setCloud((c) => ({ ...c, [k]: e.target.value }));
+  // Org providers set their own proxy only when the operator allows it (ALLOW_TENANT_PROXY).
+  const ownProxy = scope === "platform" || !!config?.tenant_proxy;
+  const [proxyURL, setProxyURL] = useState(provider?.proxy?.url ?? "");
+  const [proxyUser, setProxyUser] = useState(provider?.proxy?.username ?? "");
+  const [proxyPass, setProxyPass] = useState("");
+  const [proxyCA, setProxyCA] = useState(provider?.proxy?.ca_cert_pem ?? "");
+  const [noProxy, setNoProxy] = useState(provider?.no_proxy ?? false);
+  // A stored password is kept while the proxy URL and username stay the same.
+  const keepsProxyPass = !!provider?.proxy?.username && provider.proxy.url === proxyURL.trim() && provider.proxy.username === proxyUser.trim();
 
   const save = async () => {
     const entered = splitList(keys.replace(/,/g, "\n"));
@@ -267,6 +282,16 @@ function ProviderDialog({
       type,
       base_url: isCloud(type) || fixedURL(type) ? "" : baseURL.trim(),
       timeout_seconds: timeout ? Number(timeout) : 0,
+      proxy:
+        ownProxy && proxyURL.trim()
+          ? {
+              url: proxyURL.trim(),
+              username: proxyUser.trim() || undefined,
+              password: proxyPass || undefined,
+              ca_cert_pem: proxyCA.trim() || undefined,
+            }
+          : undefined,
+      no_proxy: noProxy,
       enabled,
       // Cloud types: the form edits the first key; other stored keys are kept as they are.
       // Otherwise new values replace every stored key; none entered keeps the stored ones (by id).
@@ -370,6 +395,64 @@ function ProviderDialog({
           <Label htmlFor="provider-enabled">Enabled</Label>
         </div>
       </div>
+      <details className="rounded-md border px-3 py-2" open={!!provider?.proxy?.url || !!provider?.no_proxy}>
+        <summary className="cursor-pointer rounded-sm text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+          Proxy
+        </summary>
+        <div className="mt-3 grid gap-4 pb-1">
+          {ownProxy && (
+            <>
+              <Field label="Proxy URL" hint="http://, https:// or socks5://host:port. Empty uses the gateway's global proxy, if any.">
+                {(id, hint) => (
+                  <Input id={id} aria-describedby={hint} value={proxyURL} onChange={(e) => setProxyURL(e.target.value)} placeholder="http://proxy.internal:3128" inputMode="url" autoComplete="off" spellCheck={false} />
+                )}
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Username">
+                  {(id) => <Input id={id} value={proxyUser} onChange={(e) => setProxyUser(e.target.value)} autoComplete="off" spellCheck={false} />}
+                </Field>
+                <Field label="Password" hint={keepsProxyPass ? "Leave blank to keep the stored password." : "Encrypted and never shown again."}>
+                  {(id, hint) => (
+                    <Input
+                      id={id}
+                      aria-describedby={hint}
+                      type="password"
+                      value={proxyPass}
+                      onChange={(e) => setProxyPass(e.target.value)}
+                      required={!!proxyUser.trim() && !keepsProxyPass}
+                      placeholder={keepsProxyPass ? "Leave blank to keep" : undefined}
+                      autoComplete="new-password"
+                      spellCheck={false}
+                    />
+                  )}
+                </Field>
+              </div>
+              <Field label="CA certificate" hint="Optional PEM, for a TLS-inspecting or https:// proxy.">
+                {(id, hint) => (
+                  <Textarea
+                    id={id}
+                    aria-describedby={hint}
+                    value={proxyCA}
+                    onChange={(e) => setProxyCA(e.target.value)}
+                    rows={3}
+                    className="font-mono text-xs"
+                    placeholder="-----BEGIN CERTIFICATE-----"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                )}
+              </Field>
+            </>
+          )}
+          <div className="flex items-center gap-3">
+            <Switch id="provider-no-proxy" checked={noProxy} onCheckedChange={setNoProxy} disabled={ownProxy && !!proxyURL.trim()} />
+            <Label htmlFor="provider-no-proxy">Don't use the global proxy</Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The global proxy is set by the operator (UPSTREAM_PROXY_URL). With this on, the provider connects directly.
+          </p>
+        </div>
+      </details>
     </FormDialog>
   );
 }

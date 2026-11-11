@@ -17,7 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  api, compact, get, kindLabel, orgBase, pathID, perMillion, perMinute, PLATFORM, type ModelInput, type ModelView, type Provider, type Target,
+  api, compact, get, kindLabel, mainPrice, orgBase, pathID, perMillion, PLATFORM, type ModelInput, type ModelView, type Provider, type Target,
 } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
@@ -113,8 +113,8 @@ export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
                     <TableHead>Kind</TableHead>
                     <TableHead className="text-right">Context</TableHead>
                     <TableHead className="text-right">Max output</TableHead>
-                    <TableHead className="text-right">Input / 1M</TableHead>
-                    <TableHead className="text-right">Output / 1M</TableHead>
+                    <TableHead className="text-right">Input</TableHead>
+                    <TableHead className="text-right">Output</TableHead>
                     <TableHead>Routes</TableHead>
                     <TableHead>State</TableHead>
                     {scope === "org" && <TableHead>Owner</TableHead>}
@@ -137,7 +137,7 @@ export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
                       <TableCell className="whitespace-nowrap">{kindLabel[m.kind] ?? m.kind}</TableCell>
                       <TableCell className="text-right tabular-nums">{m.context_length ? compact(m.context_length) : "–"}</TableCell>
                       <TableCell className="text-right tabular-nums">{m.max_output_tokens ? compact(m.max_output_tokens) : "–"}</TableCell>
-                      <TableCell className="text-right tabular-nums whitespace-nowrap">{m.pricing.audio_minute ? perMinute(m.pricing.audio_minute) : perMillion(m.pricing.input)}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">{mainPrice(m)}</TableCell>
                       <TableCell className="text-right tabular-nums">{m.kind !== "chat" && Number(m.pricing.output) === 0 ? "–" : perMillion(m.pricing.output)}</TableCell>
                       <TableCell className="text-xs">
                         <Routes model={m} provName={provName} />
@@ -224,6 +224,22 @@ const kindHelp: Record<ModelInput["kind"], string> = {
   embedding: "Served on /v1/embeddings.",
   speech: "Text in, audio out on /v1/audio/speech.",
   transcription: "Audio in, text out on /v1/audio/transcriptions.",
+  image: "Generates and edits images on /v1/images/generations, /edits and /variations.",
+  rerank: "Orders documents by relevance to a query on /v1/rerank.",
+  ocr: "Extracts text from documents and images on /v1/ocr (Mistral-type providers).",
+  video: "Generates video as an async job on /v1/videos.",
+};
+
+/** Price fields shown per kind; request price is offered for every kind under "Advanced". */
+const priceFields: Record<ModelInput["kind"], { tokens: boolean; audio?: boolean; image?: boolean; request?: boolean; video?: boolean }> = {
+  chat: { tokens: true },
+  embedding: { tokens: true },
+  speech: { tokens: true },
+  transcription: { tokens: true, audio: true },
+  image: { tokens: true, image: true },
+  rerank: { tokens: true, request: true },
+  ocr: { tokens: true, request: true },
+  video: { tokens: false, video: true },
 };
 
 type TargetRow = { provider_id: string; model: string; weight: string };
@@ -242,6 +258,9 @@ function ModelDialog({
   const [inPrice, setInPrice] = useState(model ? model.pricing.input : "");
   const [outPrice, setOutPrice] = useState(model ? model.pricing.output : "");
   const [minPrice, setMinPrice] = useState(model?.pricing.audio_minute ?? "");
+  const [imgPrice, setImgPrice] = useState(model?.pricing.image ?? "");
+  const [reqPrice, setReqPrice] = useState(model?.pricing.request ?? "");
+  const [vidPrice, setVidPrice] = useState(model?.pricing.video_second ?? "");
   const [enabled, setEnabled] = useState(model?.enabled ?? true);
   const [targets, setTargets] = useState<TargetRow[]>(
     model?.targets?.length
@@ -258,6 +277,15 @@ function ModelDialog({
   };
 
   const textModel = kind === "chat" || kind === "embedding";
+  const pf = priceFields[kind];
+  // The request price lives under "Advanced" unless the kind is priced per request.
+  const [advanced, setAdvanced] = useState(!pf.request && !!model?.pricing.request);
+
+  const price = (label: string, value: string, set: (v: string) => void, placeholder: string, hint?: string) => (
+    <Field label={label} hint={hint}>
+      {(fid, h) => <Input id={fid} aria-describedby={h} type="number" min={0} step="any" value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} />}
+    </Field>
+  );
 
   const save = async () => {
     const ts: Target[] = targets.map((t, i) => {
@@ -276,9 +304,12 @@ function ModelDialog({
       context_length: textModel && ctx ? Number(ctx) : undefined,
       max_output_tokens: textModel && maxOut ? Number(maxOut) : undefined,
       modalities: textModel && mods.length ? mods : ["text"],
-      input_price_micros: micros(inPrice, "Input price"),
-      output_price_micros: micros(outPrice, "Output price"),
-      audio_minute_price_micros: kind === "transcription" ? micros(minPrice, "Audio price") : undefined,
+      input_price_micros: pf.tokens ? micros(inPrice, "Input price") : 0,
+      output_price_micros: pf.tokens ? micros(outPrice, "Output price") : 0,
+      audio_minute_price_micros: pf.audio ? micros(minPrice, "Audio price") : undefined,
+      image_price_micros: pf.image ? micros(imgPrice, "Image price") : undefined,
+      video_second_price_micros: pf.video ? micros(vidPrice, "Video price") : undefined,
+      request_price_micros: pf.request || advanced ? micros(reqPrice, "Request price") : undefined,
       targets: ts,
       enabled,
     };
@@ -368,24 +399,32 @@ function ModelDialog({
           ))}
         </div>
       </fieldset>}
-      <div className={kind === "transcription" ? "grid gap-4 sm:grid-cols-3" : "grid gap-4 sm:grid-cols-2"}>
-        {kind === "transcription" && (
-          <Field label="Audio price, USD per minute" hint="Charged per minute of input audio.">
-            {(fid, hint) => (
-              <Input id={fid} aria-describedby={hint} type="number" min={0} step="any" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} placeholder="0.006" />
-            )}
-          </Field>
-        )}
-        <Field
-          label={kind === "speech" ? "Input price (USD per 1M characters or tokens)" : "Input price (USD per 1M tokens)"}
-          hint={kind === "speech" ? "Per 1M characters when the provider reports no token usage." : kind === "transcription" ? "Optional, when the provider reports tokens." : undefined}
-        >
-          {(fid, hint) => <Input id={fid} aria-describedby={hint} type="number" min={0} step="any" value={inPrice} onChange={(e) => setInPrice(e.target.value)} placeholder="0.15" />}
-        </Field>
-        <Field label="Output price (USD per 1M tokens)" hint={textModel ? undefined : "Optional, when the provider reports output tokens."}>
-          {(fid, hint) => <Input id={fid} aria-describedby={hint} type="number" min={0} step="any" value={outPrice} onChange={(e) => setOutPrice(e.target.value)} placeholder="0.60" />}
-        </Field>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {pf.audio && price("Audio price, USD per minute", minPrice, setMinPrice, "0.006", "Charged per minute of input audio.")}
+        {pf.image && price("Image price, USD per image", imgPrice, setImgPrice, "0.04", "Charged per generated image.")}
+        {pf.video && price("Video price, USD per second", vidPrice, setVidPrice, "0.10", "Charged per second of generated video, once the job completes.")}
+        {pf.request && price("Request price, USD per request", reqPrice, setReqPrice, "0.002", "Charged per successful request.")}
+        {pf.tokens &&
+          price(
+            kind === "speech" ? "Input price (USD per 1M characters or tokens)" : "Input price (USD per 1M tokens)",
+            inPrice,
+            setInPrice,
+            "0.15",
+            kind === "speech" ? "Per 1M characters when the provider reports no token usage." : textModel ? undefined : "Optional, when the provider reports tokens.",
+          )}
+        {pf.tokens &&
+          price("Output price (USD per 1M tokens)", outPrice, setOutPrice, "0.60", textModel ? undefined : "Optional, when the provider reports output tokens.")}
       </div>
+      {!pf.request && (
+        <div className="grid gap-3">
+          <div className="flex items-center gap-3">
+            <Switch id="model-advanced" checked={advanced} onCheckedChange={setAdvanced} aria-describedby="model-advanced-help" />
+            <Label htmlFor="model-advanced">Also charge per request</Label>
+          </div>
+          <p id="model-advanced-help" className="-mt-2 text-xs text-muted-foreground">Advanced. A flat fee added to every successful request, on top of the prices above.</p>
+          {advanced && <div className="grid gap-4 sm:grid-cols-3">{price("Request price, USD per request", reqPrice, setReqPrice, "0.001")}</div>}
+        </div>
+      )}
 
       <fieldset className="grid gap-2">
         <legend className="text-sm font-medium">Routes</legend>

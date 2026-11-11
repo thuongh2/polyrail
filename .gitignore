@@ -6,3 +6,4 @@ data/
 gateway.log
 web/node_modules/
 dump.rdb
+.run/

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AudioLines, Download, Eraser, FileAudio, ImageIcon, ListOrdered, Mic, Send, Square } from "lucide-react";
 import { CopyButton, Field, ms } from "@/components/console/bits";
+import { KBPicker } from "@/components/console/KBPicker";
 import { EmptyState, ErrorState, PageHeader } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { compact, fmt, get, orgBase, type ImageResult, type ModelKind, type ModelView, type RerankResult } from "@/lib/api";
+import { compact, fmt, get, kbApi, orgBase, type ImageResult, type KBDoc, type ModelKind, type ModelView, type RerankResult } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,8 @@ type Msg = {
   usage?: { prompt_tokens: number; completion_tokens: number };
   error?: string;
   stopped?: boolean;
+  kb?: string; // X-GW-KB response header: the KB ids used, "empty" or "error"
+  sources?: string[]; // X-GW-KB-Sources: doc#seq
 };
 
 /** Reads an OpenAI-style SSE stream: calls onData for each `data:` payload until [DONE]. */
@@ -591,6 +594,20 @@ function TranscribePanel({ models, apiKey, keyField }: PanelProps) {
 
 function ChatPanel({ models, apiKey, keyField }: PanelProps) {
   const [chosen, modelField] = useModelChoice(models, "chat");
+  const { org } = useSession();
+  const orgID = org?.id ?? "";
+  const kbs = useAsync(() => (orgID ? kbApi(orgID).list() : Promise.resolve([])), [orgID]);
+  const [kbIDs, setKBIDs] = useState<string[]>([]);
+  // Filenames for the Sources line: one docs call per picked KB, only while some are picked.
+  const kbDocs = useAsync(
+    () => Promise.all(kbIDs.map((id) => kbApi(orgID).docs(id).catch(() => [] as KBDoc[]))).then((ls) => ls.flat()),
+    [orgID, kbIDs.join(",")],
+  );
+  const docName = (ref: string) => {
+    const [doc, seq] = ref.split("#");
+    const f = kbDocs.data?.find((d) => d.id === doc)?.filename;
+    return f ? `${f} #${seq}` : ref;
+  };
   const [system, setSystem] = useState("");
   const [input, setInput] = useState("");
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -622,7 +639,11 @@ function ChatPanel({ models, apiKey, keyField }: PanelProps) {
       const res = await fetch("/v1/chat/completions", {
         method: "POST",
         signal: ctl.signal,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey.trim()}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey.trim()}`,
+          ...(kbIDs.length ? { "X-GW-KB": kbIDs.join(",") } : {}),
+        },
         body: JSON.stringify({
           model: chosen,
           stream: true,
@@ -635,7 +656,9 @@ function ChatPanel({ models, apiKey, keyField }: PanelProps) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err?.error?.message || `Request failed with status ${res.status}`);
       }
-      patchLast((m) => ({ ...m, provider }));
+      const kb = res.headers.get("x-gw-kb") ?? undefined;
+      const sources = res.headers.get("x-gw-kb-sources")?.split(",").map((x) => x.trim()).filter(Boolean);
+      patchLast((m) => ({ ...m, provider, kb, sources }));
       await readSSE(res.body, (raw) => {
         const c = raw as Chunk;
         if (c.error) throw new Error(c.error.message || "The provider returned an error");
@@ -661,6 +684,15 @@ function ChatPanel({ models, apiKey, keyField }: PanelProps) {
           <Field id="pg-system" label="System prompt">
             <Textarea id="pg-system" rows={5} value={system} onChange={(e) => setSystem(e.target.value)} placeholder="You are a helpful assistant." />
           </Field>
+          {!!kbs.data?.length && (
+            <KBPicker
+              legend="Knowledge bases"
+              help="Optional: ground answers in up to 3 (sent as X-GW-KB). None uses the key's own setting."
+              kbs={kbs.data}
+              value={kbIDs}
+              onChange={setKBIDs}
+            />
+          )}
           <div>
             <Button variant="outline" size="sm" onClick={() => setMsgs([])} disabled={busy || msgs.length === 0}>
               <Eraser aria-hidden />
@@ -676,7 +708,7 @@ function ChatPanel({ models, apiKey, keyField }: PanelProps) {
                 <p className="max-w-xs">{apiKey ? "Send a message to start." : "Paste an API key on the left, then send a message."}</p>
               </div>
             ) : (
-              msgs.map((m, i) => <Message key={i} m={m} streaming={busy && i === msgs.length - 1} />)
+              msgs.map((m, i) => <Message key={i} m={m} streaming={busy && i === msgs.length - 1} docName={docName} />)
             )}
             <div ref={end} />
           </div>
@@ -716,7 +748,7 @@ function ChatPanel({ models, apiKey, keyField }: PanelProps) {
   );
 }
 
-function Message({ m, streaming }: { m: Msg; streaming: boolean }) {
+function Message({ m, streaming, docName }: { m: Msg; streaming: boolean; docName: (ref: string) => string }) {
   const user = m.role === "user";
   return (
     <div className={cn("flex flex-col", user ? "items-end" : "items-start")}>
@@ -751,6 +783,24 @@ function Message({ m, streaming }: { m: Msg; streaming: boolean }) {
             <div className="flex gap-1">
               <dt>Latency</dt>
               <dd className="text-foreground">{ms(m.latency)}</dd>
+            </div>
+          )}
+          {m.kb === "error" && (
+            <div className="flex gap-1">
+              <dt>Knowledge base</dt>
+              <dd className="text-foreground">Lookup failed; answered without it</dd>
+            </div>
+          )}
+          {m.kb === "empty" && (
+            <div className="flex gap-1">
+              <dt>Knowledge base</dt>
+              <dd className="text-foreground">No matching excerpts</dd>
+            </div>
+          )}
+          {!!m.sources?.length && (
+            <div className="flex gap-1">
+              <dt>Sources</dt>
+              <dd className="text-foreground">{m.sources.map(docName).join(", ")}</dd>
             </div>
           )}
           {m.usage && (

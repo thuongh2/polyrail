@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import {
-  Activity, BarChart3, Boxes, Building2, CreditCard, KeyRound, LogOut, Menu, MessageSquare, Plug,
+  Activity, BarChart3, BookOpen, Boxes, Building2, CreditCard, KeyRound, LogOut, Menu, MessageSquare, Plug,
   ScrollText, Server, Settings, ShieldCheck, UserRound, Users, Webhook, Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ const groups: { label: string; items: Item[]; operator?: boolean }[] = [
       { href: "/app/keys", label: "API keys", icon: KeyRound },
       { href: "/app/credits", label: "Credits", icon: CreditCard },
       { href: "/app/models", label: "Models", icon: Boxes },
+      { href: "/app/kbs", label: "Knowledge bases", icon: BookOpen },
       { href: "/app/providers", label: "Providers", icon: Plug, min: "admin" },
       { href: "/app/members", label: "Members", icon: Users },
       { href: "/app/settings", label: "Settings", icon: Settings },

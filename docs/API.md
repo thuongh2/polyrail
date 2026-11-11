@@ -7,6 +7,10 @@
 | POST | `/v1/chat/completions` | OpenAI request body. `model` is a catalog id (`vendor/name`). `stream: true` returns SSE ending with `data: [DONE]`; the last chunk carries `usage`. Response adds `provider`. |
 | POST | `/v1/embeddings` | OpenAI request body. |
 | GET | `/v1/models` | Models visible to the key, with `pricing.input`/`pricing.output` (USD per 1M tokens) and `context_length`. |
+| POST | `/v1/completions` | Legacy text completions (chat-kind models), `stream` supported. |
+| POST | `/v1/responses` | OpenAI Responses API (chat-kind models). Streams named SSE events ending with `response.completed`. |
+| POST | `/v1/audio/speech` | Text to speech (speech models): `{model, input, voice, response_format, speed}` → audio bytes. Priced per input token, or per 1M characters when the provider reports no tokens. |
+| POST | `/v1/audio/transcriptions` | Speech to text (transcription models): multipart `file`, `model`, `language`, `prompt`, `response_format` (json or text). Priced by `audio_minute_price_micros` when set, else by tokens. |
 | POST | `/v1/mcp/tool/execute` | Body: one `tool_calls[]` item returned by the model. Returns the tool message to append. |
 
 Errors: `{"error": {"message", "type", "code"}}`. Codes include `invalid_api_key` (401),

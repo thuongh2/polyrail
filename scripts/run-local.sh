@@ -64,9 +64,11 @@ if [ "$DEMO" = 1 ]; then
   if ! curl "${H[@]}" "$B/api/admin/providers" | grep -q '"name":"demo-mock"'; then
     PROV=$(curl "${H[@]}" -X POST "$B/api/admin/providers" \
       -d '{"name":"demo-mock","type":"openai","base_url":"http://127.0.0.1:9901","keys":[{"value":"not-needed"}],"enabled":true}' | id)
-    for m in "demo/fast:Demo Fast:150000:600000:128000" "demo/large:Demo Large:2500000:10000000:200000"; do
-      IFS=: read -r mid name pin pout ctx <<< "$m"
-      curl "${H[@]}" -X POST "$B/api/admin/models" -d "{\"id\":\"$mid\",\"name\":\"$name\",\"description\":\"Answers from the local mock provider\",\"context_length\":$ctx,\"input_price_micros\":$pin,\"output_price_micros\":$pout,\"targets\":[{\"provider_id\":\"$PROV\",\"model\":\"mock\"}],\"enabled\":true}" >/dev/null
+    for m in "demo/fast:Demo Fast:chat:150000:600000:0" "demo/large:Demo Large:chat:2500000:10000000:0" \
+             "demo/voice-tts:Demo Voice (text to speech):speech:15000000:0:0" "demo/whisper-stt:Demo Whisper (speech to text):transcription:0:0:6000" \
+             "demo/embed:Demo Embed:embedding:20000:0:0"; do
+      IFS=: read -r mid name kind pin pout pmin <<< "$m"
+      curl "${H[@]}" -X POST "$B/api/admin/models" -d "{\"id\":\"$mid\",\"name\":\"$name\",\"kind\":\"$kind\",\"description\":\"Answers from the local mock provider\",\"input_price_micros\":$pin,\"output_price_micros\":$pout,\"audio_minute_price_micros\":$pmin,\"targets\":[{\"provider_id\":\"$PROV\",\"model\":\"mock\"}],\"enabled\":true}" >/dev/null
     done
     ORG=$(curl "${H[@]}" "$B/api/auth/me" | id)
     SECRET=$(curl "${H[@]}" -X POST "$B/api/orgs/$ORG/keys" -d '{"name":"demo"}' | grep -o '"secret":"[^"]*"' | cut -d'"' -f4)

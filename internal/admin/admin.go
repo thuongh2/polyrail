@@ -100,6 +100,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/orgs/{org}/providers", a.org(store.RoleAdmin, a.putProvider))
 	mux.HandleFunc("PUT /api/orgs/{org}/providers/{id}", a.org(store.RoleAdmin, a.putProvider))
 	mux.HandleFunc("DELETE /api/orgs/{org}/providers/{id}", a.org(store.RoleAdmin, a.deleteProvider))
+	mux.HandleFunc("POST /api/orgs/{org}/providers/{id}/discover", a.org(store.RoleAdmin, a.discoverModels))
+	mux.HandleFunc("POST /api/orgs/{org}/providers/{id}/import", a.org(store.RoleAdmin, a.importModels))
 	mux.HandleFunc("GET /api/orgs/{org}/models", a.org(store.RoleViewer, a.listModels))
 	mux.HandleFunc("POST /api/orgs/{org}/models", a.org(store.RoleAdmin, a.putModel))
 	mux.HandleFunc("PUT /api/orgs/{org}/models/{id...}", a.org(store.RoleAdmin, a.putModel))
@@ -113,6 +115,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/providers", a.operator(a.platform(a.putProvider)))
 	mux.HandleFunc("PUT /api/admin/providers/{id}", a.operator(a.platform(a.putProvider)))
 	mux.HandleFunc("DELETE /api/admin/providers/{id}", a.operator(a.platform(a.deleteProvider)))
+	mux.HandleFunc("POST /api/admin/providers/{id}/discover", a.operator(a.platform(a.discoverModels)))
+	mux.HandleFunc("POST /api/admin/providers/{id}/import", a.operator(a.platform(a.importModels)))
 	mux.HandleFunc("GET /api/admin/models", a.operator(a.platform(a.listModels)))
 	mux.HandleFunc("POST /api/admin/models", a.operator(a.platform(a.putModel)))
 	mux.HandleFunc("PUT /api/admin/models/{id...}", a.operator(a.platform(a.putModel)))
@@ -739,10 +743,19 @@ func (a *API) patchKey(w http.ResponseWriter, r *http.Request) {
 // ---- providers ----
 
 // supportedTypes are the Bifrost provider types the platform configures. azure, bedrock and vertex
-// take per-key config (ProviderKey.Azure/Bedrock/Vertex) instead of, or next to, an API key.
+// take per-key config (ProviderKey.Azure/Bedrock/Vertex) instead of, or next to, an API key;
+// ollama, sgl and vllm take their server URL, databricks its workspace URL, from base_url.
+// Not offered (need auth or key config this schema lacks): github-copilot (OAuth device flow),
+// bedrock_mantle and sagemaker (AWS SigV4 key config), cloudflare (per-key account id).
 var supportedTypes = map[string]bool{"openai": true, "anthropic": true, "gemini": true, "cohere": true,
 	"mistral": true, "groq": true, "ollama": true, "cerebras": true, "perplexity": true, "openrouter": true,
-	"nebius": true, "parasail": true, "sgl": true, "elevenlabs": true, "azure": true, "bedrock": true, "vertex": true}
+	"nebius": true, "parasail": true, "sgl": true, "elevenlabs": true, "azure": true, "bedrock": true, "vertex": true,
+	"deepseek": true, "xai": true, "fireworks": true, "huggingface": true, "replicate": true, "vllm": true,
+	"databricks": true, "minimax": true, "byteplus": true, "sarvam": true, "wafer": true, "typesafe": true,
+	"opencode-go": true, "opencode-zen": true, "runway": true, "runware": true}
+
+// needsBaseURL are the types with no default host: base_url is their server or workspace URL.
+var needsBaseURL = map[string]bool{"ollama": true, "sgl": true, "vllm": true, "databricks": true}
 
 // cloudID matches AWS/GCP regions and GCP project ids; both are formatted into upstream hostnames
 // and paths by Bifrost, so anything else could redirect requests.
@@ -752,6 +765,9 @@ var cloudID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // providers: they may not use the gateway host's own cloud identity (IAM), only explicit secrets.
 // old is the stored provider on update (nil on create), used to see which secrets are kept.
 func checkKeyConfig(p, old *store.Provider, tenant bool, allowPrivate bool) error {
+	if needsBaseURL[p.Type] && p.BaseURL == "" {
+		return fmt.Errorf("%w: %s needs base_url (its server or workspace URL)", store.ErrInvalid, p.Type)
+	}
 	cloud := p.Type == "azure" || p.Type == "bedrock" || p.Type == "vertex"
 	if cloud && p.BaseURL != "" {
 		return fmt.Errorf("%w: base_url is not used by %s; set the endpoint or region on each key", store.ErrInvalid, p.Type)

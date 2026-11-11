@@ -183,6 +183,11 @@ func run() error {
 	mux.HandleFunc("POST /anthropic/v1/messages", g.AnthropicMessages)
 	mux.HandleFunc("POST /anthropic/v1/messages/count_tokens", g.AnthropicCountTokens)
 	mux.HandleFunc("GET /anthropic/v1/models", g.AnthropicModels)
+	for _, v := range []string{"v1beta", "v1"} { // Google GenAI SDK base URL: http://host/genai
+		mux.HandleFunc("POST /genai/"+v+"/models/{rest...}", g.GenAI)
+		mux.HandleFunc("GET /genai/"+v+"/models", g.GenAIModels)
+		mux.HandleFunc("GET /genai/"+v+"/models/{rest...}", g.GenAIModel)
+	}
 	aliases(mux)
 	api.Register(mux)
 	mux.Handle("GET /metrics", metricsAuth(os.Getenv("METRICS_TOKEN"), promhttp.Handler()))
@@ -255,9 +260,9 @@ func metricsAuth(token string, h http.Handler) http.Handler {
 // withCORS lets browser apps call the OpenAI-compatible API (key auth, no cookies).
 func withCORS(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p := r.URL.Path; strings.HasPrefix(p, "/v1/") || strings.HasPrefix(p, "/openai/v1/") || strings.HasPrefix(p, "/anthropic/v1/") {
+		if p := r.URL.Path; strings.HasPrefix(p, "/v1/") || strings.HasPrefix(p, "/openai/v1/") || strings.HasPrefix(p, "/anthropic/v1/") || strings.HasPrefix(p, "/genai/") {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, anthropic-version, anthropic-beta, x-gateway-cache, x-gateway-mcp-clients")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, anthropic-version, anthropic-beta, x-goog-api-key, x-goog-api-client, x-gateway-cache, x-gateway-mcp-clients")
 			w.Header().Set("Access-Control-Expose-Headers", "x-gateway-provider, x-gateway-request-id, x-gateway-cache-hit")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)

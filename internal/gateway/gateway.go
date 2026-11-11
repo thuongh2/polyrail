@@ -163,6 +163,9 @@ func errorBody(w http.ResponseWriter, e *apiError) (string, any) {
 	if _, ok := w.(anthropicWriter); ok {
 		return "error", anthropicError(e)
 	}
+	if _, ok := w.(genaiWriter); ok {
+		return "", genaiError(e)
+	}
 	return "", map[string]any{"error": map[string]any{"message": e.msg, "type": e.typ, "code": e.code}}
 }
 

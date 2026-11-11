@@ -21,6 +21,11 @@
 | POST | `/anthropic/v1/messages` | Anthropic Messages API for any chat-kind model (`model` is a catalog id; `model`, `max_tokens`, `messages` required). Converted with Bifrost core to the Responses pipeline, so routing, limits, guardrails, pricing and logs are the same as `/v1/responses`. `stream: true` returns Anthropic SSE (`event: message_start` … `event: message_stop`, no `[DONE]`). `anthropic-version` / `anthropic-beta` headers are accepted and ignored. |
 | POST | `/anthropic/v1/messages/count_tokens` | Anthropic count tokens (`model`, `messages`, optional `system`/`tools`; no `max_tokens`) → `{"input_tokens"}`. Same rules as `/v1/responses/input_tokens`. |
 | GET | `/anthropic/v1/models` | Chat models visible to the key: `{"data": [{"id","type":"model","display_name","created_at"}], "first_id","last_id","has_more": false}`. |
+| POST | `/genai/v1beta/models/{model}:generateContent` | Google GenAI (Gemini) SDK drop-in for chat-kind models. `{model}` is a catalog id: send `vendor/name` as is (the SDKs put it in the path unescaped), `vendor%2Fname`, or `models/vendor/name`. Body is a Gemini `GenerateContentRequest` (`contents`, `systemInstruction`, `generationConfig`, `tools`…), converted with Bifrost core to the Responses pipeline: same routing, limits, guardrails (text parts), pricing and logs as `/v1/responses`. Reply is a `GenerateContentResponse` with `modelVersion` = the catalog id. Key in `x-goog-api-key`, `?key=`, `Authorization: Bearer` or `x-api-key`. |
+| POST | `/genai/v1beta/models/{model}:streamGenerateContent?alt=sse` | Same, as SSE `data: {GenerateContentResponse}` frames (no `[DONE]`, no event names). Without `alt=sse` → 400 (the Gemini SDKs always send it). |
+| POST | `/genai/v1beta/models/{model}:countTokens` | Gemini count tokens (`contents` or `generateContentRequest`) → `{"totalTokens"}`, counted by the serving provider. Logged at cost 0. |
+| POST | `/genai/v1beta/models/{model}:embedContent`, `:batchEmbedContents` | Embedding-kind models: `{content}` → `{"embedding":{"values"}}`; `{requests:[{content}]}` → `{"embeddings":[{"values"}]}`. |
+| GET | `/genai/v1beta/models[/{model}]` | Chat and embedding models visible to the key in the Gemini format: `{"models":[{"name":"models/vendor/name","baseModelId","displayName","inputTokenLimit","outputTokenLimit","supportedGenerationMethods"}]}` (one page). `/genai/v1/...` serves the same. |
 | * | `/openai/v1/...` | Alias of `/v1/...` for every endpoint above (OpenAI SDK `base_url` ending in `/openai/v1`). |
 
 Model kinds: `chat`, `embedding`, `speech`, `transcription`, `image`, `rerank`, `ocr`; each endpoint
@@ -30,6 +35,8 @@ image, and `request_price_micros`, added to every successful, non-cached request
 (token counting excepted).
 
 Anthropic SDK: `Anthropic(base_url="https://gw.example.com/anthropic", api_key="sk-gw-…")`.
+Google GenAI SDK: `genai.Client(api_key="sk-gw-…", http_options={"base_url": "https://gw.example.com/genai"})`,
+then `client.models.generate_content(model="vendor/name", contents="hi")`.
 
 ```
 POST /anthropic/v1/messages
@@ -49,6 +56,10 @@ On `/anthropic/v1/*` errors use the Anthropic shape with the same status:
 `{"type":"error","error":{"type","message"}}`, type by status: 400 `invalid_request_error`,
 401 `authentication_error`, 402 `billing_error`, 403 `permission_error`, 404 `not_found_error`,
 413 `request_too_large`, 429 `rate_limit_error`, other `api_error`. Stream errors are `event: error`.
+On `/genai/*` errors use Google's shape with the same status: `{"error":{"code","message","status"}}`,
+status 400 `INVALID_ARGUMENT`, 401 `UNAUTHENTICATED`, 402 `FAILED_PRECONDITION`, 403 `PERMISSION_DENIED`,
+404 `NOT_FOUND`, 429 `RESOURCE_EXHAUSTED`, 502/503 `UNAVAILABLE`, other `INTERNAL`; stream errors are a
+`data:` frame of the same shape.
 
 ## Public
 
@@ -91,6 +102,7 @@ names the key may use, intersected with the org grant; empty or absent = every g
 `expires_in_days`, `revoked`. On PATCH only admins may change limits, `models` or `mcp_servers`.
 
 | GET/POST/PUT/DELETE | `/api/orgs/{org}/providers[/{id}]` | admin |
+| POST | `/api/orgs/{org}/providers/{id}/discover`, `/import` | admin (org-owned providers only) |
 | GET | `/api/orgs/{org}/models` | viewer |
 | POST/PUT/DELETE | `/api/orgs/{org}/models[/{vendor/name}]` | admin |
 | GET | `/api/orgs/{org}/usage?days=30` | viewer |
@@ -114,6 +126,27 @@ config and no `base_url`; `elevenlabs` takes `value` and an optional `base_url`.
 `*` = secret. `deployments` maps model name → deployment / inference profile; when set, only those
 models are served by that key. `GET /api/auth/config` lists the types per scope in
 `provider_types.platform` / `provider_types.org`.
+
+Key-only types (`value` + optional `base_url` override): `openai`, `anthropic`, `gemini`, `cohere`,
+`mistral`, `groq`, `cerebras`, `perplexity`, `openrouter`, `nebius`, `parasail`, `elevenlabs`,
+`deepseek`, `xai`, `fireworks`, `huggingface`, `replicate`, `minimax`, `byteplus`, `sarvam`, `wafer`,
+`typesafe`, `opencode-go`, `opencode-zen`, `runway`, `runware`. `ollama`, `sgl`, `vllm` require
+`base_url` (the server; key optional) and `databricks` requires `base_url` = the workspace URL plus a
+token in `value`. Org providers may use the types Bifrost can run many times: `openai`, `anthropic`,
+`gemini`, `cohere`, `bedrock`, `huggingface`, `replicate`, `typesafe`. Not offered: `github-copilot`
+(OAuth device flow), `bedrock_mantle` and `sagemaker` (AWS SigV4 key config), `cloudflare` (per-key
+account id).
+
+Model import: `POST …/providers/{id}/discover` (platform: `/api/admin/providers/{id}/discover`) asks
+the provider for its model list with its own keys (Bifrost `ListModelsRequest`; the provider must be
+enabled) → `{"provider","models":[{"upstream","name","description","context_length",
+"max_output_tokens","input_price_micros","output_price_micros"}]}` (prices only when the upstream lists
+them, converted to micro-USD per 1M tokens). Org providers get a generic error instead of the upstream
+body. `POST …/providers/{id}/import {"models":[{"upstream","id","name","description","kind",
+"context_length","max_output_tokens","input_price_micros","output_price_micros"}]}` (1–500) creates
+enabled models (public for the platform route, org-private for the org route) with one target
+`{provider, upstream}` → `{"created":[ids]}`. Every entry is validated first; an existing id is 409;
+a store error rolls back the models already created. Each model gets a `model.import` audit entry.
 
 ```json
 {"name":"azure-eu","type":"azure","enabled":true,"keys":[{"value":"<azure key>","azure":{

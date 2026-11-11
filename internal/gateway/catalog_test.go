@@ -67,6 +67,11 @@ func TestAccountMapsCloudKeyConfig(t *testing.T) {
 	if ok := keys(ol); len(ok) != 1 || ok[0].OllamaKeyConfig.URL.GetValue() != ol.BaseURL {
 		t.Fatalf("keyless ollama needs one implicit key with its URL: %+v", ok)
 	}
+	vl := store.Provider{ID: "vl", Type: "vllm", BaseURL: "http://10.0.0.6:8000", Enabled: true, Keys: []store.ProviderKey{{ID: "v", Value: "tok"}}}
+	snap.Providers[vl.ID], snap.byBifrost[BifrostKey(vl)] = vl, vl.ID
+	if vk := keys(vl); len(vk) != 1 || vk[0].VLLMKeyConfig.URL.GetValue() != vl.BaseURL || vk[0].Value.GetValue() != "tok" {
+		t.Fatalf("vllm keys carry the server URL: %+v", vk)
+	}
 	cfg, err := a.GetConfigForProvider(BifrostKey(br))
 	if err != nil || cfg.CustomProviderConfig == nil || cfg.CustomProviderConfig.BaseProviderType != schemas.Bedrock {
 		t.Fatalf("bedrock is a custom-base provider: %+v %v", cfg, err)

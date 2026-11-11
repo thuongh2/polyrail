@@ -53,7 +53,11 @@ func New(kv store.KV, queue int, interval time.Duration, sinks ...LogSink) *Pipe
 // Keys of the counters touched by one request.
 func Month(t time.Time) string { return t.UTC().Format("200601") }
 
-func OrgSpendKey(org string) string              { return "spend/org/" + org }
+func OrgSpendKey(org string) string { return "spend/org/" + org }
+
+// EndUserPrefix is where an org's per-end-user rollups of one day live (day first, so log
+// retention can prune them by range).
+func EndUserPrefix(org, day string) string       { return "enduser/" + day + "/" + org + "/" }
 func KeySpendKey(key string, t time.Time) string { return "spend/key/" + key + "/" + Month(t) }
 
 // Record accounts one finished request. Never blocks.
@@ -80,6 +84,12 @@ func (p *Pipeline) Record(l store.RequestLog) {
 		OrgSpendKey(l.OrgID),
 		KeySpendKey(l.KeyID, l.At),
 	} {
+		cur := p.pending[k]
+		cur.Add(a)
+		p.pending[k] = cur
+	}
+	if l.EndUser != "" {
+		k := EndUserPrefix(l.OrgID, d) + l.EndUser
 		cur := p.pending[k]
 		cur.Add(a)
 		p.pending[k] = cur

@@ -239,12 +239,12 @@ func rewriteBatchFile(data []byte, m store.Model, upstream string, org store.Org
 		}
 		var segs []*string
 		body = batchTexts(body, "", &segs).(map[string]any)
-		reason, err := applyGuardrails(org, segs)
+		v, err := applyGuardrails(org, guardInput{all: segs}) // shortcut: no role info here, so no injection scan or compression
 		if err != nil {
 			return nil, err
 		}
-		if reason != "" {
-			return nil, fmt.Errorf("line %d: %w: %s", i+1, errGuardrail, reason)
+		if v.reason != "" {
+			return nil, fmt.Errorf("line %d: %w: %s", i+1, errGuardrail, v.reason)
 		}
 		capBatchTokens(body, url, org.MaxTokensCap)
 		body["model"] = upstream

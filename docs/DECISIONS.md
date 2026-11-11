@@ -70,3 +70,14 @@ Bedrock/Vertex credentials mean the host's cloud identity (IAM), which only oper
 admin API rejects it for org providers and the Account drops such tenant keys. Regions and project
 ids are checked against `^[a-z0-9][a-z0-9-]{0,62}$` because Bifrost formats them into upstream
 hostnames. Not tested against real Azure/AWS/GCP in the sandbox (no cloud accounts).
+
+**D14 Guardrails: credential masker, prompt-injection tripwire, lossless compression.** Three
+opt-in fields on `store.Guardrails` (`mask_secrets`, `prompt_injection: ""|warn|block`,
+`compression: ""|lossless`), kept in the existing struct so they ride the org JSON and auth cache.
+`applyGuardrails` takes a `guardInput` (all / user-role / prose text) so the injection scan sees
+only user text and compression never touches tool results; batch files have no role data and get
+neither. Secret patterns are fixed well-known prefixes; generic `password=` assignments are skipped
+(high false-positive rate on code). Injection is one stdlib regex of high-signal phrasings, capped
+at 16 KB per request, no content logging. Compression is whitespace only (lossy "Caveman"/LLMLingua
+stay out, see OMNIROUTE_PARITY). The cache key stays the raw body: deterministic, and compression
+runs before the lookup so an identical body always compresses identically.

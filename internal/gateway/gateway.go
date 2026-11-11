@@ -644,6 +644,7 @@ type ModelInfo struct {
 		AudioMinute string `json:"audio_minute,omitempty"` // USD per minute of audio (transcription)
 		Image       string `json:"image,omitempty"`        // USD per generated image
 		Request     string `json:"request,omitempty"`      // USD per request
+		VideoSecond string `json:"video_second,omitempty"` // USD per second of generated video
 	} `json:"pricing"`
 	Private   bool     `json:"private,omitempty"`
 	Providers []string `json:"providers,omitempty"` // public models only: names of serving providers
@@ -663,6 +664,9 @@ func Info(m store.Model) ModelInfo {
 	}
 	if m.RequestPrice > 0 {
 		mi.Pricing.Request = usd(m.RequestPrice)
+	}
+	if m.VideoSecondPrice > 0 {
+		mi.Pricing.VideoSecond = usd(m.VideoSecondPrice)
 	}
 	return mi
 }

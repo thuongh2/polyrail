@@ -18,13 +18,13 @@ export const kbDescription =
   "Documents the gateway chunks, embeds and searches. Attach a knowledge base to an API key, or send X-GW-KB, and chat requests are grounded in its best-matching excerpts.";
 
 export default function KnowledgeBases() {
-  const { org, can } = useSession();
-  const kbs = useAsync(() => (org ? kbApi(org.id).list() : Promise.resolve([] as KB[])), [org?.id]);
+  const { org, wsCan, wsList, ws, wsName } = useSession();
+  const kbs = useAsync(() => (org ? kbApi(org.id, wsList).list() : Promise.resolve([] as KB[])), [org?.id]);
   const [creating, setCreating] = useState(false);
   const [, navigate] = useLocation();
 
   if (!org) return <EmptyState title="You are not in an organization yet" />;
-  const admin = can("admin");
+  const admin = wsCan("admin");
   const add = admin && (
     <Button size="sm" onClick={() => setCreating(true)}>
       <Plus aria-hidden /> Create knowledge base
@@ -49,6 +49,7 @@ export default function KnowledgeBases() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  {!ws && <TableHead>Workspace</TableHead>}
                   <TableHead>Embedding model</TableHead>
                   <TableHead className="text-right">Documents</TableHead>
                   <TableHead className="text-right">Chunks</TableHead>
@@ -64,6 +65,7 @@ export default function KnowledgeBases() {
                       </Link>
                       {k.description && <span className="block truncate text-xs text-muted-foreground">{k.description}</span>}
                     </TableCell>
+                    {!ws && <TableCell className="whitespace-nowrap">{wsName(k.workspace_id)}</TableCell>}
                     <TableCell className="font-mono text-xs">
                       {k.embedding_model}
                       {k.dimensions ? <span className="text-muted-foreground"> · {k.dimensions} dims</span> : null}
@@ -89,6 +91,7 @@ export default function KnowledgeBases() {
 }
 
 function CreateKBDialog({ open, onOpenChange, org, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; org: string; onCreated: (kb: KB) => void }) {
+  const { wsBody } = useSession();
   const form = useKBForm(org, undefined, open);
   return (
     <FormDialog
@@ -99,7 +102,7 @@ function CreateKBDialog({ open, onOpenChange, org, onCreated }: { open: boolean;
       submitLabel="Create"
       success="Knowledge base created"
       onSubmit={async () => {
-        const kb = await kbApi(org).create(form.build());
+        const kb = await kbApi(org).create({ ...form.build(), ...wsBody });
         form.reset();
         onCreated(kb);
       }}
@@ -129,9 +132,13 @@ const defaultDims = (model: string) => (model.includes("text-embedding-3") ? "51
 /** The KB settings form shared by the create dialog and the Settings tab. build() throws on invalid input. */
 export function useKBForm(org: string, kb: KB | undefined, active: boolean, disabled = false) {
   const [s, setS] = useState<FormState>(() => fromKB(kb));
+  const { ws } = useSession();
+  // Embedding models of the KB's workspace (the current one for a new KB).
+  const kbWS = kb ? (kb.workspace_id ?? "default") : ws?.id;
+  const wsList = (p: string) => (kbWS ? `${p}?workspace=${encodeURIComponent(kbWS)}` : p);
   const models = useAsync(
     () =>
-      active ? get<ModelView[]>(`${orgBase(org)}/models`).then((ms) => ms.filter((m) => m.kind === "embedding" && m.enabled)) : Promise.resolve(undefined),
+      active ? get<ModelView[]>(wsList(`${orgBase(org)}/models`)).then((ms) => ms.filter((m) => m.kind === "embedding" && m.enabled)) : Promise.resolve(undefined),
     [org, active],
   );
   const set = (k: keyof FormState) => (v: string) => setS((p) => ({ ...p, [k]: v }));

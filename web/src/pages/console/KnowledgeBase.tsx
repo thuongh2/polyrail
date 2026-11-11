@@ -30,7 +30,7 @@ const statusText: Record<KBDoc["status"], { label: string; cls: string }> = {
 const pending = (d: KBDoc) => d.status === "queued" || d.status === "processing";
 
 export default function KnowledgeBase({ id }: { id: string }) {
-  const { org, can } = useSession();
+  const { org, wsCan: can } = useSession(); // the role in the current workspace
   const orgID = org?.id ?? "";
   const kb = useAsync(() => (orgID ? kbApi(orgID).get(id) : Promise.resolve(undefined)), [orgID, id]);
   const docs = useAsync(() => (orgID ? kbApi(orgID).docs(id) : Promise.resolve([] as KBDoc[])), [orgID, id]);

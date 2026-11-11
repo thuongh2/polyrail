@@ -24,13 +24,18 @@ import { useAsync, useQueryParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 
 export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
-  const { org, can, user } = useSession();
+  const { org, wsCan, user, ws, wsList } = useSession();
   const base = scope === "platform" ? PLATFORM + "/models" : org ? orgBase(org.id) + "/models" : null;
-  const admin = scope === "platform" ? !!user?.operator : can("admin");
+  const admin = scope === "platform" ? !!user?.operator : wsCan("admin");
   const provBase = admin ? providersPath(scope, org?.id) : null;
 
-  const models = useAsync(() => (base ? get<ModelView[]>(base) : Promise.resolve([] as ModelView[])), [base]);
-  const providers = useAsync(() => (provBase ? get<Provider[]>(provBase) : Promise.resolve([] as Provider[])), [provBase]);
+  const models = useAsync(() => (base ? get<ModelView[]>(scope === "org" ? wsList(base) : base) : Promise.resolve([] as ModelView[])), [base]);
+  // Private models may target providers of their workspace and providers shared across workspaces.
+  const usable = (p: Provider) => scope === "platform" || !ws || !p.org_id || p.shared_across_workspaces || (p.workspace_id ?? "default") === ws.id;
+  const providers = useAsync(
+    () => (provBase ? get<Provider[]>(provBase).then((ps) => ps.filter(usable)) : Promise.resolve([] as Provider[])),
+    [provBase],
+  );
   const provName = useMemo(() => new Map((providers.data ?? []).map((p) => [p.id, p.name])), [providers.data]);
 
   const [owner, setOwner] = useQueryParam("owner", "all");
@@ -302,6 +307,7 @@ const usdInput = (m?: number) => (m ? String(m / 1e6) : "");
 function ModelDialog({
   scope, base, model, providers, onClose, onSaved,
 }: { scope: Scope; base: string; model?: ModelView; providers: Provider[]; onClose: () => void; onSaved: () => void }) {
+  const { wsBody } = useSession();
   const [open, setOpen] = useState(true);
   const [id, setId] = useState(model?.id ?? "");
   const [name, setName] = useState(model?.name ?? "");
@@ -382,7 +388,7 @@ function ModelDialog({
       enabled,
     };
     if (model) await api("PUT", `${base}/${pathID(model.id)}`, body);
-    else await api("POST", base, body);
+    else await api("POST", base, scope === "org" ? { ...body, ...wsBody } : body);
     onSaved();
   };
 

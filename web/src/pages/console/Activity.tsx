@@ -22,21 +22,31 @@ type Metric = "spend" | "requests" | "tokens";
 const errRate = (r: UsageRow) => (r.requests ? r.errors / r.requests : null);
 
 export default function Activity({ scope = "org" }: { scope?: Scope }) {
-  const { org } = useSession();
+  const { org, ws, wsList, wsName, canAllWs } = useSession();
   const platform = scope === "platform";
   const base = platform ? PLATFORM : org ? orgBase(org.id) : "";
+  // Organization usage is limited to the current workspace (?workspace=); "All workspaces" shows the whole org.
+  const inWS = (path: string) => (platform ? path : wsList(path));
   const [days, setDays] = useQueryParam("days", "30");
   const [metric, setMetric] = useQueryParam("metric", "spend") as [Metric, (v: string) => void];
   const period = PERIODS.includes(days) ? days : "30";
 
-  const usage = useAsync(() => get<UsageReport>(`${base}/usage?days=${period}`), [base, period]);
+  const usage = useAsync(() => get<UsageReport>(inWS(`${base}/usage?days=${period}`)), [base, period]);
   const orgInfo = useAsync(() => (platform || !base ? Promise.resolve(null) : get<Org>(base)), [base, platform]);
-  const keys = useAsync(() => (platform || !base ? Promise.resolve([] as APIKey[]) : get<APIKey[]>(`${base}/keys`)), [base, platform]);
-  const [by, setBy] = useQueryParam("by", "model");
+  const keys = useAsync(() => (platform || !base ? Promise.resolve([] as APIKey[]) : get<APIKey[]>(inWS(`${base}/keys`))), [base, platform]);
+  // Model rows are org-wide rollups, so one workspace starts on its keys.
+  const [by, setBy] = useQueryParam("by", ws ? "key" : "model");
   const breakdown = platform ? "model" : by;
   const endUsers = useAsync(
     () => (breakdown === "end_user" && base ? get<UsageReport>(`${base}/usage?days=${period}&group=end_user`).then((r) => r.end_users ?? []) : Promise.resolve(null)),
     [base, period, breakdown],
+  );
+  const byWorkspace = useAsync(
+    () =>
+      breakdown === "workspace" && canAllWs && base
+        ? get<UsageReport>(`${base}/usage?days=${period}&group=workspace`).then((r) => r.workspaces ?? [])
+        : Promise.resolve(null),
+    [base, period, breakdown, canAllWs],
   );
   const [exporting, setExporting] = useState(false);
 
@@ -48,7 +58,13 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
     <>
       <PageHeader
         title={platform ? "Platform activity" : "Activity"}
-        description={platform ? "Traffic across every organization, by public model." : "Requests, spend and tokens for this organization."}
+        description={
+          platform
+            ? "Traffic across every organization, by public model."
+            : ws
+              ? `Requests, spend and tokens of the ${ws.name} workspace's API keys.`
+              : "Requests, spend and tokens for this organization, all workspaces."
+        }
         actions={
           <>
           <Button variant="outline" size="sm" onClick={() => setExporting(true)}>
@@ -70,7 +86,7 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
           </>
         }
       />
-      <ExportDialog open={exporting} onOpenChange={setExporting} base={base} platform={platform} />
+      <ExportDialog open={exporting} onOpenChange={setExporting} base={base} platform={platform} workspace={platform ? undefined : ws?.id} allWs={canAllWs && !ws} />
 
       <DataState state={usage} rows={3}>
         {(u) => (
@@ -126,6 +142,7 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
                       <TabsTrigger value="model">Models</TabsTrigger>
                       <TabsTrigger value="key">API keys</TabsTrigger>
                       <TabsTrigger value="end_user">End users</TabsTrigger>
+                      {canAllWs && <TabsTrigger value="workspace">Workspaces</TabsTrigger>}
                     </TabsList>
                   </Tabs>
                 )
@@ -144,15 +161,28 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
                     name={(id) => keyName(id) ?? <span className="text-muted-foreground">Deleted key ({id.slice(0, 6)})</span>}
                   />
                 )
+              ) : breakdown === "workspace" && canAllWs ? (
+                <>
+                  <p className="mb-2 text-sm text-muted-foreground">Every workspace of the organization, by the workspace of each request's API key.</p>
+                  <DataState state={byWorkspace} rows={3}>
+                    {(rows) => <UsageTable rows={rows ?? []} first="Workspace" empty="No workspace usage in this period." name={(id) => wsName(id)} />}
+                  </DataState>
+                </>
               ) : breakdown === "end_user" ? (
                 <>
                   <p className="mb-2 text-sm text-muted-foreground">
-                    Requests grouped by the <code className="font-mono">user</code> field your application sends, top 1,000 by spend.
+                    Requests grouped by the <code className="font-mono">user</code> field your application sends, top 1,000 by spend
+                    {ws ? ", across all workspaces" : ""}.
                   </p>
                   <DataState state={endUsers} rows={3}>
                     {(rows) => <UsageTable rows={rows ?? []} first="End user" empty="No requests with a user field in this period." name={(id) => <span className="font-mono text-xs">{id}</span>} />}
                   </DataState>
                 </>
+              ) : ws && !platform ? (
+                <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+                  Model totals are kept for the whole organization, not per workspace.{" "}
+                  {canAllWs ? "Choose All workspaces in the workspace switcher to see them." : "See the API keys tab for this workspace."}
+                </p>
               ) : (
                 <UsageTable rows={u.models} first="Model" empty="No model usage in this period." />
               )}
@@ -224,17 +254,20 @@ const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => isoDay(new Date(Date.now() - n * 86400000));
 
 /** CSV downloads: plain same-origin links, so the session cookie authenticates them. */
-function ExportDialog({ open, onOpenChange, base, platform }: { open: boolean; onOpenChange: (o: boolean) => void; base: string; platform: boolean }) {
+function ExportDialog({
+  open, onOpenChange, base, platform, workspace, allWs,
+}: { open: boolean; onOpenChange: (o: boolean) => void; base: string; platform: boolean; workspace?: string; allWs: boolean }) {
   const [what, setWhat] = useState("usage");
-  const [group, setGroup] = useState("model");
+  // One workspace's usage has no model rows (the server answers 400), so it starts on keys.
+  const [group, setGroup] = useState(workspace ? "key" : "model");
   const [from, setFrom] = useState(daysAgo(30));
   const [to, setTo] = useState(isoDay(new Date()));
   const logs = what === "logs" && !platform;
   const bad = !from || !to || from > to;
-  const qs = new URLSearchParams({ from, to, ...(logs ? {} : { group }) });
+  const qs = new URLSearchParams({ from, to, ...(logs ? {} : { group }), ...(workspace ? { workspace } : {}) });
   const href = `${base}/${logs ? "logs" : "usage"}/export.csv?${qs}`;
-  const groups = platform ? ["model", "day"] : ["model", "key", "creator", "day"];
-  const groupLabel: Record<string, string> = { model: "Model", key: "API key", creator: "Key creator", day: "Day" };
+  const groups = platform ? ["model", "day"] : workspace ? ["key", "creator", "day"] : ["model", "key", "creator", "day", ...(allWs ? ["workspace"] : [])];
+  const groupLabel: Record<string, string> = { model: "Model", key: "API key", creator: "Key creator", day: "Day", workspace: "Workspace" };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">

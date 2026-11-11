@@ -31,6 +31,7 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
 function scopeText(p: Policy) {
   const parts: string[] = [];
+  if (p.is_workspace_default) parts.push("Workspace default");
   if (p.is_org_default) {
     const out = (p.opted_out_member_ids?.length ?? 0) + (p.opted_out_key_ids?.length ?? 0);
     parts.push(out ? `Org default, ${out} opted out` : "Org default");
@@ -41,10 +42,10 @@ function scopeText(p: Policy) {
 }
 
 export default function Policies() {
-  const { org, can } = useSession();
-  const admin = can("admin");
+  const { org, wsCan, wsList, ws, wsName } = useSession();
+  const admin = wsCan("admin");
   const base = org ? orgBase(org.id) : "";
-  const policies = useAsync(() => (admin && base ? get<Policy[]>(`${base}/policies`) : Promise.resolve([] as Policy[])), [base, admin]);
+  const policies = useAsync(() => (admin && base ? get<Policy[]>(wsList(`${base}/policies`)) : Promise.resolve([] as Policy[])), [base, admin]);
   const [editing, setEditing] = useState<Policy | "new" | null>(null);
   const [deleting, setDeleting] = useState<Policy | null>(null);
 
@@ -55,7 +56,7 @@ export default function Policies() {
     return (
       <>
         <PageHeader title="Policies" description={description} />
-        <NoAccess>Only organization admins can view and manage policies. The policy that applies to one of your keys is shown on the API keys page.</NoAccess>
+        <NoAccess>Only workspace admins can view and manage policies. The policy that applies to one of your keys is shown on the API keys page.</NoAccess>
       </>
     );
 
@@ -85,6 +86,7 @@ export default function Policies() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  {!ws && <TableHead>Workspace</TableHead>}
                   <TableHead>Applies to</TableHead>
                   <TableHead>Budget</TableHead>
                   <TableHead>Allowlists</TableHead>
@@ -109,6 +111,7 @@ export default function Policies() {
                         </button>
                         {p.description && <span className="block truncate text-xs text-muted-foreground" title={p.description}>{p.description}</span>}
                       </TableCell>
+                      {!ws && <TableCell className="whitespace-nowrap">{wsName(p.workspace_id)}</TableCell>}
                       <TableCell className="whitespace-nowrap">{scopeText(p)}</TableCell>
                       <TableCell className="whitespace-nowrap tabular-nums">
                         {p.budget ? (
@@ -178,14 +181,22 @@ type FilterRow = PolicyFilter & { k: number };
 
 function PolicyDialog({ base, policy, onClose, onSaved }: { base: string; policy?: Policy; onClose: () => void; onSaved: () => void }) {
   const [open, setOpen] = useState(true);
+  const { can, ws, workspaces } = useSession();
+  // The policy's workspace: stored on edit, the current one on create ("All workspaces" creates in the default).
+  const pws = policy ? (policy.workspace_id ?? "default") : (ws?.id ?? "default");
+  const pwsName = workspaces.find((w) => w.id === pws)?.name ?? pws;
+  const inWS = (path: string) => `${path}?workspace=${encodeURIComponent(pws)}`;
   const members = useAsync(() => get<Member[]>(`${base}/members`), [base]);
-  const keys = useAsync(() => get<APIKey[]>(`${base}/keys`), [base]);
-  const models = useAsync(() => get<ModelView[]>(`${base}/models`).catch(() => [] as ModelView[]), [base]);
+  const keys = useAsync(() => get<APIKey[]>(inWS(`${base}/keys`)), [base]);
+  const models = useAsync(() => get<ModelView[]>(inWS(`${base}/models`)).catch(() => [] as ModelView[]), [base]);
   const providers = useAsync(() => providerOptions(base), [base]);
 
   const [name, setName] = useState(policy?.name ?? "");
   const [desc, setDesc] = useState(policy?.description ?? "");
   const [isDefault, setDefault] = useState(policy?.is_org_default ?? false);
+  const [wsDefault, setWsDefault] = useState(policy?.is_workspace_default ?? false);
+  // Org defaults live in the default workspace and only org admins set them.
+  const orgDefaultAllowed = can("admin") && pws === "default";
   const [memberIDs, setMemberIDs] = useState(policy?.member_ids ?? []);
   const [keyIDs, setKeyIDs] = useState(policy?.key_ids ?? []);
   const [outMembers, setOutMembers] = useState(policy?.opted_out_member_ids ?? []);
@@ -213,6 +224,8 @@ function PolicyDialog({ base, policy, onClose, onSaved }: { base: string; policy
       name: name.trim(),
       description: desc.trim() || undefined,
       is_org_default: isDefault,
+      is_workspace_default: !isDefault && wsDefault,
+      ...(policy ? {} : { workspace_id: pws }),
       member_ids: isDefault ? [] : memberIDs,
       key_ids: isDefault ? [] : keyIDs,
       opted_out_member_ids: isDefault ? outMembers : [],
@@ -239,7 +252,7 @@ function PolicyDialog({ base, policy, onClose, onSaved }: { base: string; policy
       }}
       wide
       title={policy ? `Edit ${policy.name}` : "Create policy"}
-      description="Every policy that reaches a key applies: allowlists intersect, privacy rules add up and each budget is checked on its own."
+      description={`In the ${pwsName} workspace. Every policy that reaches a key applies: allowlists intersect, privacy rules add up and each budget is checked on its own.`}
       submitLabel={policy ? "Save policy" : "Create policy"}
       success={policy ? "Policy saved" : "Policy created"}
       onSubmit={save}
@@ -251,9 +264,20 @@ function PolicyDialog({ base, policy, onClose, onSaved }: { base: string; policy
 
       <Part title="Apply to">
         <div className="grid gap-4">
-          <SwitchRow id="pol-default" label="Organization default" help="Applies to every member and API key, except the ones you opt out below.">
-            <Switch id="pol-default" checked={isDefault} onCheckedChange={setDefault} />
-          </SwitchRow>
+          {(orgDefaultAllowed || isDefault) && (
+            <SwitchRow id="pol-default" label="Organization default" help="Applies to every member and API key of every workspace, except the ones you opt out below.">
+              <Switch id="pol-default" checked={isDefault} disabled={!orgDefaultAllowed} onCheckedChange={(c) => (setDefault(c), c && setWsDefault(false))} />
+            </SwitchRow>
+          )}
+          {!isDefault && (
+            <SwitchRow
+              id="pol-ws-default"
+              label="Default for this workspace"
+              help={`Applies to every API key of the ${pwsName} workspace. Its budget is one limit shared by all of them.`}
+            >
+              <Switch id="pol-ws-default" checked={wsDefault} onCheckedChange={setWsDefault} />
+            </SwitchRow>
+          )}
           <div className="grid gap-4 sm:grid-cols-2">
             {isDefault ? (
               <>

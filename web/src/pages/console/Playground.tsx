@@ -80,9 +80,9 @@ const modes: { v: string; label: string; kind: ModelKind }[] = [
 ];
 
 export default function Playground() {
-  const { org } = useSession();
+  const { org, wsList } = useSession();
   const base = org ? orgBase(org.id) : "";
-  const models = useAsync(() => get<ModelView[]>(`${base}/models`).then((ms) => ms.filter((m) => m.enabled)), [base]);
+  const models = useAsync(() => get<ModelView[]>(wsList(`${base}/models`)).then((ms) => ms.filter((m) => m.enabled)), [base]);
   const [mode, setMode] = useQueryParam("mode", "chat");
   const [apiKey, setApiKey] = useState(""); // memory only: never persisted
 
@@ -594,9 +594,9 @@ function TranscribePanel({ models, apiKey, keyField }: PanelProps) {
 
 function ChatPanel({ models, apiKey, keyField }: PanelProps) {
   const [chosen, modelField] = useModelChoice(models, "chat");
-  const { org } = useSession();
+  const { org, wsList } = useSession();
   const orgID = org?.id ?? "";
-  const kbs = useAsync(() => (orgID ? kbApi(orgID).list() : Promise.resolve([])), [orgID]);
+  const kbs = useAsync(() => (orgID ? kbApi(orgID, wsList).list() : Promise.resolve([])), [orgID]);
   const [kbIDs, setKBIDs] = useState<string[]>([]);
   // Filenames for the Sources line: one docs call per picked KB, only while some are picked.
   const kbDocs = useAsync(

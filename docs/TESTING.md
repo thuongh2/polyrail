@@ -36,6 +36,7 @@ Test locations: `gw` = internal/gateway/gateway_test.go, `adm` = internal/admin/
 | AC2 cost = in×price + out×price, micro-USD | gw TestChatFailoverPricingAndBreaker; e2e (usage cost) | covered |
 | AC3 public catalog page + `/api/public/models` no auth | adm TestCrossTenantProvidersAndModels; e2e | partial: the HTML catalog page itself is not tested |
 | AC4 private models visible only to that org | adm TestCrossTenantProvidersAndModels; st TestProviderSecretsAndModelIsolation | covered (admin API + public catalog; see F1-AC4 gap) |
+| AC5 public provider health + status page | us TestRecordHealthKeys; gw TestChatFailoverPricingAndBreaker (failure recorded for the failed target, success for the server, `TargetOpen`); adm TestPublicModelHealthAndStatus (404 for private, no ids/base_url, all four statuses, 72 hourly buckets); st TestPruneHealth | partial: `down` via an open breaker is asserted only through `TargetOpen`, not through the HTTP status |
 
 ## F4 Routing, load balancing, failover
 | AC | Tests | Status |

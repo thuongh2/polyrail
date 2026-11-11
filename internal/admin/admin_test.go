@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -630,4 +631,99 @@ func TestMCPGrantOperatorOnly(t *testing.T) {
 	f := setup(t, Config{})
 	expect(t, f.do(t, "owner", "PATCH", "/api/orgs/"+f.orgA.ID, `{"mcp_servers":["*"]}`), 403, "owner grants MCP")
 	expect(t, f.do(t, "op", "PATCH", "/api/orgs/"+f.orgA.ID, `{"mcp_servers":["search"]}`), 200, "operator grants MCP")
+}
+
+func TestPublicModelHealthAndStatus(t *testing.T) {
+	f := setup(t, Config{})
+	ctx := context.Background()
+	prov := func(name string) store.Provider {
+		var p store.Provider
+		r := f.do(t, "op", "POST", "/api/admin/providers", `{"name":"`+name+`","type":"openai","base_url":"http://127.0.0.1:9","enabled":true,"keys":[{"value":"sk-up-secret-1"}]}`)
+		expect(t, r, 200, "public provider "+name)
+		r.json(t, &p)
+		return p
+	}
+	alpha, beta := prov("alpha"), prov("beta")
+	prov("gamma") // public provider without traffic
+	expect(t, f.do(t, "op", "POST", "/api/admin/models", `{"id":"vendor/m","name":"M","enabled":true,"max_output_tokens":4096,"targets":[{"provider_id":"`+alpha.ID+`","model":"up-a","weight":2},{"provider_id":"`+beta.ID+`","model":"up-b"}]}`), 200, "public model")
+	A := "/api/orgs/" + f.orgA.ID
+	pa := f.do(t, "admin", "POST", A+"/providers", `{"name":"privprov","type":"openai","base_url":"https://8.8.8.8","enabled":true}`)
+	var aProv store.Provider
+	pa.json(t, &aProv)
+	expect(t, f.do(t, "admin", "POST", A+"/models", `{"id":"acme/private","name":"P","enabled":true,"targets":[{"provider_id":"`+aProv.ID+`","model":"m"}]}`), 200, "private model")
+	if err := f.g.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	err := f.s.KV.AddAgg(ctx, map[string]store.Agg{
+		// alpha: 100 ok requests, 500 ms each, 100 output tokens each -> 200 tok/s
+		usage.HealthKey("vendor/m", alpha.ID, now):                    {store.AggRequests: 100, store.AggLatencyMs: 50_000, store.AggOutTokens: 10_000},
+		usage.HealthKey("vendor/m", alpha.ID, now.Add(-30*time.Hour)): {store.AggRequests: 10, store.AggLatencyMs: 5_000},
+		// beta: half the attempts failed -> down
+		usage.HealthKey("vendor/m", beta.ID, now):      {store.AggRequests: 10, store.AggErrors: 5, store.AggLatencyMs: 5_000},
+		usage.HealthKey("acme/private", aProv.ID, now): {store.AggRequests: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := f.do(t, "", "GET", "/api/public/models/vendor/m", "")
+	expect(t, r, 200, "public model health")
+	if r.hdr.Get("Cache-Control") != "public, max-age=30" {
+		t.Fatalf("cache-control: %q", r.hdr.Get("Cache-Control"))
+	}
+	for _, leak := range []string{alpha.ID, beta.ID, "base_url", "127.0.0.1", "sk-up-secret", "provider_id"} {
+		if strings.Contains(r.body, leak) {
+			t.Fatalf("public model page leaks %q: %s", leak, r.body)
+		}
+	}
+	var page struct {
+		Model     gateway.ModelInfo `json:"model"`
+		Stats     healthStats       `json:"stats_24h"`
+		Providers []struct {
+			Name, Type, UpstreamModel, Status string
+			Weight                            float64
+			Stats                             healthStats `json:"stats_24h"`
+			Hourly                            []hourStats
+		} `json:"providers"`
+	}
+	r.json(t, &page)
+	if page.Model.MaxOutput != 4096 || strings.Join(page.Model.Providers, ",") != "alpha,beta" || page.Stats.Requests != 110 || page.Stats.Errors != 5 {
+		t.Fatalf("model: %+v stats %+v", page.Model, page.Stats)
+	}
+	if len(page.Providers) != 2 {
+		t.Fatalf("providers: %s", r.body)
+	}
+	a, b := page.Providers[0], page.Providers[1]
+	if a.Name != "alpha" || a.Status != "operational" || a.Weight != 2 || a.Stats.Requests != 100 || *a.Stats.Uptime != 1 ||
+		a.Stats.AvgLatencyMs != 500 || *a.Stats.ThroughputTPS != 200 || len(a.Hourly) != 72 || a.Hourly[71].Requests != 100 || a.Hourly[41].Requests != 10 {
+		t.Fatalf("alpha: %+v", a)
+	}
+	if b.Status != "down" || *b.Stats.Uptime != 0.5 || b.Stats.AvgLatencyMs != 1000 {
+		t.Fatalf("beta: %+v", b)
+	}
+	expect(t, f.do(t, "", "GET", "/api/public/models/acme/private", ""), 404, "private model is not public")
+	expect(t, f.do(t, "", "GET", "/api/public/models/nope/x", ""), 404, "unknown model")
+
+	st := f.do(t, "", "GET", "/api/public/status", "")
+	expect(t, st, 200, "public status")
+	if strings.Contains(st.body, "privprov") || strings.Contains(st.body, alpha.ID) || strings.Contains(st.body, "base_url") {
+		t.Fatalf("status leaks: %s", st.body)
+	}
+	var status struct {
+		Providers []struct {
+			Name, Status string
+			Models       int
+			Stats        healthStats `json:"stats_24h"`
+		}
+		UpdatedAt time.Time `json:"updated_at"`
+	}
+	st.json(t, &status)
+	got := map[string]string{}
+	for _, p := range status.Providers {
+		got[p.Name] = fmt.Sprintf("%s/%d/%d", p.Status, p.Models, p.Stats.Requests)
+	}
+	if len(got) != 3 || got["alpha"] != "operational/1/100" || got["beta"] != "down/1/10" || got["gamma"] != "no_data/0/0" || status.UpdatedAt.IsZero() {
+		t.Fatalf("status: %s", st.body)
+	}
 }

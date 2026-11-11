@@ -48,6 +48,7 @@ khash/<sha256>                org/key ids    prov/<provider>      Provider (keys
 model/<model id>              Model          audit/<org>/<inv ts> AuditEntry
 mcp/<id>                      MCP server     log/<yyyymmdd>/<org>/<inv ts> RequestLog
 agg/<org>/<yyyymmdd>/<dim>    Agg counters   spend/org/<org>, spend/key/<key>/<yyyymm>  Agg counters
+health/<yyyymmddhh>/<model>|<provider>       Agg counters: public provider health per attempt (kept 30 d)
 meta/version                  config version (bumped on every control-plane write)
 ```
 

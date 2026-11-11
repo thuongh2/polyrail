@@ -29,6 +29,10 @@ Owner: PO agent. Status: v1 scope. Every criterion below must map to an automate
 - AC2 Cost of a request = prompt_tokens × in_price + completion_tokens × out_price (micro-USD precision).
 - AC3 Public catalog page and `GET /api/public/models` require no auth and show price per 1M tokens.
 - AC4 Org-private models are visible only to that org.
+- AC5 Each public model page shows per-provider health without auth: 24 h requests, errors, uptime,
+  average latency, throughput, a status (operational / degraded / down / no_data) and 72 hourly
+  buckets; a public status page summarizes every public provider. Failover attempts count as errors
+  for the failed provider. No provider ids, keys or base URLs are exposed; private models return 404.
 
 ### F4 Routing, load balancing, failover
 - AC1 A model has 1..n targets (provider + upstream model + weight); traffic splits by weight.

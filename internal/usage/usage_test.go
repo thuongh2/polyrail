@@ -54,3 +54,24 @@ func TestPipelineCountsSpendAndRetriesFailedFlush(t *testing.T) {
 		t.Fatalf("key spend: %v", a)
 	}
 }
+
+func TestRecordHealthKeys(t *testing.T) {
+	ctx := context.Background()
+	kv, err := store.OpenPebble(t.TempDir(), 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer kv.Close()
+	p := New(kv, 10, time.Hour)
+	at := time.Date(2026, 11, 11, 9, 59, 0, 0, time.FixedZone("x", 3600)) // 08:59 UTC
+	p.RecordHealth("v/m", "prov1", true, 200, 50, at)
+	p.RecordHealth("v/m", "prov1", false, 0, 0, at)
+	p.Close()
+	if HealthKey("v/m", "prov1", at) != "health/2026111108/v/m|prov1" {
+		t.Fatalf("key: %s", HealthKey("v/m", "prov1", at))
+	}
+	a, _ := kv.GetAgg(ctx, "health/2026111108/v/m|prov1")
+	if a[store.AggRequests] != 2 || a[store.AggErrors] != 1 || a[store.AggLatencyMs] != 200 || a[store.AggOutTokens] != 50 {
+		t.Fatalf("health: %v", a)
+	}
+}

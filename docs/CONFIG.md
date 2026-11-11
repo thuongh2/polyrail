@@ -17,7 +17,7 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `ALLOW_SIGNUP` | `false` | Let anyone create an account (with their own org). Email is not verified. |
 | `SIGNUP_PREPAID` | `false` | Orgs created by sign-up need credits before they can call models. |
 | `ALLOW_PRIVATE_PROVIDER_URLS` | `false` | Let org admins point private providers at private/internal addresses. Operators can always. |
-| `LOG_RETENTION_DAYS` | `14` | Request logs older than this are deleted (usage rollups are kept). |
+| `LOG_RETENTION_DAYS` | `14` | Request logs older than this are deleted (usage rollups are kept). Public provider health counters are kept 30 days (fixed). |
 | `RESPONSE_CACHE_MB` | `64` | Memory for the opt-in response cache. `0` disables it. |
 | `MAX_BODY_MB` | `8` | Largest accepted API request body. |
 | `PROVIDER_CONCURRENCY` | `64` | Concurrent upstream requests per provider (Bifrost workers). |

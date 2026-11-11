@@ -295,17 +295,36 @@ func bifrostTargets(snap *Snapshot, ts []store.Target) (schemas.ModelProvider, s
 }
 
 // settle updates circuit breakers from which provider ended up serving the request and returns
-// that provider's name.
-func (g *Gateway) settle(snap *Snapshot, ts []store.Target, served schemas.ModelProvider, failed bool) string {
+// that provider's name. For public models it also records per-provider health: every target
+// counted as failed by the breaker is a failure (latency 0), the serving one a success.
+func (g *Gateway) settle(snap *Snapshot, m store.Model, ts []store.Target, served schemas.ModelProvider, failed bool, start time.Time, outTokens int) string {
 	servedID := snap.byBifrost[served]
+	health := func(t store.Target, ok bool) {
+		if m.OrgID != "" { // shortcut: only public health is shown; record private too when orgs get a health view
+			return
+		}
+		var lat int64
+		var out int
+		if ok {
+			lat, out = time.Since(start).Milliseconds(), outTokens
+		}
+		g.Usage.RecordHealth(m.ID, t.ProviderID, ok, lat, out, start)
+	}
 	for _, t := range ts {
 		if !failed && t.ProviderID == servedID {
 			g.br.result(targetID(t), true)
+			health(t, true)
 			break
 		}
 		g.br.result(targetID(t), false)
+		health(t, false)
 	}
 	return snap.Providers[servedID].Name
+}
+
+// TargetOpen reports whether the circuit breaker currently skips this provider target.
+func (g *Gateway) TargetOpen(providerID, model string) bool {
+	return !g.br.ok(targetID(store.Target{ProviderID: providerID, Model: model}))
 }
 
 func cost(m store.Model, in, out int) int64 {
@@ -422,16 +441,17 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	resp, berr := g.BF.ChatCompletionRequest(bctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settle(snap, ts, "", targetFault(ae.status))
+		g.settle(snap, m, ts, "", targetFault(ae.status), start, 0)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)
 		return
 	}
-	provName := g.settle(snap, ts, resp.ExtraFields.Provider, false)
-	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.ModelRequested}
+	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.ModelRequested}
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	}
+	provName := g.settle(snap, m, ts, resp.ExtraFields.Provider, false, start, l.OutTokens)
+	l.Provider = provName
 	resp.Model = m.ID
 	out, err := sonic.Marshal(chatOut{BifrostChatResponse: resp, Provider: provName})
 	if err != nil {
@@ -460,7 +480,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principa
 	ch, berr := g.BF.ChatCompletionStreamRequest(ctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settle(snap, ts, "", targetFault(ae.status))
+		g.settle(snap, m, ts, "", targetFault(ae.status), start, 0)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg, Stream: true}, start)
 		writeError(w, ae)
 		return
@@ -511,7 +531,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principa
 	if l.OutTokens == 0 && chars > 0 {
 		l.OutTokens = (chars + 3) / 4 // shortcut: estimate when the provider sends no usage
 	}
-	l.Provider = g.settle(snap, ts, served, targetFault(l.Status))
+	l.Provider = g.settle(snap, m, ts, served, targetFault(l.Status), start, l.OutTokens)
 	g.record(p, m, l, start)
 }
 
@@ -565,12 +585,12 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 	resp, berr := g.BF.EmbeddingRequest(ctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, m.OrgID != "")
-		g.settle(snap, ts, "", targetFault(ae.status))
+		g.settle(snap, m, ts, "", targetFault(ae.status), start, 0)
 		g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		writeError(w, ae)
 		return
 	}
-	provName := g.settle(snap, ts, resp.ExtraFields.Provider, false)
+	provName := g.settle(snap, m, ts, resp.ExtraFields.Provider, false, start, 0)
 	l := store.RequestLog{Status: 200, Provider: provName}
 	if resp.Usage != nil {
 		l.InTokens = resp.Usage.PromptTokens
@@ -596,20 +616,36 @@ type ModelInfo struct {
 	Description   string   `json:"description,omitempty"`
 	Kind          string   `json:"kind"`
 	ContextLength int      `json:"context_length,omitempty"`
+	MaxOutput     int      `json:"max_output_tokens,omitempty"`
 	Modalities    []string `json:"modalities,omitempty"`
 	Pricing       struct {
 		Input  string `json:"input"`  // USD per 1M tokens
 		Output string `json:"output"` // USD per 1M tokens
 	} `json:"pricing"`
-	Private bool `json:"private,omitempty"`
+	Private   bool     `json:"private,omitempty"`
+	Providers []string `json:"providers,omitempty"` // public models only: names of serving providers
 }
 
 func Info(m store.Model) ModelInfo {
 	owner, _, _ := strings.Cut(m.ID, "/")
 	mi := ModelInfo{ID: m.ID, Object: "model", Created: m.CreatedAt.Unix(), OwnedBy: owner, Name: m.Name,
-		Description: m.Description, Kind: m.Kind, ContextLength: m.ContextLength, Modalities: m.Modalities, Private: m.OrgID != ""}
+		Description: m.Description, Kind: m.Kind, ContextLength: m.ContextLength, MaxOutput: m.MaxOutput, Modalities: m.Modalities, Private: m.OrgID != ""}
 	mi.Pricing.Input = usd(m.InputPrice)
 	mi.Pricing.Output = usd(m.OutputPrice)
+	return mi
+}
+
+// Info is Info(m) plus, for public models, the names of its providers in this snapshot.
+func (s *Snapshot) Info(m store.Model) ModelInfo {
+	mi := Info(m)
+	if m.OrgID != "" {
+		return mi
+	}
+	for _, t := range m.Targets {
+		if p, ok := s.Providers[t.ProviderID]; ok && !slices.Contains(mi.Providers, p.Name) {
+			mi.Providers = append(mi.Providers, p.Name)
+		}
+	}
 	return mi
 }
 
@@ -622,9 +658,10 @@ func (g *Gateway) Models(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := []ModelInfo{}
-	for _, m := range g.snap.Load().Visible(p.Org.ID) {
+	snap := g.snap.Load()
+	for _, m := range snap.Visible(p.Org.ID) {
 		if len(p.Key.Models) == 0 || slices.Contains(p.Key.Models, m.ID) {
-			data = append(data, Info(m))
+			data = append(data, snap.Info(m))
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")

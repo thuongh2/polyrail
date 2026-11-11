@@ -16,7 +16,21 @@ Errors: `{"error": {"message", "type", "code"}}`. Codes include `invalid_api_key
 
 ## Public
 
-`GET /api/public/models`: public catalog (no auth).
+No auth. Only public (platform) models and providers appear; provider ids, keys and base URLs are never returned.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/public/models` | Public catalog: `{"data": [ModelInfo]}`. ModelInfo adds `max_output_tokens` and `providers` (provider names). `Cache-Control: public, max-age=60`. |
+| GET | `/api/public/models/{vendor/name}` | One public, enabled model (else 404): `{"model": ModelInfo, "stats_24h": Stats, "providers": [{"name","type","upstream_model","weight","status","stats_24h": Stats, "hourly": [{"hour" (RFC3339 UTC),"requests","errors","avg_latency_ms"}]}]}`. `hourly` is the last 72 hours, oldest first, zero hours included. `Cache-Control: public, max-age=30`. |
+| GET | `/api/public/status` | `{"providers": [{"name","type","status","models","stats_24h": Stats}], "updated_at"}`: every public provider, sorted by name, over its public models. `Cache-Control: public, max-age=30`. |
+
+Stats (last 24 h of provider attempts): `{"requests","errors","uptime" (0..1, null without traffic),
+"avg_latency_ms" (over successful attempts),"throughput_tps" (output tokens / successful latency seconds, null without latency)}`.
+Status: `no_data` (no attempts in 24 h), `down` (circuit breaker open on this node for the target, or for a
+provider every one of its public targets; or uptime < 0.9), `degraded` (uptime < 0.99), else `operational`.
+Attempts are recorded by the gateway per target: targets it failed over from (or all, when the request
+failed) count as errors with latency 0; the serving target counts the request latency and output tokens.
+Hourly counters are kept 30 days.
 
 ## Admin (session cookie)
 

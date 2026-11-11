@@ -146,3 +146,21 @@ func TestLogsNewestFirstAndPrune(t *testing.T) {
 		t.Fatalf("prune: %+v", got)
 	}
 }
+
+func TestPruneHealth(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	hour := func(t time.Time) string { return "health/" + t.UTC().Format("2006010215") + "/v/m|p" }
+	now := time.Now()
+	old, fresh := hour(now.AddDate(0, 0, -31)), hour(now.AddDate(0, 0, -29))
+	if err := s.KV.AddAgg(ctx, map[string]Agg{old: {1}, fresh: {1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PruneHealth(ctx, 30); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := s.KV.ScanAgg(ctx, "health/")
+	if _, ok := m[old]; ok || len(m) != 1 {
+		t.Fatalf("health after prune: %v", m)
+	}
+}

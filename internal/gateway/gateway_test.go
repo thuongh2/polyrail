@@ -153,6 +153,7 @@ const chatBody = `{"model":"test/chat","messages":[{"role":"user","content":"hi"
 
 func TestChatFailoverPricingAndBreaker(t *testing.T) {
 	f := setup(t)
+	t0 := time.Now()
 	resp := f.post(t, "/v1/chat/completions", f.key, chatBody)
 	m := readJSON(t, resp)
 	if resp.StatusCode != 200 {
@@ -184,6 +185,29 @@ func TestChatFailoverPricingAndBreaker(t *testing.T) {
 	a, _ := f.g.S.KV.GetAgg(context.Background(), usage.OrgSpendKey(f.org.ID))
 	if a[store.AggCostMicros] != 4*2_000_000 || a[store.AggRequests] != 4 {
 		t.Fatalf("spend: %v", a)
+	}
+	// provider health: the bad target failed 3 times (then skipped), the good one served all 4
+	ids := map[string]string{}
+	for id, p := range f.g.Snapshot().Providers {
+		ids[p.Name] = id
+	}
+	if !f.g.TargetOpen(ids["bad"], "up") || f.g.TargetOpen(ids["ok"], "up") {
+		t.Fatal("TargetOpen does not reflect the breaker")
+	}
+	health := func(prov string) store.Agg { // the test may straddle an hour boundary
+		a, _ := f.g.S.KV.GetAgg(context.Background(), usage.HealthKey("test/chat", prov, t0))
+		if now := time.Now(); usage.HealthHour(now) != usage.HealthHour(t0) {
+			b, _ := f.g.S.KV.GetAgg(context.Background(), usage.HealthKey("test/chat", prov, now))
+			a.Add(b)
+		}
+		return a
+	}
+	bad, good := health(ids["bad"]), health(ids["ok"])
+	if bad[store.AggRequests] != 3 || bad[store.AggErrors] != 3 || bad[store.AggLatencyMs] != 0 {
+		t.Fatalf("bad target health: %v", bad)
+	}
+	if good[store.AggRequests] != 4 || good[store.AggErrors] != 0 || good[store.AggOutTokens] != 4*500_000 || good[store.AggLatencyMs] <= 0 {
+		t.Fatalf("good target health: %v", good)
 	}
 }
 

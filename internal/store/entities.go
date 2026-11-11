@@ -144,6 +144,7 @@ type Model struct {
 	Description   string    `json:"description,omitempty"`
 	Kind          string    `json:"kind"` // chat | embedding
 	ContextLength int       `json:"context_length,omitempty"`
+	MaxOutput     int       `json:"max_output_tokens,omitempty"`
 	Modalities    []string  `json:"modalities,omitempty"`
 	InputPrice    int64     `json:"input_price_micros"`  // micro-USD per 1M input tokens
 	OutputPrice   int64     `json:"output_price_micros"` // micro-USD per 1M output tokens
@@ -755,4 +756,10 @@ func (s *Store) ListLogs(ctx context.Context, orgID string, days, limit int) ([]
 func (s *Store) PruneLogs(ctx context.Context, keepDays int) error {
 	cutoff := Day(time.Now().AddDate(0, 0, -keepDays))
 	return s.KV.DeleteRange(ctx, "log/", "log/"+cutoff)
+}
+
+// PruneHealth deletes hourly provider health counters older than keepDays.
+func (s *Store) PruneHealth(ctx context.Context, keepDays int) error {
+	cutoff := time.Now().AddDate(0, 0, -keepDays).UTC().Format("2006010215")
+	return s.KV.DeleteRange(ctx, "health/", "health/"+cutoff)
 }

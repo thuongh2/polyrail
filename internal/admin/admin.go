@@ -78,6 +78,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/me", a.authed(a.me))
 	mux.HandleFunc("POST /api/auth/password", a.authed(a.changePassword))
 	mux.HandleFunc("GET /api/public/models", a.publicModels)
+	mux.HandleFunc("GET /api/public/models/{id...}", a.publicModel)
+	mux.HandleFunc("GET /api/public/status", a.publicStatus)
 
 	mux.HandleFunc("GET /api/orgs", a.authed(a.listOrgs))
 	mux.HandleFunc("POST /api/orgs", a.operator(a.createOrg))
@@ -884,9 +886,10 @@ func (a *API) deleteModel(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) publicModels(w http.ResponseWriter, r *http.Request) {
 	out := []gateway.ModelInfo{}
-	for _, m := range a.G.Snapshot().Visible("") {
+	snap := a.G.Snapshot()
+	for _, m := range snap.Visible("") {
 		if m.OrgID == "" {
-			out = append(out, gateway.Info(m))
+			out = append(out, snap.Info(m))
 		}
 	}
 	w.Header().Set("Cache-Control", "public, max-age=60")

@@ -91,6 +91,31 @@ func (p *Pipeline) Record(l store.RequestLog) {
 	}
 }
 
+// HealthHour is the UTC hour bucket of a health counter.
+func HealthHour(t time.Time) string { return t.UTC().Format("2006010215") }
+
+// HealthKey is the hourly counter of one (model, provider) pair.
+func HealthKey(model, providerID string, t time.Time) string {
+	return "health/" + HealthHour(t) + "/" + model + "|" + providerID
+}
+
+// RecordHealth accounts one attempt of a provider for a model (public provider health). Never blocks.
+func (p *Pipeline) RecordHealth(model, providerID string, ok bool, latencyMs int64, outTokens int, at time.Time) {
+	var a store.Agg
+	a[store.AggRequests] = 1
+	if !ok {
+		a[store.AggErrors] = 1
+	}
+	a[store.AggLatencyMs] = latencyMs
+	a[store.AggOutTokens] = int64(outTokens)
+	k := HealthKey(model, providerID, at)
+	p.mu.Lock()
+	cur := p.pending[k]
+	cur.Add(a)
+	p.pending[k] = cur
+	p.mu.Unlock()
+}
+
 // Spent returns flushed + pending cost for a spend counter. Flushed values are cached for one
 // flush interval, which bounds overspend to about one interval of traffic per node (D7).
 func (p *Pipeline) Spent(ctx context.Context, key string) (int64, error) {

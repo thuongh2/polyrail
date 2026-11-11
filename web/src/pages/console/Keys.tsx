@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { Plus, TriangleAlert } from "lucide-react";
-import { CopyButton, Field, TableFrame } from "@/components/console/bits";
+import { Plus } from "lucide-react";
+import { Field, TableFrame } from "@/components/console/bits";
+import { EffectivePolicyView } from "@/components/console/EffectivePolicy";
+import { MgmtTokens } from "@/components/console/MgmtTokens";
+import { SecretDialog } from "@/components/console/SecretDialog";
 import { KBPicker } from "@/components/console/KBPicker";
 import { FormDialog } from "@/components/platform/kit";
 import { DataState, EmptyState, PageHeader } from "@/components/states";
@@ -13,6 +16,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -35,7 +41,10 @@ export default function Keys() {
   const members = useAsync(() => get<Member[]>(`${base}/members`).catch(() => [] as Member[]), [base]);
   const [show, setShow] = useQueryParam("show", "active");
   const [creating, setCreating] = useState(false);
-  const [secret, setSecret] = useState<{ name: string; secret: string } | null>(null);
+  const [secret, setSecret] = useState<{ name: string; secret: string; rotated?: number } | null>(null);
+  const [tab, setTab] = useQueryParam("tab", "keys");
+  const [detail, setDetail] = useState<APIKey | null>(null);
+  const [rotating, setRotating] = useState<APIKey | null>(null);
   const [revoking, setRevoking] = useState<APIKey | null>(null);
   const [grounding, setGrounding] = useState<APIKey | null>(null);
   const admin = can("admin");
@@ -57,6 +66,7 @@ export default function Keys() {
     }
   }
 
+  const showTokens = admin && tab === "tokens";
   const visible = (keys.data ?? []).filter((k) => show === "all" || !k.revoked);
   const revokedCount = (keys.data ?? []).filter((k) => k.revoked).length;
 
@@ -64,9 +74,13 @@ export default function Keys() {
     <>
       <PageHeader
         title="API keys"
-        description="Keys authenticate requests to /v1. Each key can carry its own rate limits, monthly budget, model list and expiry."
+        description={
+          admin
+            ? "Keys authenticate requests to /v1. Each key can carry its own rate limits, monthly budget, model list and expiry. Admins see every key of the organization."
+            : "Keys authenticate requests to /v1. You see the keys you created; admins see every key of the organization."
+        }
         actions={
-          canCreate && (
+          canCreate && !showTokens && (
             <Button size="sm" onClick={() => setCreating(true)}>
               <Plus aria-hidden />
               Create key
@@ -74,6 +88,18 @@ export default function Keys() {
           )
         }
       />
+      {admin && (
+        <Tabs value={showTokens ? "tokens" : "keys"} onValueChange={setTab} className="mb-4">
+          <TabsList aria-label="Credential type">
+            <TabsTrigger value="keys">API keys</TabsTrigger>
+            <TabsTrigger value="tokens">Management tokens</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+      {showTokens ? (
+        <MgmtTokens base={base} />
+      ) : (
+        <>
       {revokedCount > 0 && (
         <div className="mb-3 flex items-center gap-2">
           <Checkbox id="show-revoked" checked={show === "all"} onCheckedChange={(v) => setShow(v ? "all" : "active")} />
@@ -122,7 +148,11 @@ export default function Keys() {
                   ].filter(Boolean);
                   return (
                     <TableRow key={k.id} className={k.revoked ? "text-muted-foreground" : undefined}>
-                      <TableCell className="font-medium">{k.name}</TableCell>
+                      <TableCell className="font-medium">
+                        <button type="button" className="rounded-sm text-left hover:underline focus-visible:outline-2 focus-visible:outline-ring" onClick={() => setDetail(k)} aria-label={`Details and policy for ${k.name}`}>
+                          {k.name}
+                        </button>
+                      </TableCell>
                       <TableCell className="font-mono text-xs whitespace-nowrap">{k.prefix}…</TableCell>
                       <TableCell className="whitespace-nowrap tabular-nums">{limits.length ? limits.join(", ") : <span className="text-muted-foreground">None</span>}</TableCell>
                       <TableCell className="max-w-56">
@@ -160,6 +190,11 @@ export default function Keys() {
                           </Button>
                         )}
                         {canRevoke(k) && (
+                          <Button variant="ghost" size="sm" onClick={() => setRotating(k)} aria-label={`Rotate ${k.name}`}>
+                            Rotate
+                          </Button>
+                        )}
+                        {canRevoke(k) && (
                           <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => setRevoking(k)} aria-label={`Revoke ${k.name}`}>
                             Revoke
                           </Button>
@@ -173,6 +208,8 @@ export default function Keys() {
           </TableFrame>
         )}
       </DataState>
+        </>
+      )}
 
       <CreateKeyDialog
         open={creating}
@@ -186,28 +223,33 @@ export default function Keys() {
         }}
       />
 
-      <Dialog open={!!secret} onOpenChange={(o) => !o && setSecret(null)}>
-        <DialogContent onInteractOutside={(e) => e.preventDefault()}>
-          <DialogHeader>
-            <DialogTitle>Copy your new key</DialogTitle>
-            <DialogDescription>“{secret?.name}” was created.</DialogDescription>
-          </DialogHeader>
-          <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-sm">
-            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-            <p>This is the only time the key is shown. Store it somewhere safe; if you lose it, revoke it and create a new one.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="new-secret" className="sr-only">
-              API key
-            </Label>
-            <Input id="new-secret" readOnly value={secret?.secret ?? ""} className="font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />
-            <CopyButton text={secret?.secret ?? ""} />
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setSecret(null)}>I have saved it</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <SecretDialog
+        open={!!secret}
+        onClose={() => setSecret(null)}
+        title={secret?.rotated !== undefined ? "Copy the new secret" : "Copy your new key"}
+        description={
+          secret?.rotated === undefined
+            ? `“${secret?.name}” was created.`
+            : secret.rotated
+              ? `“${secret.name}” was rotated. The old secret keeps working for ${graceLabel(secret.rotated)}, then stops.`
+              : `“${secret?.name}” was rotated. The old secret stopped working.`
+        }
+        label="API key"
+        secret={secret?.secret ?? ""}
+        warning="This is the only time the key is shown. Store it somewhere safe; if you lose it, rotate or revoke the key."
+      />
+
+      <KeyDetailSheet k={detail} base={base} admin={admin} who={who} onClose={() => setDetail(null)} />
+
+      <RotateDialog
+        k={rotating}
+        base={base}
+        onClose={() => setRotating(null)}
+        onRotated={(name, s, grace) => {
+          setSecret({ name, secret: s, rotated: grace });
+          keys.reload();
+        }}
+      />
 
       <KeyKBDialog key={grounding?.id} k={grounding} base={base} kbs={kbs} onClose={() => setGrounding(null)} onSaved={keys.reload} />
 
@@ -375,5 +417,91 @@ function CreateKeyDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+const GRACE: [string, string][] = [
+  ["0", "None: the old secret stops now"],
+  ["3600", "1 hour"],
+  ["86400", "24 hours"],
+];
+const graceLabel = (sec: number) => (sec >= 86400 ? "24 hours" : sec >= 3600 ? "1 hour" : `${sec} seconds`);
+
+/** New secret for a key; settings, usage and policies stay. The old secret works during the grace period. */
+function RotateDialog({ k, base, onClose, onRotated }: { k: APIKey | null; base: string; onClose: () => void; onRotated: (name: string, secret: string, grace: number) => void }) {
+  const [grace, setGrace] = useState("0");
+  return (
+    <FormDialog
+      open={!!k}
+      onOpenChange={(o) => {
+        if (!o) {
+          setGrace("0");
+          onClose();
+        }
+      }}
+      title={`Rotate “${k?.name}”?`}
+      description="The key gets a new secret and keeps its name, limits, policies and usage history. Update your applications with the new secret."
+      submitLabel="Rotate key"
+      success="Key rotated"
+      onSubmit={async () => {
+        const g = Number(grace);
+        const r = await api<{ key: APIKey; secret: string }>("POST", `${base}/keys/${encodeURIComponent(k!.id)}/rotate`, { grace_seconds: g });
+        onRotated(r.key.name, r.secret, g);
+      }}
+    >
+      <Field id="rotate-grace" label="Old secret keeps working for">
+        <Select value={grace} onValueChange={setGrace}>
+          <SelectTrigger id="rotate-grace" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {GRACE.map(([v, l]) => (
+              <SelectItem key={v} value={v}>
+                {l}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+    </FormDialog>
+  );
+}
+
+function KeyDetailSheet({ k, base, admin, who, onClose }: { k: APIKey | null; base: string; admin: boolean; who: (id: string) => string; onClose: () => void }) {
+  return (
+    <Sheet open={!!k} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="no-scrollbar w-full overflow-y-auto sm:max-w-md">
+        {k && (
+          <>
+            <SheetHeader>
+              <SheetTitle>{k.name}</SheetTitle>
+              <SheetDescription>
+                <code className="font-mono text-xs">{k.prefix}…</code>, created {day(k.created_at)} by {who(k.created_by)}
+              </SheetDescription>
+            </SheetHeader>
+            <div className="grid gap-6 px-4 pb-6">
+              <dl className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+                <dt className="text-muted-foreground">Status</dt>
+                <dd>{keyStatus(k).label}</dd>
+                <dt className="text-muted-foreground">Rate limits</dt>
+                <dd className="tabular-nums">{[k.rpm ? `${compact(k.rpm)} rpm` : "", k.tpm ? `${compact(k.tpm)} tpm` : ""].filter(Boolean).join(", ") || "None"}</dd>
+                <dt className="text-muted-foreground">Key budget</dt>
+                <dd className="tabular-nums">{k.monthly_budget_micros ? `${usd(k.monthly_budget_micros)} / month` : "None"}</dd>
+                <dt className="text-muted-foreground">Models</dt>
+                <dd className="break-words font-mono text-xs">{k.models?.length ? k.models.join(", ") : <span className="font-sans text-sm">All</span>}</dd>
+                <dt className="text-muted-foreground">Expires</dt>
+                <dd>{k.expires_at ? when(k.expires_at) : "Never"}</dd>
+              </dl>
+              <section aria-labelledby="ep-h" className="grid gap-3">
+                <h3 id="ep-h" className="text-sm font-semibold">
+                  Effective policy
+                </h3>
+                <EffectivePolicyView base={base} keyId={k.id} admin={admin} />
+              </section>
+            </div>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }

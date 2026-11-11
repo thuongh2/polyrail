@@ -76,7 +76,11 @@ export type ProviderHealth = {
   status: HealthStatus;
   stats_24h: HealthStats;
   hourly: HourPoint[]; // last 72 hours, oldest first
+  privacy?: ProviderPrivacy; // declared by the provider's admin; absent = undeclared
 };
+
+/** What a provider's admin declares about prompt data (docs/API.md "Policies"). */
+export type ProviderPrivacy = { zdr: boolean; trains_on_data: boolean; retention_days?: number; region?: string };
 
 export type ModelDetail = { model: ModelInfo; stats_24h: HealthStats; providers: ProviderHealth[] };
 
@@ -133,10 +137,14 @@ export type Org = {
   guardrails: Guardrails;
   mcp_servers?: string[];
   semantic_cache?: SemanticCache;
+  content_logging?: ContentLogging;
   created_at: string;
   spent_micros?: number; // GET /api/orgs/{org} only
   balance_micros?: number;
 };
+
+/** Stores request/response bodies for retention_days (1–90). */
+export type ContentLogging = { enabled: boolean; retention_days: number };
 
 export type Member = { org_id: string; user_id: string; role: Role; email: string; name: string };
 
@@ -198,6 +206,7 @@ export type Provider = {
   no_proxy?: boolean;
   /** Proxy pool id (platform providers only; exclusive with proxy). */
   proxy_pool?: string;
+  privacy?: ProviderPrivacy;
   enabled: boolean;
   created_at: string;
 };
@@ -293,7 +302,7 @@ export type UsageRow = {
   avg_latency_ms: number;
   cache_hits: number;
 };
-export type UsageReport = { total: UsageRow; daily: UsageRow[]; models: UsageRow[]; keys: UsageRow[] };
+export type UsageReport = { total: UsageRow; daily: UsageRow[]; models: UsageRow[]; keys: UsageRow[]; end_users?: UsageRow[] };
 
 export type RequestLog = {
   id: string;
@@ -310,7 +319,97 @@ export type RequestLog = {
   latency_ms: number;
   cached?: boolean;
   stream?: boolean;
+  end_user?: string; // the request's `user` field
   at: string;
+};
+
+/** GET …/logs/{id}/content (admin, when content logging was on for the request). */
+export type LogContent = { log_id: string; at: string; request: string; response: string; request_truncated?: boolean; response_truncated?: boolean };
+
+// ---- policies, presets, management tokens ----
+
+export type BudgetInterval = "daily" | "weekly" | "monthly" | "lifetime";
+export type PolicyFilter = { name?: string; pattern: string; action: "redact" | "block" };
+export type Policy = {
+  id: string;
+  org_id: string;
+  name: string;
+  description?: string;
+  is_org_default: boolean;
+  member_ids?: string[];
+  key_ids?: string[];
+  opted_out_member_ids?: string[];
+  opted_out_key_ids?: string[];
+  budget?: { limit_micros: number; interval: BudgetInterval; include_byok?: boolean };
+  allowed_models?: string[];
+  allowed_providers?: string[];
+  filters?: PolicyFilter[];
+  require_zdr?: boolean;
+  deny_data_collection?: boolean;
+  allowed_regions?: string[];
+  created_at: string;
+  updated_at: string;
+};
+/** POST/PUT body: the budget limit goes in USD. */
+export type PolicyInput = Omit<Policy, "id" | "org_id" | "created_at" | "updated_at" | "budget"> & {
+  budget?: { limit_usd: number; interval: BudgetInterval; include_byok: boolean };
+};
+export type EffectiveBudget = {
+  policy_id: string;
+  policy: string;
+  scope: "member" | "key";
+  subject: string;
+  limit_micros: number;
+  interval: BudgetInterval;
+  include_byok: boolean;
+  spent_micros: number;
+  resets_at?: string; // absent for lifetime
+};
+export type EffectivePolicy = {
+  policies: { id: string; name: string; via: ("org_default" | "member" | "key")[] }[];
+  allowed_models?: string[][];
+  allowed_providers?: string[][];
+  allowed_regions?: string[][];
+  require_zdr: boolean;
+  deny_data_collection: boolean;
+  filters?: { policy: string; name?: string; pattern: string; action: "redact" | "block" }[];
+  budgets?: EffectiveBudget[];
+};
+
+export type ProviderPrefs = {
+  order?: string[];
+  only?: string[];
+  ignore?: string[];
+  allow_fallbacks?: boolean;
+  require_parameters?: boolean;
+  sort?: string | { by: string; partition?: string };
+  max_price?: { prompt?: number; completion?: number; request?: number; image?: number };
+  data_collection?: "" | "allow" | "deny";
+  zdr?: boolean;
+};
+export type PresetParams = { temperature?: number; top_p?: number; max_tokens?: number; system?: string; [k: string]: unknown };
+export type Preset = {
+  id: string;
+  org_id: string;
+  slug: string;
+  model?: string;
+  models?: string[];
+  provider?: ProviderPrefs;
+  params?: PresetParams;
+  created_at: string;
+};
+
+export type MgmtToken = {
+  id: string;
+  org_id: string;
+  name: string;
+  prefix: string;
+  role: Exclude<Role, "owner">;
+  created_by: string;
+  expires_at?: string;
+  last_used_at?: string;
+  revoked: boolean;
+  created_at: string;
 };
 
 export type WebhookEvent = "request.failed" | "budget.exceeded" | "key.created" | "key.revoked";
@@ -558,6 +657,9 @@ export function usd(micros: number | undefined) {
   if (v === 0) return "$0";
   return "$" + (Math.abs(v) < 0.01 ? v.toFixed(4) : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 }
+
+/** Like usd() but whole dollars without cents ("$50"), for limits people typed. */
+export const usdLimit = (micros: number) => (micros % 1e6 === 0 ? "$" + (micros / 1e6).toLocaleString() : usd(micros));
 
 /** Price per 1M tokens from the API's decimal string. */
 export function perMillion(p: string) {

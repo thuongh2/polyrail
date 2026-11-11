@@ -9,7 +9,7 @@ import { EmptyState, ErrorState, LoadingRows } from "@/components/states";
 import { apiBase, CodeBlock, CodeTabs, CopyButton, requestSamples, sdkSamples } from "@/components/public/CodeTabs";
 import { StatusBadge, latency } from "@/components/public/StatusBadge";
 import { UptimeBar, UptimeLegend } from "@/components/public/UptimeBar";
-import { ApiError, compact, fmt, kindLabel, mainPrice, pct, perMillion, publicApi, unitUSD, type ModelDetail as Detail } from "@/lib/api";
+import { ApiError, compact, fmt, kindLabel, mainPrice, pct, perMillion, publicApi, unitUSD, type ModelDetail as Detail, type ProviderPrivacy } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 import { ProviderLogo } from "@/components/ProviderLogo";
 import { providerLabel } from "@/lib/providers";
@@ -261,6 +261,7 @@ function Providers({ d }: { d: Detail }) {
                       <div>
                         <div className="font-medium">{p.name}</div>
                         <div className="text-xs text-muted-foreground">{providerLabel(p.type)}</div>
+                        <PrivacyBadges p={p.privacy} />
                       </div>
                     </div>
                   </TableCell>
@@ -345,6 +346,28 @@ function ApiTab({ d }: { d: Detail }) {
           </Link>
         </p>
       </aside>
+    </div>
+  );
+}
+
+const regionName: Record<string, string> = { global: "Global", europe: "Europe", eu: "EU", us: "US" };
+
+/** Data handling the provider's admin declared; nothing when undeclared. */
+function PrivacyBadges({ p }: { p?: ProviderPrivacy }) {
+  if (!p) return null;
+  const items = [
+    p.zdr ? ["ZDR", "Zero data retention: prompts and outputs are not stored"] : p.retention_days ? [`Keeps ${p.retention_days} d`, `Prompts are kept for ${p.retention_days} days`] : null,
+    !p.trains_on_data ? ["No training", "Prompts are not used for training"] : null,
+    p.region ? [regionName[p.region] ?? p.region, `Prompts are processed in ${regionName[p.region] ?? p.region}`] : null,
+  ].filter((x): x is string[] => !!x);
+  if (!items.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {items.map(([label, title]) => (
+        <Badge key={label} variant="outline" className="px-1.5 py-0 text-[11px] font-normal" title={title}>
+          {label}
+        </Badge>
+      ))}
     </div>
   );
 }

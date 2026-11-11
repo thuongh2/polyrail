@@ -484,7 +484,7 @@ inclusive, `to` exclusive, at most 366 days apart. Defaults: usage the last 30 d
 Usage rows are daily: `date,<group>,requests,errors,in_tokens,out_tokens,cost_usd,avg_latency_ms,cache_hits`
 (`group=day` has no group column); `creator` is the email of the user who created the key (or
 `token:<id>` for keys made by a management token). Log rows, newest first, at most 100,000
-(`X-GW-Row-Cap`): `id,at,key_id,model,provider,upstream_model,status,error,in_tokens,out_tokens,cost_usd,latency_ms,cached,stream,kb_chunks`.
+(`X-GW-Row-Cap`): `id,at,key_id,model,provider,upstream_model,status,error,in_tokens,out_tokens,cost_usd,latency_ms,cached,stream,kb_chunks,end_user`.
 Files are RFC 4180 CSV streamed as they are read; a cell starting with `=`, `+`, `-`, `@`, tab or CR
 gets a leading `'` so spreadsheets do not run it as a formula.
 

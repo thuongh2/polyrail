@@ -638,6 +638,7 @@ func TestMCPGrantOperatorOnly(t *testing.T) {
 	f := setup(t, Config{})
 	expect(t, f.do(t, "owner", "PATCH", "/api/orgs/"+f.orgA.ID, `{"mcp_servers":["*"]}`), 403, "owner grants MCP")
 	expect(t, f.do(t, "op", "PATCH", "/api/orgs/"+f.orgA.ID, `{"mcp_servers":["search"]}`), 200, "operator grants MCP")
+	expect(t, f.do(t, "op", "POST", "/api/admin/mcp", `{"name":"web-search","type":"http","url":"http://127.0.0.1:9/mcp"}`), 400, "MCP name Bifrost rejects")
 }
 
 func TestPublicModelHealthAndStatus(t *testing.T) {

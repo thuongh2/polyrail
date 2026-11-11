@@ -56,10 +56,10 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
 - Semantic cache; Responses API, images, audio routes (Bifrost supports them).
 - Payment integration for credits (Stripe), email verification for sign-up.
 - Dial-time SSRF enforcement inside Bifrost's HTTP client (needs a Bifrost hook).
-- Upgrade to current Bifrost core once a Go 1.27 toolchain is available (D1).
 
 ## Log
 - 2026-11-10 Team, memory, PRD, architecture written. Bifrost core v1.2.38 builds on Go 1.24.
 - 2026-11-10 M1 + M2 built; QA found 3 bugs, security found 4 high / 8 medium; all fixed with regression tests.
 - 2026-11-10 Slop review fixes; resource smoke recorded.
 - 2026-11-11 Cloud providers: Azure OpenAI, AWS Bedrock (multi-instance, org-allowed), Google Vertex AI, ElevenLabs; per-key config sealed at rest (D13); provider dialog fields; screenshots in /tmp/claude-0/ui-shots/providers/.
+- 2026-11-11 Bifrost core v1.2.38 → v1.15.2 on Go 1.27.3 (built from source, owner-approved). Same HTTP API; MCP names validated, tools exposed as `<server>-<tool>`. `make check` green; binary 33 → 47 MB, idle RSS 28 → 55 MB (D1).

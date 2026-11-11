@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agent-gateway/agent-gateway/internal/store"
+	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
@@ -22,16 +23,13 @@ type Snapshot struct {
 	byBifrost map[schemas.ModelProvider]string
 }
 
-// customBase lists the provider types Bifrost can instantiate many times under custom names
-// (schemas.SupportedBaseProviders in Bifrost core v1.2.38).
-var customBase = map[string]bool{"openai": true, "anthropic": true, "gemini": true, "cohere": true, "bedrock": true}
-
-// MultiInstance reports whether many providers of this type can coexist (public and per-org).
-func MultiInstance(t string) bool { return customBase[t] }
+// MultiInstance reports whether many providers of this type can coexist (public and per-org):
+// the types Bifrost can instantiate many times under custom names (schemas.SupportedBaseProviders).
+func MultiInstance(t string) bool { return bifrost.IsSupportedBaseProvider(schemas.ModelProvider(t)) }
 
 // BifrostKey is the Bifrost provider key a provider is registered under.
 func BifrostKey(p store.Provider) schemas.ModelProvider {
-	if customBase[p.Type] {
+	if MultiInstance(p.Type) {
 		return schemas.ModelProvider("p-" + p.ID)
 	}
 	return schemas.ModelProvider(p.Type)
@@ -125,10 +123,14 @@ func (a *account) provider(k schemas.ModelProvider) (store.Provider, error) {
 	return p, nil
 }
 
-func (a *account) GetKeysForProvider(_ *context.Context, k schemas.ModelProvider) ([]schemas.Key, error) {
+func (a *account) GetKeysForProvider(_ context.Context, k schemas.ModelProvider) ([]schemas.Key, error) {
 	p, err := a.provider(k)
 	if err != nil {
 		return nil, err
+	}
+	if len(p.Keys) == 0 && (p.Type == "ollama" || p.Type == "sgl") {
+		// Bifrost now reads these servers' URL from a key; keyless providers get one implicit key.
+		return []schemas.Key{withServerURL(p, schemas.Key{ID: p.ID, Name: "default", Models: schemas.WhiteList{"*"}, Weight: 1})}, nil
 	}
 	keys := make([]schemas.Key, 0, len(p.Keys))
 	for _, pk := range p.Keys {
@@ -139,33 +141,74 @@ func (a *account) GetKeysForProvider(_ *context.Context, k schemas.ModelProvider
 		if p.OrgID != "" && pk.Bedrock != nil && pk.Value == "" && pk.Bedrock.AccessKey == "" {
 			continue // tenants never borrow the gateway host's AWS identity (admin rejects this too)
 		}
-		keys = append(keys, bifrostKey(pk, w))
+		keys = append(keys, withServerURL(p, bifrostKey(pk, w)))
 	}
 	return keys, nil
 }
 
+// withServerURL sets the per-key server URL Bifrost requires for Ollama and SGLang to the
+// provider's base URL (the only place the platform configures it).
+func withServerURL(p store.Provider, k schemas.Key) schemas.Key {
+	switch p.Type {
+	case "ollama":
+		k.OllamaKeyConfig = &schemas.OllamaKeyConfig{URL: secret(p.BaseURL)}
+	case "sgl":
+		k.SGLKeyConfig = &schemas.SGLKeyConfig{URL: secret(p.BaseURL)}
+	}
+	return k
+}
+
+// secret wraps a stored value as a literal SecretVar. schemas.NewSecretVar would resolve
+// "env.*" and "vault.*" references, letting a tenant send the gateway host's env vars upstream.
+func secret(v string) schemas.SecretVar {
+	return schemas.SecretVar{Val: v, SecretType: schemas.SecretTypePlainText}
+}
+
+func secretPtr(v string) *schemas.SecretVar {
+	if v == "" {
+		return nil
+	}
+	s := secret(v)
+	return &s
+}
+
+// aliases maps model name -> deployment (Azure deployment, Bedrock profile/ARN, Vertex endpoint)
+// to Bifrost key aliases; azure carries the key's api-version on every alias.
+func aliases(deployments map[string]string, azure *schemas.AzureAliasCfg) schemas.KeyAliases {
+	if len(deployments) == 0 {
+		return nil
+	}
+	out := make(schemas.KeyAliases, len(deployments))
+	for model, dep := range deployments {
+		out[model] = schemas.AliasConfig{ModelID: dep, AzureAliasCfg: azure}
+	}
+	return out
+}
+
 // bifrostKey maps a stored provider key (secrets decrypted) to Bifrost's key schema.
 func bifrostKey(pk store.ProviderKey, w float64) schemas.Key {
-	k := schemas.Key{ID: pk.ID, Name: pk.Name, Value: pk.Value, Models: pk.Models, Weight: w}
+	models := schemas.WhiteList(pk.Models)
+	if len(models) == 0 {
+		models = schemas.WhiteList{"*"} // empty means every model here; Bifrost reads empty as none
+	}
+	k := schemas.Key{ID: pk.ID, Name: pk.Name, Value: secret(pk.Value), Models: models, Weight: w}
 	if a := pk.Azure; a != nil {
-		k.AzureKeyConfig = &schemas.AzureKeyConfig{Endpoint: strings.TrimRight(a.Endpoint, "/"), Deployments: a.Deployments}
+		k.AzureKeyConfig = &schemas.AzureKeyConfig{Endpoint: secret(strings.TrimRight(a.Endpoint, "/"))}
+		var cfg *schemas.AzureAliasCfg
 		if a.APIVersion != "" {
-			k.AzureKeyConfig.APIVersion = &a.APIVersion
+			cfg = &schemas.AzureAliasCfg{APIVersion: &a.APIVersion}
 		}
+		k.Aliases = aliases(a.Deployments, cfg)
 	}
 	if b := pk.Bedrock; b != nil {
-		k.BedrockKeyConfig = &schemas.BedrockKeyConfig{AccessKey: b.AccessKey, SecretKey: b.SecretKey,
-			Region: &b.Region, Deployments: b.Deployments}
-		if b.SessionToken != "" {
-			k.BedrockKeyConfig.SessionToken = &b.SessionToken
-		}
-		if b.ARN != "" {
-			k.BedrockKeyConfig.ARN = &b.ARN
-		}
+		k.BedrockKeyConfig = &schemas.BedrockKeyConfig{AccessKey: secret(b.AccessKey), SecretKey: secret(b.SecretKey),
+			SessionToken: secretPtr(b.SessionToken), Region: secretPtr(b.Region), ARN: secretPtr(b.ARN)}
+		k.Aliases = aliases(b.Deployments, nil)
 	}
 	if v := pk.Vertex; v != nil {
-		k.VertexKeyConfig = &schemas.VertexKeyConfig{ProjectID: v.ProjectID, ProjectNumber: v.ProjectNumber,
-			Region: v.Region, AuthCredentials: v.AuthCredentials, Deployments: v.Deployments}
+		k.VertexKeyConfig = &schemas.VertexKeyConfig{ProjectID: secret(v.ProjectID), ProjectNumber: secret(v.ProjectNumber),
+			Region: secret(v.Region), AuthCredentials: secret(v.AuthCredentials)}
+		k.Aliases = aliases(v.Deployments, nil)
 	}
 	return k
 }
@@ -189,7 +232,7 @@ func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.Provid
 		},
 		ConcurrencyAndBufferSize: schemas.ConcurrencyAndBufferSize{Concurrency: a.concurrency, BufferSize: a.buffer},
 	}
-	if customBase[p.Type] {
+	if MultiInstance(p.Type) {
 		cfg.CustomProviderConfig = &schemas.CustomProviderConfig{
 			BaseProviderType: schemas.ModelProvider(p.Type),
 			IsKeyLess:        len(p.Keys) == 0,

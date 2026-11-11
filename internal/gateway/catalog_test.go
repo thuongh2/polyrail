@@ -27,7 +27,7 @@ func TestAccountMapsCloudKeyConfig(t *testing.T) {
 	a := &account{snap: func() *Snapshot { return snap }}
 	ctx := context.Background()
 	keys := func(p store.Provider) []schemas.Key {
-		ks, err := a.GetKeysForProvider(&ctx, BifrostKey(p))
+		ks, err := a.GetKeysForProvider(ctx, BifrostKey(p))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -35,24 +35,37 @@ func TestAccountMapsCloudKeyConfig(t *testing.T) {
 	}
 
 	k := keys(az)[0]
-	if k.Value != "az-key" || k.AzureKeyConfig.Endpoint != "https://r.openai.azure.com" || *k.AzureKeyConfig.APIVersion != "2024-10-21" || k.AzureKeyConfig.Deployments["gpt-4o"] != "prod-4o" {
+	if a := k.Aliases["gpt-4o"]; k.Value.GetValue() != "az-key" || k.AzureKeyConfig.Endpoint.GetValue() != "https://r.openai.azure.com" || a.ModelID != "prod-4o" || *a.APIVersion != "2024-10-21" {
 		t.Fatalf("azure key: %+v %+v", k, k.AzureKeyConfig)
 	}
 	if BifrostKey(az) != schemas.Azure || BifrostKey(vx) != schemas.Vertex || BifrostKey(br) != "p-br" {
 		t.Fatalf("bifrost keys: %s %s %s", BifrostKey(az), BifrostKey(vx), BifrostKey(br))
 	}
 	bk := keys(br)
-	if len(bk) != 2 || bk[0].BedrockKeyConfig.AccessKey != "" || *bk[0].BedrockKeyConfig.Region != "us-west-2" || bk[0].BedrockKeyConfig.SessionToken != nil {
+	if len(bk) != 2 || bk[0].BedrockKeyConfig.AccessKey.GetValue() != "" || bk[0].BedrockKeyConfig.Region.GetValue() != "us-west-2" || bk[0].BedrockKeyConfig.SessionToken != nil {
 		t.Fatalf("bedrock IAM key: %+v", bk[0].BedrockKeyConfig)
 	}
-	if c := bk[1].BedrockKeyConfig; c.AccessKey != "AK" || c.SecretKey != "SK" || *c.SessionToken != "ST" || *c.ARN != "arn:aws:x" {
+	if c := bk[1].BedrockKeyConfig; c.AccessKey.GetValue() != "AK" || c.SecretKey.GetValue() != "SK" || c.SessionToken.GetValue() != "ST" || c.ARN.GetValue() != "arn:aws:x" {
 		t.Fatalf("bedrock signed key: %+v", c)
 	}
 	if tk := keys(tbr); len(tk) != 1 || tk[0].ID != "api" {
 		t.Fatalf("tenant bedrock must not use the host IAM identity: %+v", tk)
 	}
-	if v := keys(vx)[0].VertexKeyConfig; v.ProjectID != "p" || v.Region != "us-central1" || v.AuthCredentials != "" {
+	if v := keys(vx)[0].VertexKeyConfig; v.ProjectID.GetValue() != "p" || v.Region.GetValue() != "us-central1" || v.AuthCredentials.GetValue() != "" {
 		t.Fatalf("vertex IAM key: %+v", v)
+	}
+	if !bk[0].Models.IsAllowed("any-model") {
+		t.Fatalf("a key without a model list must serve every model: %v", bk[0].Models)
+	}
+	t.Setenv("GW_TEST_SECRET", "host-secret")
+	ek := bifrostKey(store.ProviderKey{ID: "e", Value: "env.GW_TEST_SECRET"}, 1)
+	if ek.Value.GetValue() != "env.GW_TEST_SECRET" {
+		t.Fatalf("stored key values must stay literal, got %q", ek.Value.GetValue())
+	}
+	ol := store.Provider{ID: "ol", Type: "ollama", BaseURL: "http://10.0.0.5:11434", Enabled: true}
+	snap.Providers[ol.ID], snap.byBifrost[BifrostKey(ol)] = ol, ol.ID
+	if ok := keys(ol); len(ok) != 1 || ok[0].OllamaKeyConfig.URL.GetValue() != ol.BaseURL {
+		t.Fatalf("keyless ollama needs one implicit key with its URL: %+v", ok)
 	}
 	cfg, err := a.GetConfigForProvider(BifrostKey(br))
 	if err != nil || cfg.CustomProviderConfig == nil || cfg.CustomProviderConfig.BaseProviderType != schemas.Bedrock {

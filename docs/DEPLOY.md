@@ -5,7 +5,7 @@
 Plain binary with systemd:
 
 ```sh
-make build                                   # on a machine with Go 1.24+
+make build                                   # on a machine with Go 1.27+
 scp bin/gateway server:/usr/local/bin/agent-gateway
 # on the server
 sudo useradd --system --no-create-home gateway
@@ -55,7 +55,18 @@ The nodes are stateless; put any HTTP load balancer in front. Use the same `MAST
 
 ## Upgrading Bifrost core
 
-The gateway pins `github.com/maximhq/bifrost/core v1.2.38`, the last release that builds with
-Go 1.24 (docs/DECISIONS.md D1). To move to a newer core, raise the Go version in `go.mod` and the
-Dockerfile, bump the core version, and run `make check`; provider code is only touched in
-`internal/gateway`.
+The gateway pins `github.com/maximhq/bifrost/core v1.15.2`, which needs Go 1.27 (the Dockerfile
+builds on `golang:1.27-alpine`; docs/DECISIONS.md D1). To move to a newer core, raise the Go version
+in `go.mod` and the Dockerfile if core requires it, bump the core version (keep the
+`github.com/mark3labs/mcp-go` replace in sync with core's own `go.mod`), and run `make check`;
+provider code is only touched in `internal/gateway`.
+
+Upgrading a running deployment from a v1.2.38 build:
+
+- MCP server names must be ASCII without spaces or hyphens and must not start with a digit
+  (Bifrost refuses others; the admin API now returns 400). Rename such servers before or right
+  after the upgrade, otherwise they stay disconnected (logged as `mcp connect`). Update the org and
+  key `mcp_servers` grants to the new names.
+- Models see MCP tools as `<server>-<tool>`; `POST /v1/mcp/tool/execute` accepts that name or the
+  bare tool name.
+- Idle memory is about 55 MB (was about 28 MB); still well inside a 2 GB VPS.

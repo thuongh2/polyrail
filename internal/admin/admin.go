@@ -24,6 +24,7 @@ import (
 	"github.com/agent-gateway/agent-gateway/internal/limits"
 	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/agent-gateway/agent-gateway/internal/usage"
+	"github.com/maximhq/bifrost/core/mcp"
 )
 
 type Config struct {
@@ -1156,6 +1157,10 @@ func (a *API) putMCP(w http.ResponseWriter, r *http.Request) {
 	m.ID = r.PathValue("id")
 	if err := checkBaseURL(m.URL, true); err != nil { // operators may use internal MCP servers
 		fail(w, err)
+		return
+	}
+	if err := mcp.ValidateMCPClientName(m.Name); err != nil { // Bifrost refuses other names at connect time
+		fail(w, fmt.Errorf("%w: mcp server %v", store.ErrInvalid, err))
 		return
 	}
 	if err := a.S.PutMCP(r.Context(), &m); err != nil {

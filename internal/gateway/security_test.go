@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/agent-gateway/agent-gateway/internal/store"
-	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
@@ -47,23 +46,24 @@ func TestMCPOrgAllowlist(t *testing.T) {
 	ids := func(org store.Org, hdr string, key ...string) []string {
 		r := httptest.NewRequest("POST", "/", nil)
 		r.Header.Set("x-gateway-mcp-clients", hdr)
-		ctx, _ := g.withMCP(context.Background(), r, &principal{Org: org, Key: store.APIKey{MCPServers: key}})
-		return ctx.Value(bifrost.MCPContextKeyIncludeClients).([]string)
+		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+		g.withMCP(ctx, r, &principal{Org: org, Key: store.APIKey{MCPServers: key}})
+		return ctx.Value(schemas.MCPContextKeyIncludeClients).([]string) // Bifrost filters by server name
 	}
 	if got := ids(store.Org{}, "*"); len(got) != 0 {
 		t.Fatalf("org without grant got tools: %v", got)
 	}
-	if got := ids(store.Org{MCPServers: []string{"search"}}, "*"); len(got) != 1 || got[0] != "id1" {
+	if got := ids(store.Org{MCPServers: []string{"search"}}, "*"); len(got) != 1 || got[0] != "search" {
 		t.Fatalf("granted search only: %v", got)
 	}
-	if got := ids(store.Org{MCPServers: []string{"*"}}, "files"); len(got) != 1 || got[0] != "id2" {
+	if got := ids(store.Org{MCPServers: []string{"*"}}, "files"); len(got) != 1 || got[0] != "files" {
 		t.Fatalf("wildcard grant, files requested: %v", got)
 	}
 	if got := ids(store.Org{MCPServers: []string{"*"}}, ""); len(got) != 0 {
 		t.Fatalf("no header must inject nothing: %v", got)
 	}
 	// per-key list narrows the org grant (org ∩ key); it never widens it
-	if got := ids(store.Org{MCPServers: []string{"*"}}, "*", "files"); len(got) != 1 || got[0] != "id2" {
+	if got := ids(store.Org{MCPServers: []string{"*"}}, "*", "files"); len(got) != 1 || got[0] != "files" {
 		t.Fatalf("key limited to files: %v", got)
 	}
 	if got := ids(store.Org{MCPServers: []string{"search"}}, "*", "files"); len(got) != 0 {
@@ -103,5 +103,20 @@ func TestPlanWeightedSplitAndBreakerOrder(t *testing.T) {
 	}
 	if ts := plan(m, snap, br); ts[0].ProviderID != "b" || ts[1].ProviderID != "a" {
 		t.Fatalf("open circuit must move a to the end: %v", ts)
+	}
+}
+
+func TestHideExtraCoversCustomMarshalers(t *testing.T) {
+	ef := schemas.BifrostResponseExtraFields{RoutingInfo: schemas.RoutingInfo{Provider: "p-secret", Key: "k"}}
+	for _, v := range []any{
+		&schemas.BifrostResponsesResponse{ID: new("r"), ExtraFields: ef},
+		&schemas.BifrostResponsesStreamResponse{Type: "response.created", ExtraFields: ef},
+		&schemas.BifrostTranscriptionResponse{Text: "t", ExtraFields: ef},
+		chatOut{BifrostChatResponse: &schemas.BifrostChatResponse{ID: "c", ExtraFields: ef}, Provider: "pub"},
+	} {
+		out, err := hideExtra(v)
+		if err != nil || strings.Contains(string(out), "extra_fields") || strings.Contains(string(out), "p-secret") {
+			t.Fatalf("%T leaks extra_fields: %s %v", v, out, err)
+		}
 	}
 }

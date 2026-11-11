@@ -2,10 +2,21 @@
 
 Format: context → decision → cost if wrong.
 
-**D1 Bifrost core v1.2.38.** Sandbox has Go 1.24.7 only; newer core needs Go 1.27; toolchain
-download and building Go from source are blocked. → Pin core v1.2.38 (last release on Go ≤1.24),
-use only its public API (`bifrost.Init`, `schemas.*`, `providers/openai` converters). → If wrong:
-an upgrade touches `internal/gateway` only.
+**D1 Bifrost core v1.15.2 on Go 1.27.** The owner wants Bifrost core as the SDK for every model
+call and its full feature set. Core v1.15.2 needs Go 1.27; the sandbox only had Go 1.24.7 and can't
+download toolchains, so (with the owner's approval) Go was built from source from the official
+golang/go `go1.27.3` tag into `/opt/gosrc/go127`. → Pin core v1.15.2 and use only its public API
+(`bifrost.Init`, `schemas.*`, `providers/openai` and `providers/anthropic` converters,
+`bifrost.IsSupportedBaseProvider`, `mcp.ValidateMCPClientName`). Upgrade notes (v1.2.38 → v1.15.2):
+every request takes a per-request `*schemas.BifrostContext` (from `r.Context()`); the serving
+provider/model come from `ExtraFields.RoutingInfo`; key secrets are `schemas.SecretVar`, built as
+literals (never `NewSecretVar`, which would resolve `env.*`/`vault.*` references from tenant
+input); an empty key model list now means "none", so the Account sends `["*"]`; cloud deployments
+are key `Aliases` (Azure api-version rides on each alias); Ollama/SGLang read their URL from a key,
+so the Account adds one from the provider base URL; MCP clients are filtered and addressed by name
+and tools are exposed as `<server>-<tool>`. Core replaced idle RSS ~28 MB with ~55 MB and the binary
+grew 33 → 47 MB (more providers and SDKs linked in). → If wrong: an upgrade touches
+`internal/gateway` only.
 
 **D2 GitHub mirrors via `replace`.** Only GitHub is reachable. → `go.mod` replaces golang.org/x/*,
 gopkg.in/*, cloud.google.com/*, google.golang.org/protobuf with their GitHub mirrors (identical
@@ -32,6 +43,9 @@ node. Simpler than leases, same write rate.
 
 **D9 MCP via Bifrost core MCP manager.** HTTP/SSE servers only; STDIO is not supported (it would
 execute local commands). Operators grant servers per org; tools are injected only on request.
+Server names follow Bifrost's rule (ASCII, no spaces or hyphens, not starting with a digit; checked
+at save time with core's validator) and tools reach the model as `<server>-<tool>`. Each server is
+one shared persistent connection (`NeedsSessionStickiness`), as before the core upgrade.
 
 **D10 Models route only to providers of the same owner.** Public models → public providers, org
 models → that org's providers. Prevents tenants re-pricing platform capacity (SECURITY H4).

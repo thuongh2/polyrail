@@ -58,7 +58,7 @@ organizations, users and MCP servers. Built with shadcn/ui, light and dark.
 | Area | What you get |
 |---|---|
 | API | `/v1/chat/completions` (streaming and not), `/v1/embeddings`, `/v1/models`, OpenAI error shapes |
-| Providers | Every provider in Bifrost core v1.2.38: OpenAI, Azure OpenAI, Anthropic, AWS Bedrock, Google Vertex AI, Gemini, Mistral, Groq, Cohere, Ollama, Cerebras, Perplexity, OpenRouter, Nebius, Parasail, SGLang, ElevenLabs, and any OpenAI-compatible URL. Public (platform) or private (per-org, bring your own key) |
+| Providers | Providers from Bifrost core v1.15.2: OpenAI, Azure OpenAI, Anthropic, AWS Bedrock, Google Vertex AI, Gemini, Mistral, Groq, Cohere, Ollama, Cerebras, Perplexity, OpenRouter, Nebius, Parasail, SGLang, ElevenLabs, and any OpenAI-compatible URL. Public (platform) or private (per-org, bring your own key) |
 | Pricing | Per-model input/output price per 1M tokens; cost per request in micro-USD; org credit balances (prepaid) or unlimited |
 | Routing | Several targets per model with weights; automatic failover to the next target; circuit breaker skips failing targets for 30 s |
 | Cost control | Opt-in exact response cache (`x-gateway-cache: <seconds>`), org max-output-token cap, per-key monthly budgets |

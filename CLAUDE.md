@@ -52,8 +52,8 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
 
 ## Decisions (ADR summary — details in docs/DECISIONS.md)
 
-- D1 Bifrost core pinned at **v1.2.38** (last release on Go ≤1.24; sandbox only has Go 1.24.7 and
-  can't download newer toolchains). Upgrade path: bump Go in Dockerfile + core version.
+- D1 Bifrost core pinned at **v1.15.2** on **Go 1.27** (built from the official go1.27.3 tag in the
+  sandbox with the owner's approval). Bifrost core is the SDK for every model call.
 - D2 Sandbox network only reaches GitHub. `go.mod` has `replace` lines mapping golang.org/x/*,
   gopkg.in/*, cloud.google.com/* to their GitHub mirrors (same code). Build with
   `GOPROXY=direct GOSUMDB=off GOFLAGS=-mod=mod`. Harmless for users; can be removed later.
@@ -83,7 +83,9 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
 - Cloud workspace: `/home/claude/agent-gateway` (git repo). Owner's folder (Mac):
   `/Users/lap17656/code-by-hand/agent-gateway` — sync deliverables there with device_commit_files.
 - Owner's local VM has no Go and no internet beyond allowlist; build/test in the cloud workspace.
-- Building Go from source / custom module-proxy tools was refused by the permission classifier — don't retry.
+- Go 1.27.3 (built from source, owner-approved) lives at `/opt/gosrc/go127/bin`; always
+  `export PATH=/opt/gosrc/go127/bin:$PATH GOPROXY=direct GOSUMDB=off GOFLAGS=-mod=mod GOTOOLCHAIN=local`.
+  Old Go 1.24.7 binaries on PATH cannot build this module. Custom module-proxy tools stay off-limits.
 
 ## Status
 

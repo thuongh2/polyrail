@@ -11,7 +11,7 @@
 | POST | `/v1/responses` | OpenAI Responses API (chat-kind models). Streams named SSE events ending with `response.completed`. |
 | POST | `/v1/audio/speech` | Text to speech (speech models): `{model, input, voice, response_format, speed}` → audio bytes. Priced per input token, or per 1M characters when the provider reports no tokens. |
 | POST | `/v1/audio/transcriptions` | Speech to text (transcription models): multipart `file`, `model`, `language`, `prompt`, `response_format` (json or text). Priced by `audio_minute_price_micros` when set, else by tokens. |
-| POST | `/v1/mcp/tool/execute` | Body: one `tool_calls[]` item returned by the model. Returns the tool message to append. The tool's server must be granted to the org and allowed by the key's `mcp_servers` (else 403 `mcp_tool_not_allowed`). |
+| POST | `/v1/mcp/tool/execute` | Body: one `tool_calls[]` item returned by the model (tool names are `<server>-<tool>`; a bare tool name is accepted too). Returns the tool message to append. The tool's server must be granted to the org and allowed by the key's `mcp_servers` (else 403 `mcp_tool_not_allowed`). |
 | POST | `/anthropic/v1/messages` | Anthropic Messages API for any chat-kind model (`model` is a catalog id; `model`, `max_tokens`, `messages` required). Converted with Bifrost core to the Responses pipeline, so routing, limits, guardrails, pricing and logs are the same as `/v1/responses`. `stream: true` returns Anthropic SSE (`event: message_start` … `event: message_stop`, no `[DONE]`). `anthropic-version` / `anthropic-beta` headers are accepted and ignored. |
 | GET | `/anthropic/v1/models` | Chat models visible to the key: `{"data": [{"id","type":"model","display_name","created_at"}], "first_id","last_id","has_more": false}`. |
 | * | `/openai/v1/...` | Alias of `/v1/...` for every endpoint above (OpenAI SDK `base_url` ending in `/openai/v1`). |
@@ -118,5 +118,5 @@ Prices in model bodies are `input_price_micros` / `output_price_micros`: micro-U
 
 `GET /healthz` and its Bifrost-compatible alias `GET /health` (process up), `GET /readyz` (store
 reachable), `GET /metrics` (Prometheus; `METRICS_TOKEN` if set), `GET /api/version`
-(`{"version": "<build version>", "bifrost_core": "v1.2.38"}`; the version is set at build time with
+(`{"version": "<build version>", "bifrost_core": "v1.15.2"}`; the version is set at build time with
 `-ldflags "-X main.version=…"`, which `make build` does from `git describe`, else `dev`).

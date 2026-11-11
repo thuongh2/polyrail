@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, compact, get, kbApi, orgBase, usd, when, type APIKey, type KB, type Member, type ModelView } from "@/lib/api";
-import { useAsync, useQueryParam } from "@/lib/hooks";
+import { useAsync, useQueryParam, useNewParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 
 const day = (t?: string) => (t ? new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "–");
@@ -50,6 +50,7 @@ export default function Keys() {
   const admin = wsCan("admin"); // workspace admin: every key of the workspace, limits, grounding
   const orgAdmin = can("admin"); // management tokens are org-level
   const kbs = useAsync(() => (admin && org ? kbApi(org.id, wsList).list() : Promise.resolve([] as KB[])), [org?.id, admin]);
+  useNewParam(() => setCreating(true), !!org && wsCan("member"));
 
   if (!org) return <EmptyState title="You are not in an organization yet" />;
   const canCreate = wsCan("member");

@@ -616,6 +616,12 @@ func TestMemberCannotLiftAdminLimits(t *testing.T) {
 	id, _ := f.createKey(t, "member", f.orgA.ID)
 	expect(t, f.do(t, "admin", "PATCH", A+id, `{"rpm":10}`), 200, "admin sets limit")
 	expect(t, f.do(t, "member", "PATCH", A+id, `{"rpm":0}`), 403, "member lifts limit")
+	r := f.do(t, "admin", "PATCH", A+id, `{"mcp_servers":["search"]}`)
+	expect(t, r, 200, "admin limits MCP servers")
+	if !strings.Contains(r.body, `"mcp_servers":["search"]`) {
+		t.Fatalf("mcp_servers not stored: %s", r.body)
+	}
+	expect(t, f.do(t, "member", "PATCH", A+id, `{"mcp_servers":[]}`), 403, "member lifts MCP limit")
 	expect(t, f.do(t, "member", "PATCH", A+id, `{"name":"renamed"}`), 200, "member renames own key")
 	expect(t, f.do(t, "member", "PATCH", A+id, `{"revoked":true}`), 200, "member revokes own key")
 }

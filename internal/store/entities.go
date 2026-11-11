@@ -87,7 +87,8 @@ type APIKey struct {
 	RPM           int        `json:"rpm,omitempty"`
 	TPM           int        `json:"tpm,omitempty"`
 	MonthlyBudget int64      `json:"monthly_budget_micros,omitempty"`
-	Models        []string   `json:"models,omitempty"` // allowlist; empty = all visible models
+	Models        []string   `json:"models,omitempty"`      // allowlist; empty = all visible models
+	MCPServers    []string   `json:"mcp_servers,omitempty"` // MCP server names, narrowing the org grant; empty = all granted
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	Revoked       bool       `json:"revoked"`
 	CreatedAt     time.Time  `json:"created_at"`

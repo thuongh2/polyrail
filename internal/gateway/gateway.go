@@ -154,7 +154,16 @@ func errf(status int, typ, code, format string, args ...any) *apiError {
 func writeError(w http.ResponseWriter, e *apiError) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(e.status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": e.msg, "type": e.typ, "code": e.code}})
+	_, body := errorBody(w, e)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// errorBody is the error payload (and SSE event name) in the API format the handler speaks.
+func errorBody(w http.ResponseWriter, e *apiError) (string, any) {
+	if _, ok := w.(anthropicWriter); ok {
+		return "error", anthropicError(e)
+	}
+	return "", map[string]any{"error": map[string]any{"message": e.msg, "type": e.typ, "code": e.code}}
 }
 
 var reSecretish = regexp.MustCompile(`(sk|key|tok)[-_][A-Za-z0-9*_\-.]{6,}`)
@@ -416,7 +425,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := g.snap.Load()
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
-	bctx, usesMCP := g.withMCP(ctx, r, p.Org)
+	bctx, usesMCP := g.withMCP(ctx, r, p)
 	w.Header().Set("x-gateway-request-id", store.NewID())
 
 	if req.Stream != nil && *req.Stream {

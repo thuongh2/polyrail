@@ -72,7 +72,7 @@ func (g *Gateway) ModelsQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	snap := g.snap.Load()
 	var ms []store.Model // Visible is sorted by id
-	for _, m := range snap.Visible(p.Org.ID) {
+	for _, m := range snap.Visible(p.Org.ID, p.ws()) {
 		if (len(p.Key.Models) == 0 || slices.Contains(p.Key.Models, m.ID)) && q.match(m) {
 			ms = append(ms, m)
 		}

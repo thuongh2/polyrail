@@ -14,10 +14,10 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 | Organizations, shared credit pool | have | orgs + prepaid credits |
 | Roles admin / member | have | owner / admin / member / viewer |
 | Members see only their own keys; admins see all | have | D28; members and viewers list only keys they created |
-| Workspaces (keys, guardrails, BYOK, routing, presets, budgets, members scoped per workspace) | gap · W3 | largest item; an org would hold workspaces; today org ≈ one workspace |
+| Workspaces (keys, guardrails, BYOK, routing, presets, budgets, members scoped per workspace) | have | D31; default workspace per org (old data = default), keys / BYOK providers (optional sharing) / private models / policies / presets / trace exports / KBs scoped, workspace members + roles, delete only when empty (409 with counts) |
 | SSO (OIDC) | have | |
 | SSO via SAML, domain verification (DNS TXT), enforce SSO | have | D29; per-org SAML (`crewjam/saml`), `_polyrail-verify` TXT claim (one org per domain), enforce with operator break-glass, `GET /api/auth/sso` discovery |
-| SCIM provisioning, IdP groups → workspace + role, deprovision disables keys | have (role) · workspace W3 | D29; SCIM 2.0 Users/Groups (`elimity-com/scim`), group → role mappings (`workspace_id` stored for W3), deprovision removes membership and revokes keys + management tokens |
+| SCIM provisioning, IdP groups → workspace + role, deprovision disables keys | have | D29 + D31; SCIM 2.0 Users/Groups (`elimity-com/scim`), group → org role or workspace role mappings, deprovision removes membership and revokes keys + management tokens |
 | Management API keys (programmatic key create / rotate / delete) | have | D28; `pr-mgmt-` org-scoped bearer tokens, role ≤ admin, docs/API.md "Management tokens" |
 | Key rotation | have | D28; `POST …/keys/{id}/rotate` keeps settings, optional `grace_seconds` |
 
@@ -28,7 +28,7 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 | Per-key credit limit | have | `monthly_budget_micros` |
 | Budget `limit_usd` + `reset_interval` daily / weekly / monthly | have | policy `budget` with daily / weekly / monthly / lifetime (UTC) (D26) |
 | Per-member budgets (not only per key) | have | policy budgets count the key creator's spend across their keys (D26) |
-| Workspace budgets | gap · W3 | with workspaces |
+| Workspace budgets | have | D31; `is_workspace_default` policy budget counts every key of the workspace |
 | Include BYOK spend in budgets toggle | have | `budget.include_byok` (org-provider models) |
 | Billing, invoices, payment methods | skip | business integration (Stripe) — later, optional plugin |
 
@@ -51,7 +51,7 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 | ZDR enforcement (account / guardrail / request `provider.zdr`, OR-ed) | have | provider `privacy` metadata; policy `require_zdr` filters targets (D26); request `provider.zdr` filters on top (D27) — both apply |
 | `data_collection: deny` | have | policy `deny_data_collection` (D26) and request `provider.data_collection` (D27), composed |
 | Data regions (`allowed_data_regions`: global / europe / us), regional endpoints | have | D30; provider `privacy.region` normalized to global / europe / us / other, policy `allowed_regions`, `REGION_LOCK` for a regional deployment (eu.example.com); no request-level field (OpenRouter uses hostnames) |
-| Prompt / response logging off by default, opt-in per workspace | have | D28; per org (no workspaces yet), AES-GCM sealed, 1–90 day TTL, chat completions only |
+| Prompt / response logging off by default, opt-in per workspace | have | D28; per org (applies to every workspace), AES-GCM sealed, 1–90 day TTL, chat completions only |
 | BYOK with declared ZDR | have | org providers take the same `privacy` declaration |
 
 ## Routing (request level)
@@ -77,4 +77,4 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 ## Proposed waves
 - **W1 (policies + routing, core enterprise):** policy engine (org default / member / key; budgets with intervals, per-member budgets, allowed models + providers, filters redact/block, ZDR + data collection), provider privacy metadata, request `models` + `provider` routing + `:nitro`/`:floor`, presets, `usage.cost` in body, `user` analytics, members-see-own-keys, management API tokens, CSV export, opt-in content logging.
 - **W2 (identity + compliance):** SAML SSO, domain verification, SSO enforcement, SCIM, data regions, OTel/Langfuse broadcast.
-- **W3 (workspaces):** workspaces inside orgs scoping keys, providers (BYOK), guardrails, presets, budgets, members.
+- **W3 (workspaces):** done (D31) — workspaces inside orgs scoping keys, providers (BYOK), guardrails, presets, budgets, members.

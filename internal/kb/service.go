@@ -466,6 +466,9 @@ func (s *Service) kbs(ctx context.Context, org string, ids []string) ([]*store.K
 		if err != nil {
 			return nil, err
 		}
+		if ws, ok := store.WorkspaceSet(ctx); ok && store.WSID(k.WorkspaceID) != ws {
+			return nil, store.ErrNotFound // a KB of another workspace (D31)
+		}
 		out = append(out, k)
 	}
 	return out, nil
@@ -522,7 +525,7 @@ func (s *Service) Search(ctx context.Context, org string, kbIDs []string, query,
 		ek := k.EmbedModel + "|" + strconv.Itoa(k.Dimensions)
 		vec, ok := vecs[ek]
 		if !ok {
-			out, err := s.emb.Embed(ctx, org, keyID, k.EmbedModel, k.Dimensions, []string{query})
+			out, err := s.emb.Embed(store.WithWorkspace(ctx, k.WorkspaceID), org, keyID, k.EmbedModel, k.Dimensions, []string{query})
 			if err != nil {
 				return nil, err
 			}

@@ -46,7 +46,7 @@ func (g *Gateway) Embed(ctx context.Context, orgID, keyID, model string, dims in
 		if err != nil {
 			return nil, err
 		}
-		p = &principal{Org: *o}
+		p = &principal{Org: *o, Key: store.APIKey{WorkspaceID: store.WorkspaceOf(ctx)}} // the KB's workspace
 		if keyID != "" {
 			k, err := g.S.GetKey(ctx, orgID, keyID)
 			switch {
@@ -159,7 +159,7 @@ func (g *Gateway) kbSelect(w http.ResponseWriter, r *http.Request, p *principal)
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	ctx := r.Context()
+	ctx := store.WithWorkspace(r.Context(), p.ws()) // only KBs of the key's workspace (kb.Service.kbs)
 	sig, err := g.KB.Sig(ctx, p.Org.ID, ids)
 	if errors.Is(err, store.ErrNotFound) {
 		if h != "" {

@@ -379,3 +379,33 @@ id is derived from the request log id and the span id is that id, linking spans 
 once after an admin write on that node), and the request path asks an atomic set whether the org or
 platform has any export before building a span. If wrong: a node may send for up to 10 s after an
 export is deleted elsewhere.
+
+**D31 Workspaces (W3).** OpenRouter workspace parity with the smallest model that keeps old data.
+Rulings: (1) `store.Workspace{id, org_id, name, slug, is_default}` under `ws/{org}/{id}`; the
+default workspace's id is the literal `default` in every org (written by `CreateOrg`, created on
+first read for older orgs), so nothing is migrated. Scoped records (APIKey, org Provider, org Model,
+Policy, Preset, TraceExport, KB, request logs) store the default as `""` (`store.WSID`), so old rows
+with no `workspace_id` *are* the default workspace and every comparison is plain string equality.
+(2) Membership: the org role stays; org owners/admins are admin everywhere, org members are in the
+default workspace with their org role, other workspaces have `wsmem/{org}/{ws}/{user}` records
+(admin | member | viewer). Leaving the org drops them. (3) Admin API: workspace-aware routes (`a.ws`)
+admit any org member and each handler checks the caller's role in the workspace of what it
+touches (`wsCan`: 404 when the caller is not in it, 403 when the role is too low); every other org
+route keeps its org-role minimum, so a workspace admin gains nothing outside the scoped resources.
+Provider discovery/import, provider key routes, KB management, alerts, webhooks, members, usage and
+logs stay org-level. (4) Request path: models resolve per key workspace (`Snapshot.Model(org, ws,
+id)`); org providers are usable in their workspace or, with `shared_across_workspaces` (org admins
+only), in all; `resolve` drops targets the key's workspace cannot use, so unsharing applies at once.
+Model ids and preset slugs stay unique per org (shortcut: one namespace per org; key them by
+workspace if teams collide). (5) Policies: org defaults apply in every workspace and live in the
+default workspace; `is_workspace_default` policies apply to their workspace's keys, and their
+budget is one `spend/pol/{org}/w/{ws}/…` counter — the workspace budget. (6) Deleting a non-empty
+workspace answers 409 with counts; nothing is cascade-deleted. (7) Usage rollups stay per key and
+per model; workspace grouping and filtering derive from per-key rows (no new counters), so a
+per-model view of one workspace is not offered. (8) Management tokens may be limited to one
+workspace (`workspace_id`); a limited token passes only workspace-aware routes, with the lower of
+its role and its creator's role there. (9) IdP group mappings with `workspace_id` set workspace
+roles (marked `idp`, removed when no mapping matches); mappings without it set the org role.
+(10) Trace exports in a workspace see that workspace's requests; default-workspace exports see all.
+If wrong: per-workspace model/preset namespaces and per-workspace rollups are additive changes.
+

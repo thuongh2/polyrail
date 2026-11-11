@@ -358,7 +358,7 @@ func (g *Gateway) UploadFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errf(400, "invalid_request_error", "bad_request", "cannot read the file or it is empty"))
 		return
 	}
-	m, ok := g.snap.Load().Model(p.Org.ID, modelID)
+	m, ok := g.snap.Load().Model(p.Org.ID, p.ws(), modelID)
 	kind := m.Kind
 	if !ok {
 		kind = "chat" // resolve reports model_not_found

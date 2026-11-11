@@ -34,6 +34,7 @@ var errNoBox = errors.New("knowledge bases need MASTER_KEY")
 type KB struct {
 	ID               string            `json:"id"`
 	OrgID            string            `json:"org_id"`
+	WorkspaceID      string            `json:"workspace_id,omitempty"` // "" = the default workspace (D31)
 	Name             string            `json:"name"`
 	Description      string            `json:"description,omitempty"`
 	EmbedModel       string            `json:"embedding_model"`      // org-visible kind=embedding model id
@@ -198,7 +199,7 @@ func (s *Store) UpdateKB(ctx context.Context, org, id string, fn func(*KB) error
 		if err := fn(&k); err != nil {
 			return err
 		}
-		k.ID, k.OrgID, k.CreatedAt, k.CreatedByKey = cur.ID, cur.OrgID, cur.CreatedAt, cur.CreatedByKey
+		k.ID, k.OrgID, k.WorkspaceID, k.CreatedAt, k.CreatedByKey = cur.ID, cur.OrgID, cur.WorkspaceID, cur.CreatedAt, cur.CreatedByKey
 		k.Rev, k.Docs, k.Chunks, k.Bytes = max(k.Rev, cur.Rev), cur.Docs, cur.Chunks, cur.Bytes
 		k.UpdatedAt, out = time.Now().UTC(), &k
 		return putJSON(tx, kbKey(org, id), &k)

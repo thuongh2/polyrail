@@ -10,17 +10,20 @@ import (
 // MgmtToken is an org-scoped bearer token for the org admin API (/api/orgs/{org}/...), used by
 // scripts and CI instead of a browser session. Only the SHA-256 of the secret is stored.
 type MgmtToken struct {
-	ID         string     `json:"id"`
-	OrgID      string     `json:"org_id"`
-	Name       string     `json:"name"`
-	Prefix     string     `json:"prefix"` // first chars of the secret, for display
-	Hash       string     `json:"-"`
-	Role       Role       `json:"role"` // admin, member or viewer
-	CreatedBy  string     `json:"created_by"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-	Revoked    bool       `json:"revoked"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID     string `json:"id"`
+	OrgID  string `json:"org_id"`
+	Name   string `json:"name"`
+	Prefix string `json:"prefix"` // first chars of the secret, for display
+	Hash   string `json:"-"`
+	Role   Role   `json:"role"` // admin, member or viewer
+	// WorkspaceID limits the token to one workspace's resources (its id, "default" included);
+	// "" = the whole org (D31).
+	WorkspaceID string     `json:"workspace_id,omitempty"`
+	CreatedBy   string     `json:"created_by"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	Revoked     bool       `json:"revoked"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // storedMgmtToken keeps the hash in the persisted form while hiding it from API JSON.

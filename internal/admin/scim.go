@@ -513,7 +513,14 @@ func (a *API) scimSetActive(ctx context.Context, id *store.Identity, u *store.Us
 			if err != nil {
 				return err
 			}
-			return a.S.SetMember(ctx, store.Member{OrgID: org, UserID: u.ID, Role: rl})
+			if err := a.S.SetMember(ctx, store.Member{OrgID: org, UserID: u.ID, Role: rl}); err != nil {
+				return err
+			}
+			names, err := a.scimGroupNames(ctx, org, u.ID)
+			if err != nil {
+				return err
+			}
+			return a.syncWorkspaces(ctx, id, u.ID, names)
 		} else if err != nil {
 			return err
 		}
@@ -591,15 +598,9 @@ func (a *API) scimRole(ctx context.Context, id *store.Identity, uid string) (sto
 	if len(id.GroupMappings) == 0 {
 		return def, nil
 	}
-	gs, err := a.S.ListSCIMGroups(ctx, id.OrgID)
+	names, err := a.scimGroupNames(ctx, id.OrgID, uid)
 	if err != nil {
 		return "", err
-	}
-	var names []string
-	for _, g := range gs {
-		if slices.Contains(g.Members, uid) {
-			names = append(names, g.DisplayName)
-		}
 	}
 	if rl, ok := mappedRole(id.GroupMappings, names); ok {
 		return rl, nil
@@ -620,7 +621,17 @@ func (a *API) syncRoles(ctx context.Context, id *store.Identity, uids []string) 
 			continue
 		}
 		m, err := a.S.GetMember(ctx, id.OrgID, uid)
-		if err != nil || m.Role == store.RoleOwner {
+		if err != nil {
+			continue
+		}
+		names, err := a.scimGroupNames(ctx, id.OrgID, uid)
+		if err != nil {
+			return err
+		}
+		if err := a.syncWorkspaces(ctx, id, uid, names); err != nil {
+			return err
+		}
+		if m.Role == store.RoleOwner {
 			continue
 		}
 		rl, err := a.scimRole(ctx, id, uid)

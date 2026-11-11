@@ -15,11 +15,14 @@ import (
 // Langfuse's OTLP endpoint (internal/broadcast, D30). OrgID "" is a platform export (operator),
 // which receives the requests of every org.
 type TraceExport struct {
-	ID       string `json:"id"`
-	OrgID    string `json:"org_id"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`     // otlp | langfuse
-	Endpoint string `json:"endpoint"` // otlp: the traces URL (…/v1/traces); langfuse: the Langfuse base URL
+	ID    string `json:"id"`
+	OrgID string `json:"org_id"`
+	// WorkspaceID limits an org export to the requests of that workspace's keys; the default
+	// workspace's exports ("") receive every workspace's requests (D31).
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`     // otlp | langfuse
+	Endpoint    string `json:"endpoint"` // otlp: the traces URL (…/v1/traces); langfuse: the Langfuse base URL
 	// Headers are sent with every export (auth tokens); write-only: plaintext only inside the
 	// gateway, sealed at rest. HeaderNames is what the API shows.
 	Headers        map[string]string `json:"-"`

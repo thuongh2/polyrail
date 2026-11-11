@@ -15,11 +15,16 @@ import (
 // in MemberIDs, and to each key in KeyIDs. The gateway combines all policies that apply to a key
 // (gateway/policy.go); Org.Guardrails and the key's own limits still apply on top.
 type Policy struct {
-	ID                 string         `json:"id"`
-	OrgID              string         `json:"org_id"`
-	Name               string         `json:"name"`
-	Description        string         `json:"description,omitempty"`
-	IsOrgDefault       bool           `json:"is_org_default"`
+	ID           string `json:"id"`
+	OrgID        string `json:"org_id"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	IsOrgDefault bool   `json:"is_org_default"`
+	// WorkspaceID is the workspace the policy belongs to ("" = default, D31); with
+	// IsWorkspaceDefault it applies to every key of that workspace and its budget counts the
+	// spend of the whole workspace.
+	WorkspaceID        string         `json:"workspace_id,omitempty"`
+	IsWorkspaceDefault bool           `json:"is_workspace_default,omitempty"`
 	MemberIDs          []string       `json:"member_ids,omitempty"` // user ids
 	KeyIDs             []string       `json:"key_ids,omitempty"`
 	OptedOutMemberIDs  []string       `json:"opted_out_member_ids,omitempty"` // org default only

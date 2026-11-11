@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/polyrail/polyrail/internal/broadcast"
@@ -21,7 +22,7 @@ func (a *API) registerTraceExports(mux *http.ServeMux) {
 		prefix string
 		wrap   func(http.HandlerFunc) http.HandlerFunc
 	}{
-		{"/api/orgs/{org}", func(h http.HandlerFunc) http.HandlerFunc { return a.org(store.RoleAdmin, h) }},
+		{"/api/orgs/{org}", a.ws}, // workspace admins (D31)
 		{"/api/admin", func(h http.HandlerFunc) http.HandlerFunc { return a.operator(a.platform(h)) }},
 	} {
 		p := s.prefix + "/trace-exports"
@@ -46,6 +47,7 @@ type traceExportInput struct {
 	KeyIDs         *[]string `json:"key_ids"`
 	IncludeContent *bool     `json:"include_content"`
 	Enabled        *bool     `json:"enabled"`
+	WorkspaceID    string    `json:"workspace_id"` // org exports, create only ("" = default: every workspace's requests)
 }
 
 // apply copies the set fields of in onto t.
@@ -100,8 +102,9 @@ func (a *API) checkTraceExport(ctx context.Context, t *store.TraceExport) error 
 	}
 	if t.OrgID != "" {
 		for _, id := range t.KeyIDs {
-			if _, err := a.S.GetKey(ctx, t.OrgID, id); errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("%w: key %q is not a key of this organization", store.ErrInvalid, id)
+			k, err := a.S.GetKey(ctx, t.OrgID, id)
+			if errors.Is(err, store.ErrNotFound) || (err == nil && t.WorkspaceID != "" && store.WSID(k.WorkspaceID) != t.WorkspaceID) {
+				return fmt.Errorf("%w: key %q is not a key of this organization or workspace", store.ErrInvalid, id)
 			} else if err != nil {
 				return err
 			}
@@ -124,6 +127,12 @@ func (a *API) listTraceExports(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	show, err := a.wsFilter(r, store.RoleAdmin)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	ts = slices.DeleteFunc(ts, func(t store.TraceExport) bool { return !show(t.WorkspaceID) })
 	writeJSON(w, 200, ts) // Headers is json:"-"
 }
 
@@ -138,6 +147,16 @@ func (a *API) createTraceExport(w http.ResponseWriter, r *http.Request) {
 	}
 	org := owner(r)
 	t := &store.TraceExport{OrgID: org, SampleRate: 1, Enabled: true}
+	if org != "" {
+		var err error
+		if t.WorkspaceID, err = a.resolveWS(r, in.WorkspaceID); err == nil {
+			err = a.wsCan(r, t.WorkspaceID, store.RoleAdmin)
+		}
+		if err != nil {
+			fail(w, err)
+			return
+		}
+	}
 	if err := in.apply(t); err != nil {
 		fail(w, err)
 		return
@@ -172,6 +191,12 @@ func (a *API) patchTraceExport(w http.ResponseWriter, r *http.Request) {
 	org, id := owner(r), r.PathValue("tid")
 	cur, err := a.S.GetTraceExport(r.Context(), org, id)
 	if err == nil {
+		err = a.wsCan(r, cur.WorkspaceID, store.RoleAdmin)
+	}
+	if err == nil {
+		_, err = a.keepWS(r, cur.WorkspaceID, in.WorkspaceID)
+	}
+	if err == nil {
 		if err = in.apply(cur); err == nil {
 			err = a.checkTraceExport(r.Context(), cur) // outside the write: it resolves DNS
 		}
@@ -192,6 +217,12 @@ func (a *API) patchTraceExport(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deleteTraceExport(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("tid")
+	if t, err := a.S.GetTraceExport(r.Context(), owner(r), id); err == nil {
+		if err := a.wsCan(r, t.WorkspaceID, store.RoleAdmin); err != nil {
+			fail(w, err)
+			return
+		}
+	}
 	if err := a.S.DeleteTraceExport(r.Context(), owner(r), id); err != nil {
 		fail(w, err)
 		return
@@ -210,6 +241,9 @@ func (a *API) testTraceExport(w http.ResponseWriter, r *http.Request) {
 	}
 	org, id := owner(r), r.PathValue("tid")
 	t, err := a.S.GetTraceExport(r.Context(), org, id)
+	if err == nil {
+		err = a.wsCan(r, t.WorkspaceID, store.RoleAdmin)
+	}
 	if err != nil {
 		fail(w, err)
 		return

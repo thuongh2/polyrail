@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"slices"
 
 	"github.com/polyrail/polyrail/internal/store"
 )
@@ -11,11 +12,11 @@ import (
 
 func (a *API) registerPresets(mux *http.ServeMux) {
 	p := "/api/orgs/{org}/presets"
-	mux.HandleFunc("GET "+p, a.org(store.RoleViewer, a.listPresets))
-	mux.HandleFunc("POST "+p, a.org(store.RoleAdmin, a.putPreset))
-	mux.HandleFunc("GET "+p+"/{slug}", a.org(store.RoleViewer, a.getPreset))
-	mux.HandleFunc("PUT "+p+"/{slug}", a.org(store.RoleAdmin, a.putPreset))
-	mux.HandleFunc("DELETE "+p+"/{slug}", a.org(store.RoleAdmin, a.deletePreset))
+	mux.HandleFunc("GET "+p, a.ws(a.listPresets))
+	mux.HandleFunc("POST "+p, a.ws(a.putPreset))
+	mux.HandleFunc("GET "+p+"/{slug}", a.ws(a.getPreset))
+	mux.HandleFunc("PUT "+p+"/{slug}", a.ws(a.putPreset))
+	mux.HandleFunc("DELETE "+p+"/{slug}", a.ws(a.deletePreset))
 }
 
 type presetInput struct {
@@ -24,6 +25,8 @@ type presetInput struct {
 	Models   []string             `json:"models"`
 	Provider *store.ProviderPrefs `json:"provider"`
 	Params   map[string]any       `json:"params"`
+	// WorkspaceID: create only ("" = default workspace)
+	WorkspaceID string `json:"workspace_id"`
 }
 
 func (a *API) listPresets(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +35,12 @@ func (a *API) listPresets(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	show, err := a.wsFilter(r, store.RoleViewer)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	ps = slices.DeleteFunc(ps, func(p store.Preset) bool { return !show(p.WorkspaceID) })
 	if ps == nil {
 		ps = []store.Preset{}
 	}
@@ -40,6 +49,9 @@ func (a *API) listPresets(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) getPreset(w http.ResponseWriter, r *http.Request) {
 	p, err := a.S.GetPreset(r.Context(), r.PathValue("org"), r.PathValue("slug"))
+	if err == nil {
+		err = a.wsCan(r, p.WorkspaceID, store.RoleViewer)
+	}
 	if err != nil {
 		fail(w, err)
 		return
@@ -59,6 +71,18 @@ func (a *API) putPreset(w http.ResponseWriter, r *http.Request) {
 	}
 	org := r.PathValue("org")
 	p := &store.Preset{OrgID: org, Slug: in.Slug, Model: in.Model, Models: in.Models, Provider: in.Provider, Params: in.Params}
+	var err error
+	if old, gerr := a.S.GetPreset(r.Context(), org, in.Slug); gerr == nil && !create {
+		if err = a.wsCan(r, old.WorkspaceID, store.RoleAdmin); err == nil {
+			p.WorkspaceID, err = a.keepWS(r, old.WorkspaceID, in.WorkspaceID)
+		}
+	} else if p.WorkspaceID, err = a.resolveWS(r, in.WorkspaceID); err == nil {
+		err = a.wsCan(r, p.WorkspaceID, store.RoleAdmin)
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	if err := a.S.PutPreset(r.Context(), p, create); err != nil {
 		fail(w, err)
 		return
@@ -73,6 +97,14 @@ func (a *API) putPreset(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) deletePreset(w http.ResponseWriter, r *http.Request) {
 	org, slug := r.PathValue("org"), r.PathValue("slug")
+	p, err := a.S.GetPreset(r.Context(), org, slug)
+	if err == nil {
+		err = a.wsCan(r, p.WorkspaceID, store.RoleAdmin)
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	if err := a.S.DeletePreset(r.Context(), org, slug); err != nil {
 		fail(w, err)
 		return

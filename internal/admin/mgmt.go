@@ -37,7 +37,7 @@ func mgmtBearer(r *http.Request) string {
 // tokenOrg authenticates a management token for an org route. The token's role is capped by its
 // creator's current role, so removing or demoting the creator narrows or ends the token. CSRF is
 // not needed: a cross-site page cannot set the Authorization header.
-func (a *API) tokenOrg(min store.Role, h http.HandlerFunc, w http.ResponseWriter, r *http.Request, secret string) {
+func (a *API) tokenOrg(min store.Role, wsAware bool, h http.HandlerFunc, w http.ResponseWriter, r *http.Request, secret string) {
 	ctx := r.Context()
 	t, err := a.S.MgmtTokenByHash(ctx, gateway.HashKey(secret))
 	if errors.Is(err, store.ErrNotFound) || (err == nil && (t.Revoked || (t.ExpiresAt != nil && time.Now().After(*t.ExpiresAt)))) {
@@ -56,6 +56,21 @@ func (a *API) tokenOrg(min store.Role, h http.HandlerFunc, w http.ResponseWriter
 	if err != nil {
 		fail(w, err)
 		return
+	}
+	if t.WorkspaceID != "" { // a workspace-limited token: the creator's role in that workspace, workspace routes only
+		if !wsAware {
+			fail(w, errForbidden)
+			return
+		}
+		if rl, err = a.S.WorkspaceRole(ctx, t.OrgID, t.WorkspaceID, t.CreatedBy, rl); err != nil {
+			fail(w, err)
+			return
+		}
+		if rl == "" {
+			fail(w, errUnauthorized)
+			return
+		}
+		ctx = context.WithValue(ctx, wsLimitCtx{}, store.WSID(t.WorkspaceID))
 	}
 	if rl.Rank() > t.Role.Rank() {
 		rl = t.Role
@@ -130,6 +145,7 @@ func (a *API) createMgmtToken(w http.ResponseWriter, r *http.Request) {
 		Name          string     `json:"name"`
 		Role          store.Role `json:"role"`
 		ExpiresInDays int        `json:"expires_in_days"` // 0 = never
+		WorkspaceID   string     `json:"workspace_id"`    // limit to one workspace ("" = whole org)
 	}
 	if !decode(w, r, &in) {
 		return
@@ -161,6 +177,14 @@ func (a *API) createMgmtToken(w http.ResponseWriter, r *http.Request) {
 	}
 	secret := MgmtPrefix + base64.RawURLEncoding.EncodeToString(b)
 	t := &store.MgmtToken{OrgID: r.PathValue("org"), Name: name, Prefix: secret[:14], Role: in.Role, CreatedBy: user(r).ID}
+	if in.WorkspaceID != "" {
+		x, err := a.S.GetWorkspace(r.Context(), t.OrgID, in.WorkspaceID)
+		if err != nil {
+			fail(w, orInvalid(nil, "workspace "+in.WorkspaceID+" not found"))
+			return
+		}
+		t.WorkspaceID = x.ID // "default" stays: a limit to the default workspace
+	}
 	if in.ExpiresInDays > 0 {
 		exp := time.Now().UTC().AddDate(0, 0, in.ExpiresInDays)
 		t.ExpiresAt = &exp
@@ -169,7 +193,7 @@ func (a *API) createMgmtToken(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	a.audit(r, t.OrgID, "mgmt_token.create", t.ID, t.Name+" role="+string(t.Role))
+	a.audit(r, t.OrgID, "mgmt_token.create", t.ID, t.Name+" role="+string(t.Role)+" workspace="+t.WorkspaceID)
 	writeJSON(w, http.StatusCreated, map[string]any{"token": t, "secret": secret})
 }
 

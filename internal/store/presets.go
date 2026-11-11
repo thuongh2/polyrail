@@ -137,14 +137,17 @@ const MaxRouteModels = 5
 
 // Preset is a saved, org-scoped request template used as "model": "@preset/<slug>".
 type Preset struct {
-	ID        string         `json:"id"`
-	OrgID     string         `json:"org_id"`
-	Slug      string         `json:"slug"`
-	Model     string         `json:"model,omitempty"`
-	Models    []string       `json:"models,omitempty"`
-	Provider  *ProviderPrefs `json:"provider,omitempty"`
-	Params    map[string]any `json:"params,omitempty"` // see PresetParams; request fields win
-	CreatedAt time.Time      `json:"created_at"`
+	ID    string `json:"id"`
+	OrgID string `json:"org_id"`
+	// WorkspaceID: only keys of this workspace resolve the preset ("" = default, D31).
+	// shortcut: slugs stay unique per org; key presets by workspace if teams collide.
+	WorkspaceID string         `json:"workspace_id,omitempty"`
+	Slug        string         `json:"slug"`
+	Model       string         `json:"model,omitempty"`
+	Models      []string       `json:"models,omitempty"`
+	Provider    *ProviderPrefs `json:"provider,omitempty"`
+	Params      map[string]any `json:"params,omitempty"` // see PresetParams; request fields win
+	CreatedAt   time.Time      `json:"created_at"`
 }
 
 var reSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)

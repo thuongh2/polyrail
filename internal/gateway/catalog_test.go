@@ -101,22 +101,22 @@ func TestSnapshotHidesModelsWithoutLiveProvider(t *testing.T) {
 		"o1|a/ghost": {ID: "a/ghost", OrgID: "o1", Enabled: true, Targets: []store.Target{{ProviderID: "gone"}}},
 	}}
 	var ids []string
-	for _, m := range snap.Visible("") {
+	for _, m := range snap.Visible("", "") {
 		ids = append(ids, m.ID)
 	}
 	if len(ids) != 1 || ids[0] != "a/live" {
 		t.Fatalf("public visible = %v, want [a/live]", ids)
 	}
-	if _, ok := snap.Model("", "a/dark"); ok {
+	if _, ok := snap.Model("", "", "a/dark"); ok {
 		t.Fatal("a model whose providers are all disabled must not resolve")
 	}
-	if m, ok := snap.Model("o1", "a/dark"); !ok || m.OrgID != "o1" {
+	if m, ok := snap.Model("o1", "", "a/dark"); !ok || m.OrgID != "o1" {
 		t.Fatalf("org model with a live provider must resolve: %+v %v", m, ok)
 	}
-	if _, ok := snap.Model("o1", "a/ghost"); ok {
+	if _, ok := snap.Model("o1", "", "a/ghost"); ok {
 		t.Fatal("org model without a live provider must not resolve")
 	}
-	if n := len(snap.Visible("o1")); n != 2 {
+	if n := len(snap.Visible("o1", "")); n != 2 {
 		t.Fatalf("org o1 sees %d models, want 2 (a/dark own, a/live public)", n)
 	}
 }

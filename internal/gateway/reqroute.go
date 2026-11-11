@@ -77,7 +77,7 @@ func (g *Gateway) routeBody(p *principal, body []byte, endpoint string) ([]byte,
 	}
 	var ps *store.Preset
 	if slug != "" {
-		pr, ok := g.snap.Load().Presets[p.Org.ID+"|"+slug]
+		pr, ok := g.snap.Load().Preset(p.Org.ID, p.ws(), slug)
 		if !ok {
 			return nil, nil, errf(404, "invalid_request_error", "preset_not_found", "preset %q not found", slug)
 		}

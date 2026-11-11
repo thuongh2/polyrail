@@ -226,6 +226,9 @@ func (a *API) samlUser(ctx context.Context, id *store.Identity, email, name stri
 	case err == nil && hasMapped && m.Role != store.RoleOwner && m.Role != mapped:
 		err = a.S.SetMember(ctx, store.Member{OrgID: org, UserID: u.ID, Role: mapped})
 	}
+	if err == nil {
+		err = a.syncWorkspaces(ctx, id, u.ID, groups)
+	}
 	if err != nil {
 		slog.Error("saml membership", "err", err)
 		return nil, http.StatusInternalServerError, "internal error"
@@ -233,11 +236,12 @@ func (a *API) samlUser(ctx context.Context, id *store.Identity, email, name stri
 	return u, 0, ""
 }
 
-// mappedRole is the highest role among the group mappings that match groups (case-insensitive).
+// mappedRole is the highest org role among the group mappings that match groups
+// (case-insensitive). Mappings with a workspace set workspace roles instead (syncWorkspaces).
 func mappedRole(ms []store.GroupMapping, groups []string) (store.Role, bool) {
 	var best store.Role
 	for _, m := range ms {
-		if m.Role == "" {
+		if m.Role == "" || m.WorkspaceID != "" {
 			continue
 		}
 		if slices.ContainsFunc(groups, func(g string) bool { return strings.EqualFold(g, m.Group) }) && m.Role.Rank() > best.Rank() {

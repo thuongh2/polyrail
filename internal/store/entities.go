@@ -95,7 +95,8 @@ type APIKey struct {
 	ID            string     `json:"id"`
 	OrgID         string     `json:"org_id"`
 	Name          string     `json:"name"`
-	Prefix        string     `json:"prefix"` // first chars of the secret, for display
+	WorkspaceID   string     `json:"workspace_id,omitempty"` // "" = the default workspace (D31)
+	Prefix        string     `json:"prefix"`                 // first chars of the secret, for display
 	Hash          string     `json:"-"`
 	CreatedBy     string     `json:"created_by"`
 	RPM           int        `json:"rpm,omitempty"`
@@ -227,13 +228,17 @@ func (k ProviderKey) Redacted() ProviderKey {
 }
 
 type Provider struct {
-	ID             string        `json:"id"`
-	OrgID          string        `json:"org_id,omitempty"` // empty = public (platform) provider
-	Name           string        `json:"name"`
-	Type           string        `json:"type"` // Bifrost provider type: openai, anthropic, gemini, ...
-	BaseURL        string        `json:"base_url,omitempty"`
-	TimeoutSeconds int           `json:"timeout_seconds,omitempty"`
-	Keys           []ProviderKey `json:"keys"`
+	ID    string `json:"id"`
+	OrgID string `json:"org_id,omitempty"` // empty = public (platform) provider
+	// WorkspaceID scopes an org (BYOK) provider: only that workspace's keys and models use it
+	// unless SharedAcrossWorkspaces ("" = the default workspace, D31).
+	WorkspaceID            string        `json:"workspace_id,omitempty"`
+	SharedAcrossWorkspaces bool          `json:"shared_across_workspaces,omitempty"`
+	Name                   string        `json:"name"`
+	Type                   string        `json:"type"` // Bifrost provider type: openai, anthropic, gemini, ...
+	BaseURL                string        `json:"base_url,omitempty"`
+	TimeoutSeconds         int           `json:"timeout_seconds,omitempty"`
+	Keys                   []ProviderKey `json:"keys"`
 	// Proxy routes this provider's upstream calls through an HTTP(S) or SOCKS5 proxy; nil uses
 	// the gateway's global proxy (UPSTREAM_PROXY_URL) unless NoProxy is set.
 	Proxy   *ProviderProxy `json:"proxy,omitempty"`
@@ -293,6 +298,7 @@ type Target struct {
 type Model struct {
 	ID            string   `json:"id"` // public id, e.g. "openai/gpt-4o-mini"
 	OrgID         string   `json:"org_id,omitempty"`
+	WorkspaceID   string   `json:"workspace_id,omitempty"` // org models: only this workspace's keys see it ("" = default, D31)
 	Name          string   `json:"name"`
 	Description   string   `json:"description,omitempty"`
 	Kind          string   `json:"kind"` // one of ModelKinds
@@ -328,6 +334,7 @@ type RequestLog struct {
 	ID        string    `json:"id"`
 	OrgID     string    `json:"org_id"`
 	KeyID     string    `json:"key_id"`
+	Workspace string    `json:"workspace_id,omitempty"` // the key's workspace ("" = default)
 	Model     string    `json:"model"`
 	Provider  string    `json:"provider,omitempty"`
 	Upstream  string    `json:"upstream_model,omitempty"`
@@ -434,6 +441,9 @@ func (s *Store) CreateOrg(ctx context.Context, o *Org, ownerID string) error {
 		if err := putJSON(tx, "org/"+o.ID, o); err != nil {
 			return err
 		}
+		if err := putJSON(tx, wsKey(o.ID, DefaultWorkspace), defaultWorkspace(o.ID, o.CreatedAt)); err != nil {
+			return err
+		}
 		if ownerID == "" {
 			return nil
 		}
@@ -538,7 +548,7 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	if err := s.deleteOrgIdentity(ctx, id); err != nil {
 		return err
 	}
-	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id), traceExportPrefix(id), "policy/"+id+"/", presetKey(id, ""), contentPrefix(id), contentIndex+id) {
+	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id), traceExportPrefix(id), "policy/"+id+"/", presetKey(id, ""), "ws/"+id+"/", "wsmem/"+id+"/", contentPrefix(id), contentIndex+id) {
 		if err := s.DeletePrefix(ctx, p); err != nil {
 			return err
 		}
@@ -634,6 +644,9 @@ func (s *Store) SetMember(ctx context.Context, m Member) error {
 }
 
 func (s *Store) RemoveMember(ctx context.Context, orgID, userID string) error {
+	if err := s.removeUserWorkspaces(ctx, orgID, userID); err != nil {
+		return err
+	}
 	return s.update(ctx, func(tx Tx) error {
 		if err := tx.Delete("mem/" + orgID + "/" + userID); err != nil {
 			return err
@@ -846,6 +859,16 @@ func (s *Store) PutProvider(ctx context.Context, p *Provider) error {
 		}
 		return putJSON(tx, "prov/"+p.ID, p)
 	})
+}
+
+// UsableIn reports whether keys and models of workspace ws in org may use provider p: public
+// providers everywhere, org providers in their own workspace or, when shared, in every
+// workspace of their org.
+func (p Provider) UsableIn(org, ws string) bool {
+	if p.OrgID == "" {
+		return true
+	}
+	return p.OrgID == org && (p.SharedAcrossWorkspaces || WSID(p.WorkspaceID) == WSID(ws))
 }
 
 func proxyOf(p *Provider) ProviderProxy {
@@ -1087,6 +1110,9 @@ func (s *Store) PutModel(ctx context.Context, m *Model) error {
 			}
 			if p.OrgID != m.OrgID { // public models use public providers; org models use the org's own
 				return fmt.Errorf("%w: target provider %q not found", ErrInvalid, t.ProviderID)
+			}
+			if !p.UsableIn(m.OrgID, m.WorkspaceID) {
+				return fmt.Errorf("%w: target provider %q is in another workspace and not shared", ErrInvalid, t.ProviderID)
 			}
 		}
 		return putJSON(tx, modelKey(m.OrgID, m.ID), m)

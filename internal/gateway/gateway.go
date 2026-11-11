@@ -117,6 +117,9 @@ type principal struct {
 	content  *contentCapture  // opt-in content logging (content.go); nil when off
 }
 
+// ws is the stored id of the key's workspace ("" = default, D31).
+func (p *principal) ws() string { return store.WSID(p.Key.WorkspaceID) }
+
 // HashKey is how API key secrets are stored and looked up.
 func HashKey(secret string) string {
 	h := sha256.Sum256([]byte(secret))
@@ -375,7 +378,7 @@ func (g *Gateway) admit(ctx context.Context, p *principal) *apiError {
 // resolve finds the model and plans its targets; affinity yields the cache-affinity key (may be nil).
 func (g *Gateway) resolve(p *principal, id, kind string, affinity func() string) (store.Model, []store.Target, *apiError) {
 	snap := g.snap.Load()
-	m, ok := snap.Model(p.Org.ID, id)
+	m, ok := snap.Model(p.Org.ID, p.ws(), id)
 	if !ok {
 		return m, nil, errf(404, "invalid_request_error", "model_not_found", "model %q not found", id)
 	}
@@ -388,7 +391,10 @@ func (g *Gateway) resolve(p *principal, id, kind string, affinity func() string)
 	if m.Kind != kind {
 		return m, nil, errf(400, "invalid_request_error", "wrong_model_kind", "model %q is a %s model", id, m.Kind)
 	}
-	ts, e := g.policyTargets(p, snap, m, plan(m, snap, g.rt, affinity))
+	ts := slices.DeleteFunc(plan(m, snap, g.rt, affinity), func(t store.Target) bool {
+		return !snap.Providers[t.ProviderID].UsableIn(p.Org.ID, p.ws()) // BYOK of another workspace (D31)
+	})
+	ts, e := g.policyTargets(p, snap, m, ts)
 	if e != nil {
 		return m, nil, e
 	}
@@ -461,7 +467,7 @@ func cost(m store.Model, in, out int) int64 {
 
 // record bills and logs one request and returns the micros billed.
 func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start time.Time) int64 {
-	l.ID, l.OrgID, l.KeyID, l.Model, l.At = store.NewID(), p.Org.ID, p.Key.ID, m.ID, start.UTC()
+	l.ID, l.OrgID, l.KeyID, l.Workspace, l.Model, l.At = store.NewID(), p.Org.ID, p.Key.ID, p.ws(), m.ID, start.UTC()
 	if l.KBChunks == 0 {
 		l.KBChunks = p.kbChunks
 	}
@@ -883,7 +889,7 @@ func (g *Gateway) Models(w http.ResponseWriter, r *http.Request) {
 	}
 	data := []ModelInfo{}
 	snap := g.snap.Load()
-	for _, m := range snap.Visible(p.Org.ID) {
+	for _, m := range snap.Visible(p.Org.ID, p.ws()) {
 		if (len(p.Key.Models) == 0 || slices.Contains(p.Key.Models, m.ID)) && p.pol.AllowModel(m.ID) {
 			data = append(data, snap.Info(m))
 		}

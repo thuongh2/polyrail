@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/polyrail/polyrail/internal/store"
@@ -12,24 +13,27 @@ import (
 // Guardrail policies (D26): org-scoped, managed by admins; members read the effective policy of
 // their own keys.
 func (a *API) registerPolicies(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/orgs/{org}/policies", a.org(store.RoleAdmin, a.listPolicies))
-	mux.HandleFunc("POST /api/orgs/{org}/policies", a.org(store.RoleAdmin, a.putPolicy))
-	mux.HandleFunc("GET /api/orgs/{org}/policies/{pid}", a.org(store.RoleAdmin, a.getPolicy))
-	mux.HandleFunc("PUT /api/orgs/{org}/policies/{pid}", a.org(store.RoleAdmin, a.putPolicy))
-	mux.HandleFunc("DELETE /api/orgs/{org}/policies/{pid}", a.org(store.RoleAdmin, a.deletePolicy))
-	mux.HandleFunc("GET /api/orgs/{org}/keys/{id}/effective-policy", a.org(store.RoleViewer, a.effectivePolicy))
+	// workspace admins manage their workspace's policies (D31); org defaults need an org admin
+	mux.HandleFunc("GET /api/orgs/{org}/policies", a.ws(a.listPolicies))
+	mux.HandleFunc("POST /api/orgs/{org}/policies", a.ws(a.putPolicy))
+	mux.HandleFunc("GET /api/orgs/{org}/policies/{pid}", a.ws(a.getPolicy))
+	mux.HandleFunc("PUT /api/orgs/{org}/policies/{pid}", a.ws(a.putPolicy))
+	mux.HandleFunc("DELETE /api/orgs/{org}/policies/{pid}", a.ws(a.deletePolicy))
+	mux.HandleFunc("GET /api/orgs/{org}/keys/{id}/effective-policy", a.ws(a.effectivePolicy))
 }
 
 // policyInput is store.Policy as the API takes it: the budget limit in USD (or micro-USD).
 type policyInput struct {
-	Name              string   `json:"name"`
-	Description       string   `json:"description"`
-	IsOrgDefault      bool     `json:"is_org_default"`
-	MemberIDs         []string `json:"member_ids"`
-	KeyIDs            []string `json:"key_ids"`
-	OptedOutMemberIDs []string `json:"opted_out_member_ids"`
-	OptedOutKeyIDs    []string `json:"opted_out_key_ids"`
-	Budget            *struct {
+	Name               string   `json:"name"`
+	Description        string   `json:"description"`
+	IsOrgDefault       bool     `json:"is_org_default"`
+	WorkspaceID        string   `json:"workspace_id"`
+	IsWorkspaceDefault bool     `json:"is_workspace_default"`
+	MemberIDs          []string `json:"member_ids"`
+	KeyIDs             []string `json:"key_ids"`
+	OptedOutMemberIDs  []string `json:"opted_out_member_ids"`
+	OptedOutKeyIDs     []string `json:"opted_out_key_ids"`
+	Budget             *struct {
 		LimitUSD    *float64 `json:"limit_usd"`
 		LimitMicros *int64   `json:"limit_micros"`
 		Interval    string   `json:"interval"`
@@ -49,6 +53,12 @@ func (a *API) listPolicies(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	show, err := a.wsFilter(r, store.RoleAdmin)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	ps = slices.DeleteFunc(ps, func(p store.Policy) bool { return !show(p.WorkspaceID) })
 	if ps == nil {
 		ps = []store.Policy{}
 	}
@@ -57,6 +67,9 @@ func (a *API) listPolicies(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) getPolicy(w http.ResponseWriter, r *http.Request) {
 	p, err := a.S.GetPolicy(r.Context(), r.PathValue("org"), r.PathValue("pid"))
+	if err == nil {
+		err = a.wsCan(r, p.WorkspaceID, store.RoleAdmin)
+	}
 	if err != nil {
 		fail(w, err)
 		return
@@ -75,7 +88,11 @@ func (a *API) putPolicy(w http.ResponseWriter, r *http.Request) {
 	p := &store.Policy{ID: id, OrgID: org, Name: in.Name, Description: in.Description, IsOrgDefault: in.IsOrgDefault,
 		MemberIDs: in.MemberIDs, KeyIDs: in.KeyIDs, OptedOutMemberIDs: in.OptedOutMemberIDs, OptedOutKeyIDs: in.OptedOutKeyIDs,
 		AllowedModels: in.AllowedModels, AllowedProviders: in.AllowedProviders, Filters: in.Filters, RequireZDR: in.RequireZDR,
-		DenyDataCollection: in.DenyDataCollection, AllowedRegions: in.AllowedRegions}
+		DenyDataCollection: in.DenyDataCollection, AllowedRegions: in.AllowedRegions, IsWorkspaceDefault: in.IsWorkspaceDefault}
+	if err := a.policyWS(r, p, in.WorkspaceID); err != nil {
+		fail(w, err)
+		return
+	}
 	if b := in.Budget; b != nil {
 		if (b.LimitUSD == nil) == (b.LimitMicros == nil) {
 			fail(w, fmt.Errorf("%w: budget needs one of limit_usd or limit_micros", store.ErrInvalid))
@@ -128,9 +145,12 @@ func (a *API) checkAssignees(r *http.Request, p *store.Policy) error {
 			return fmt.Errorf("%w: %q is not a member of this organization", store.ErrInvalid, id)
 		}
 	}
+	for _, k := range ks {
+		keys[k.ID] = store.WSID(k.WorkspaceID) == store.WSID(p.WorkspaceID) || p.IsOrgDefault
+	}
 	for _, id := range append(append([]string{}, p.KeyIDs...), p.OptedOutKeyIDs...) {
 		if !keys[id] {
-			return fmt.Errorf("%w: %q is not an API key of this organization", store.ErrInvalid, id)
+			return fmt.Errorf("%w: %q is not an API key of this policy's workspace", store.ErrInvalid, id)
 		}
 	}
 	return nil
@@ -138,6 +158,17 @@ func (a *API) checkAssignees(r *http.Request, p *store.Policy) error {
 
 func (a *API) deletePolicy(w http.ResponseWriter, r *http.Request) {
 	org, id := r.PathValue("org"), r.PathValue("pid")
+	p, err := a.S.GetPolicy(r.Context(), org, id)
+	if err == nil {
+		err = a.wsCan(r, p.WorkspaceID, store.RoleAdmin)
+	}
+	if err == nil && p.IsOrgDefault && !orgWide(r) {
+		err = errForbidden
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	if err := a.S.DeletePolicy(r.Context(), org, id); err != nil {
 		fail(w, err)
 		return
@@ -151,11 +182,14 @@ func (a *API) deletePolicy(w http.ResponseWriter, r *http.Request) {
 // Members and viewers see only keys they created (404 otherwise, like a missing key).
 func (a *API) effectivePolicy(w http.ResponseWriter, r *http.Request) {
 	k, err := a.S.GetKey(r.Context(), r.PathValue("org"), r.PathValue("id"))
+	if err == nil {
+		err = a.wsCan(r, k.WorkspaceID, store.RoleViewer)
+	}
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	if role(r).Rank() < store.RoleAdmin.Rank() && k.CreatedBy != user(r).ID {
+	if a.wsCan(r, k.WorkspaceID, store.RoleAdmin) != nil && k.CreatedBy != user(r).ID {
 		fail(w, store.ErrNotFound)
 		return
 	}
@@ -165,6 +199,42 @@ func (a *API) effectivePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, ep)
+}
+
+// policyWS sets policy p's workspace (create: from input; update: the stored one) and checks the
+// caller is its workspace admin. Org default policies are org-level: default workspace, org
+// admins only; a workspace default cannot also be the org default.
+func (a *API) policyWS(r *http.Request, p *store.Policy, in string) error {
+	var err error
+	old, gerr := a.S.GetPolicy(r.Context(), p.OrgID, p.ID)
+	switch {
+	case p.ID != "" && gerr != nil:
+		return gerr
+	case p.ID != "":
+		if err = a.wsCan(r, old.WorkspaceID, store.RoleAdmin); err == nil {
+			p.WorkspaceID, err = a.keepWS(r, old.WorkspaceID, in)
+		}
+		if err == nil && old.IsOrgDefault != p.IsOrgDefault && !orgWide(r) {
+			err = errForbidden
+		}
+		if err == nil && old.IsOrgDefault && !orgWide(r) {
+			err = errForbidden
+		}
+	default:
+		if p.WorkspaceID, err = a.resolveWS(r, in); err == nil {
+			err = a.wsCan(r, p.WorkspaceID, store.RoleAdmin)
+		}
+		if err == nil && p.IsOrgDefault && !orgWide(r) {
+			err = errForbidden
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if p.IsOrgDefault && (p.WorkspaceID != "" || p.IsWorkspaceDefault) {
+		return fmt.Errorf("%w: an org default policy belongs to the default workspace and is not also a workspace default", store.ErrInvalid)
+	}
+	return nil
 }
 
 var rePrivacyRegion = regexp.MustCompile(`^[a-z0-9-]{0,32}$`)

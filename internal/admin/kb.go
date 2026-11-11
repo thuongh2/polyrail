@@ -36,6 +36,16 @@ func (a *API) kb(h http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusNotFound, "knowledge bases are not enabled")
 			return
 		}
+		if id := r.PathValue("kb"); id != "" { // only KBs of workspaces the caller is in (D31)
+			k, err := a.G.KB.GetKB(r.Context(), r.PathValue("org"), id)
+			if err == nil {
+				err = a.wsCan(r, k.WorkspaceID, store.RoleViewer)
+			}
+			if err != nil {
+				kbFail(w, err)
+				return
+			}
+		}
 		h(w, r)
 	}
 }
@@ -66,6 +76,7 @@ type kbInput struct {
 	TopK             *int     `json:"top_k"`
 	MinScore         *float64 `json:"min_score"`
 	MaxContextTokens *int     `json:"max_context_tokens"`
+	WorkspaceID      string   `json:"workspace_id"` // create only ("" = default workspace)
 }
 
 func (in kbInput) apply(k *store.KB) {
@@ -93,9 +104,9 @@ func (in kbInput) apply(k *store.KB) {
 	}
 }
 
-// checkEmbedModel requires an enabled embedding model visible to the org.
-func (a *API) checkEmbedModel(org, id string) error {
-	m, ok := a.G.Snapshot().Model(org, id)
+// checkEmbedModel requires an enabled embedding model visible to workspace ws of the org.
+func (a *API) checkEmbedModel(org, ws, id string) error {
+	m, ok := a.G.Snapshot().Model(org, ws, id)
 	if !ok {
 		return fmt.Errorf("%w: embedding model %q not found", store.ErrInvalid, id)
 	}
@@ -111,6 +122,12 @@ func (a *API) listKBs(w http.ResponseWriter, r *http.Request) {
 		kbFail(w, err)
 		return
 	}
+	show, err := a.wsFilter(r, store.RoleViewer)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	ks = slices.DeleteFunc(ks, func(k store.KB) bool { return !show(k.WorkspaceID) })
 	writeJSON(w, 200, ks)
 }
 
@@ -120,9 +137,14 @@ func (a *API) createKB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := r.PathValue("org")
-	k := &store.KB{OrgID: org}
+	ws, err := a.resolveWS(r, in.WorkspaceID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	k := &store.KB{OrgID: org, WorkspaceID: ws}
 	in.apply(k)
-	if err := a.checkEmbedModel(org, k.EmbedModel); err != nil {
+	if err := a.checkEmbedModel(org, ws, k.EmbedModel); err != nil {
 		kbFail(w, err)
 		return
 	}
@@ -149,8 +171,15 @@ func (a *API) patchKB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org, id := r.PathValue("org"), r.PathValue("kb")
-	if in.EmbedModel != nil {
-		if err := a.checkEmbedModel(org, *in.EmbedModel); err != nil {
+	if in.EmbedModel != nil || in.WorkspaceID != "" {
+		cur, err := a.G.KB.GetKB(r.Context(), org, id)
+		if err == nil {
+			_, err = a.keepWS(r, cur.WorkspaceID, in.WorkspaceID)
+		}
+		if err == nil && in.EmbedModel != nil {
+			err = a.checkEmbedModel(org, cur.WorkspaceID, *in.EmbedModel)
+		}
+		if err != nil {
 			kbFail(w, err)
 			return
 		}
@@ -281,8 +310,9 @@ func (a *API) deleteKBDoc(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// checkKBIDs validates a key's kb_ids: distinct KBs of the org, at most kb.MaxKBsPerRequest.
-func (a *API) checkKBIDs(r *http.Request, org string, ids []string) ([]string, error) {
+// checkKBIDs validates a key's kb_ids: distinct KBs of the key's workspace ws, at most
+// kb.MaxKBsPerRequest.
+func (a *API) checkKBIDs(r *http.Request, org, ws string, ids []string) ([]string, error) {
 	var out []string
 	for _, id := range ids {
 		if !slices.Contains(out, id) {
@@ -296,26 +326,28 @@ func (a *API) checkKBIDs(r *http.Request, org string, ids []string) ([]string, e
 		return nil, fmt.Errorf("%w: knowledge bases are not enabled", store.ErrInvalid)
 	}
 	for _, id := range out {
-		if _, err := a.G.KB.GetKB(r.Context(), org, id); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return nil, fmt.Errorf("%w: knowledge base %q not found", store.ErrInvalid, id)
-			}
+		k, err := a.G.KB.GetKB(r.Context(), org, id)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && store.WSID(k.WorkspaceID) != ws) {
+			return nil, fmt.Errorf("%w: knowledge base %q not found in the key's workspace", store.ErrInvalid, id)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
 }
 
-// keyKBs validates kb_ids of a key create/update (admins only); false means the error was written.
-func (a *API) keyKBs(w http.ResponseWriter, r *http.Request, in *keyInput) bool {
+// keyKBs validates kb_ids of a key create/update in workspace ws (workspace admins only); false
+// means the error was written.
+func (a *API) keyKBs(w http.ResponseWriter, r *http.Request, in *keyInput, ws string) bool {
 	if in.KBIDs == nil {
 		return true
 	}
-	if role(r).Rank() < store.RoleAdmin.Rank() {
-		fail(w, errForbidden)
+	if err := a.wsCan(r, ws, store.RoleAdmin); err != nil {
+		fail(w, err)
 		return false
 	}
-	ids, err := a.checkKBIDs(r, r.PathValue("org"), *in.KBIDs)
+	ids, err := a.checkKBIDs(r, r.PathValue("org"), ws, *in.KBIDs)
 	if err != nil {
 		fail(w, err)
 		return false

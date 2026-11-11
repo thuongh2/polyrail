@@ -95,6 +95,16 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
   URL + SSRF), TestSSOEnforcementAndDiscovery, TestSCIMProvisioning (Okta + Entra payloads),
   store TestDomainClaimIsExclusive, TestIdentitySecretsSealed. Binary 69.8 → 71.8 MB.
 
+- [x] W3 workspaces (D31): `store.Workspace` + default workspace `default` (legacy rows = default,
+  no migration), workspace members/roles, `workspace_id` on keys, BYOK providers
+  (`shared_across_workspaces`), private models, policies (`is_workspace_default` → workspace
+  budget), presets, trace exports, KBs, request logs and limited management tokens;
+  `/api/orgs/{org}/workspaces` CRUD + members, `?workspace=` on lists/usage/logs/CSV,
+  `group=workspace`, 409-with-counts delete, IdP group → workspace role, `/me` workspaces. Backend
+  only; UI pending. Tests: TestWorkspacesLegacyDefaultAndLifecycle, TestWorkspaceIsolation,
+  TestWorkspaceBudget, TestWorkspacesRoleMatrixAndIsolation, TestMgmtTokenLimitedToWorkspace,
+  TestSCIMGroupMappingAddsWorkspaceMember, TestSAMLLogin (workspace mapping), TestExportWorkspaceFilter.
+
 ## Next (not started)
 - OIDC test against a mock IdP; live MCP server test.
 - Payment integration for credits (Stripe), email verification for sign-up.
@@ -122,3 +132,4 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
 - 2026-11-11 W2-F (D30): data regions (`store.NormalizeRegion`, policy `allowed_regions`, `REGION_LOCK`) and trace export (`internal/broadcast`: hand-rolled OTLP/HTTP JSON; OTel SDK measured at +7.5 MB / 180 packages and rejected; Langfuse via `/api/public/otel`; `/api/orgs/{org}/trace-exports` + `/api/admin/trace-exports` CRUD + test; `TRACE_QUEUE`). gofmt, vet, `go test -race ./...` green incl. Postgres and Redis.
 
 - 2026-11-11 W2-E enterprise identity (D29): domains (DNS TXT, one org per domain), per-org SAML SSO (crewjam/saml v0.6.3), enforced SSO + operator break-glass, `GET /api/auth/sso`, SCIM 2.0 (elimity-com/scim) with group → role mappings and credential-revoking deprovision. gofmt clean, `go vet ./...`, `go test -race ./...` green incl. Postgres and Redis; binary +2.0 MB.
+- 2026-11-11 W3 workspaces (D31): default workspace `default` per org, scoped keys / BYOK providers / private models / policies / presets / trace exports / KBs, workspace roles, workspace budgets, limited management tokens, IdP workspace mappings, usage/logs by workspace. gofmt clean, `go vet ./...` clean, `go test -race -count=1 ./...` green incl. Postgres and Redis.

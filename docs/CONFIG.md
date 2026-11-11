@@ -24,12 +24,13 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `UPSTREAM_PROXY_POOL` | – | Default proxy pool (id or name, Platform → Proxies) for every provider without its own proxy or pool; wins over `UPSTREAM_PROXY_URL`. `UPSTREAM_NO_PROXY` applies to it. A name that matches no pool fails closed (calls refused) until the pool exists. |
 | `PROXY_HEALTH_INTERVAL` | `10m` | How often each enabled pool member gets a TCP probe (2 s timeout). `0` turns probes off; a down member then comes back only via a pool test. |
 | `ALLOW_TENANT_PROXY` | `false` | Let org admins set a proxy on their own providers. The proxy host must be public unless `ALLOW_PRIVATE_PROVIDER_URLS`. |
-| `LOG_RETENTION_DAYS` | `14` | Request logs older than this are deleted (usage rollups are kept). Public provider health counters are kept 30 days (fixed). |
+| `LOG_RETENTION_DAYS` | `14` | Request logs older than this are deleted (usage rollups are kept). Public provider health counters and per-key hourly stats (`keystat/`) are kept 30 days (fixed); stats of deleted keys and providers expire with them. |
 | `RESPONSE_CACHE_MB` | `64` | Memory for the opt-in response cache. `0` disables it. |
 | `MAX_BODY_MB` | `8` | Largest accepted API request body. |
 | `PROVIDER_CONCURRENCY` | `64` | Concurrent upstream requests per provider (Bifrost workers). |
 | `PROVIDER_BUFFER` | `256` | Queued requests per provider before callers wait. |
 | `WEBHOOK_QUEUE` | `1000` | Webhook events buffered before new events are dropped (`gateway_webhook_deliveries_total{result="dropped"}`). |
+| `ALERT_QUEUE` | `1000` | Alert channel events buffered before new events are dropped (`gateway_alert_sends_total{result="dropped"}`); 2 sender goroutines. |
 | `KB_WORKERS` | `1` | Knowledge-base ingestion goroutines per node (chunk + embed queued documents). |
 | `KB_INDEX_MB` | `256` | Memory for in-memory KB search indexes per node (LRU across KBs; ~1.6 KB per 512-dim chunk). |
 | `KB_MAX_ORG_CHUNKS` | `300000` | Chunks one org may store across its knowledge bases. |
@@ -63,3 +64,9 @@ ids as model names (`model="vendor/name"`).
 
 Response headers: `x-gateway-provider` (provider that served), `x-gateway-request-id`, `x-gateway-cache-hit`,
 and on grounded requests `X-GW-KB` (KBs used, `empty` or `error`) and `X-GW-KB-Sources` (`doc#chunk` list).
+
+## Build tags
+
+| Tag | Effect |
+|---|---|
+| `alertsfull` | Adds the `smtp://` (email) and `generic://` (any HTTP endpoint) alert channel services: `go build -tags alertsfull ./cmd/polyrail`. Off by default: their payload templates use Go's `text/template`, which keeps the linker from dropping unused methods (measured on linux/amd64: stripped binary 48.9 → 65.1 MB, idle RSS about +5 MB). The other services (Telegram, Discord, Slack, Teams, Google Chat, Pushover, ntfy, Gotify, Matrix, Mattermost) add about 0.7 MB. |

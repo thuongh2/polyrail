@@ -86,14 +86,15 @@ func (g *Gateway) embed(ctx context.Context, p *principal, model string, dims in
 		breq.Params = &schemas.EmbeddingParameters{Dimensions: &dims}
 	}
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
-	resp, berr := g.BF.EmbeddingRequest(schemas.NewBifrostContext(ctx, schemas.NoDeadline), breq)
+	bctx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+	resp, berr := g.BF.EmbeddingRequest(bctx, breq)
 	if berr != nil {
 		ae := fromBifrost(berr, true) // never an upstream body: doc errors are shown to tenants
-		g.settleErr(snap, em, ts, berr, start)
+		g.settleErr(bctx, snap, em, ts, berr, start)
 		g.record(&q, em, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 		return nil, fmt.Errorf("%w: %s", errEmbed, ae.msg)
 	}
-	l := store.RequestLog{Status: 200, Provider: g.settle(snap, em, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0), Upstream: resp.ExtraFields.RoutingInfo.Model}
+	l := store.RequestLog{Status: 200, Provider: g.settle(bctx, snap, em, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0, 0), Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil {
 		l.InTokens = resp.Usage.PromptTokens
 	}

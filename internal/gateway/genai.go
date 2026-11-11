@@ -116,11 +116,11 @@ func (g *Gateway) genaiGenerate(w http.ResponseWriter, r *http.Request, p *princ
 	if stream {
 		ch, berr := g.BF.ResponsesStreamRequest(bctx, breq)
 		if berr != nil {
-			g.upstreamFailed(w, snap, p, m, ts, berr, start)
+			g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 			return
 		}
 		state := gemini.NewBifrostToGeminiStreamState()
-		g.pump(w, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
+		g.pump(w, bctx, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
 			ev := c.BifrostResponsesStreamResponse
 			if ev == nil {
 				return "", sseFrames{}, "", nil // always frames: Gemini streams end without [DONE]
@@ -142,14 +142,14 @@ func (g *Gateway) genaiGenerate(w http.ResponseWriter, r *http.Request, p *princ
 	}
 	resp, berr := g.BF.ResponsesRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
 	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
 	}
-	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
+	l.Provider = g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
 	g.record(p, m, l, start)
 	out := gemini.ToGeminiResponsesResponse(resp)
 	out.ModelVersion = m.ID
@@ -231,14 +231,14 @@ func (g *Gateway) genaiEmbed(w http.ResponseWriter, r *http.Request, p *principa
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.EmbeddingRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
 	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil {
 		l.InTokens = resp.Usage.PromptTokens
 	}
-	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
+	l.Provider = g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0, 0)
 	g.record(p, m, l, start)
 	if batch {
 		writeJSONHidden(w, l.Provider, gemini.ToGeminiEmbeddingResponse(resp))

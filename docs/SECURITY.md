@@ -323,3 +323,39 @@ are off by default and checked public at save and per request.
 | L23 | low | Any key of the org may ground on, list and search any org KB (`X-GW-KB` overrides `kb_ids`), and KB embeddings ignore the key's model allowlist (the model is a KB setting; usage is billed to the key). | Accepted (documented design, docs/KB.md §4–5); `kb_ids` is a default, not an allowlist. |
 | L24 | low | The per-org queued-doc cap (200) is counted outside the insert transaction, so concurrent adds can overshoot it slightly; the KB count cap (20) likewise. | Accepted (bounded by request concurrency). |
 | L25 | low | A pinned tenant proxy address lives as long as the provider's client; a legitimate proxy that changes address needs a provider save or restart. | Accepted (`shortcut` in `pinProxyURL`). |
+
+## Provider keys and alert channels (2026-11-11, D25, developer notes for review)
+
+- **Key values stay sealed.** The key list decrypts values only to mask them (first 4 + `****` +
+  last 4; under 12 characters: `****`); responses, audit details and alert messages carry ids, names
+  and masked values only. Bulk-add dedupe decrypts the provider's stored values inside the store
+  transaction and compares SHA-256 hashes; no hash is persisted. `UpdateProviderKeys` drops any
+  plaintext a caller sets, so key metadata edits cannot re-seal or leak secrets.
+- **Scope.** Org key routes need the admin role and check `provider.org_id == {org}`; platform routes
+  need an operator and only reach platform providers. Another scope's provider is 404 (also for
+  test, stats, patch, delete and bulk). [TestProviderKeysTenantScope]
+- **Pinned test.** The test sends one request with Bifrost's direct-key context value (the same
+  mechanism async jobs use), so it reaches only that key. Org provider hosts are re-checked at test
+  time (`tenantReachable`); org admins see `upstream provider returned an error (status N)`, never
+  upstream text (SSRF read-back), operators the upstream message with key-like strings redacted.
+  Bulk tests are capped at 100 ids, 8 concurrent, 30 s each.
+- **Status cannot dodge provider limits.** A cooldown only takes a failing key out of this node's
+  rotation among the operator's own keys; it follows the upstream Retry-After (capped 5 min) and
+  never retries a request on another key beyond what Bifrost already does for a key failure.
+  Manually disabled keys are never used, even when every other key is out.
+- **Alert URLs are credentials.** Channel URLs (bot tokens, webhook paths, SMTP passwords) are sealed
+  at rest, `json:"-"`, never returned or audited (audit records the service name), and errors from
+  URL validation never quote the URL. Tenant test failures show a generic message; operators see the
+  service's error.
+- **Alert SSRF.** Org channels may use only vendor-hosted services (Telegram, Discord, Slack, Teams,
+  Google Chat, Pushover, ntfy.sh); custom-host services need `ALLOW_PRIVATE_PROVIDER_URLS` and a
+  public host at save time. Every org channel send uses `PublicDialer` (dial-time private-address
+  block, no proxy, no redirects), so a host-bearing URL parameter (e.g. Teams `host=`, Google Chat's
+  host) or DNS rebinding cannot reach internal addresses. Platform channels may use private hosts,
+  like operator providers. Shoutrrr's own router (which imports XMPP/MQTT clients) is not used; the
+  gateway builds only the listed services.
+- **Abuse bounds.** Events are deduped per (org, type, subject) for 10 minutes before queueing; the
+  queue is bounded (`ALERT_QUEUE`) with a per-org share; channels auto-disable after 10 consecutive
+  failures; at most 20 channels per scope.
+[TestProviderKeysAPI, TestAlertChannelsCRUDSecretsAndTest, TestAlertTenantCustomHostWithPrivateURLsAllowed,
+TestCheckURLTenantServices, TestSendNtfyHTTP, TestDispatcherDedupeScopeAndAutoDisable, TestAlertURLSealedAndOrgDelete]

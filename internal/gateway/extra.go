@@ -75,9 +75,9 @@ func (g *Gateway) guardIn(w http.ResponseWriter, p *principal, m store.Model, in
 }
 
 // upstreamFailed settles, records and writes a Bifrost error.
-func (g *Gateway) upstreamFailed(w http.ResponseWriter, snap *Snapshot, p *principal, m store.Model, ts []store.Target, berr *schemas.BifrostError, start time.Time) {
+func (g *Gateway) upstreamFailed(w http.ResponseWriter, bctx *schemas.BifrostContext, snap *Snapshot, p *principal, m store.Model, ts []store.Target, berr *schemas.BifrostError, start time.Time) {
 	ae := fromBifrost(berr, m.OrgID != "")
-	g.settleErr(snap, m, ts, berr, start)
+	g.settleErr(bctx, snap, m, ts, berr, start)
 	g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
 	writeError(w, ae)
 }
@@ -150,10 +150,10 @@ func (g *Gateway) Speech(w http.ResponseWriter, r *http.Request) {
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.SpeechRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
-	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
+	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0, 0)
 	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil && resp.Usage.InputTokens > 0 {
 		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
@@ -219,10 +219,10 @@ func (g *Gateway) Transcriptions(w http.ResponseWriter, r *http.Request) {
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.TranscriptionRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
-	provName := g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)
+	provName := g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0, 0)
 	l := store.RequestLog{Status: 200, Provider: provName, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	l.InTokens, l.OutTokens, l.Cost = transcriptionUsage(m, resp)
 	g.record(p, m, l, start)
@@ -305,10 +305,10 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 	if req.Stream != nil && *req.Stream {
 		ch, berr := g.BF.TextCompletionStreamRequest(bctx, breq)
 		if berr != nil {
-			g.upstreamFailed(w, snap, p, m, ts, berr, start)
+			g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 			return
 		}
-		g.pump(w, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
+		g.pump(w, bctx, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
 			t := c.BifrostTextCompletionResponse
 			if t == nil {
 				return "", nil, "", nil
@@ -324,14 +324,14 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, berr := g.BF.TextCompletionRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
 	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	}
-	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
+	l.Provider = g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
 	setCost(w, g.record(p, m, l, start))
 	resp.Model = m.ID
 	writeJSONHidden(w, l.Provider, resp)
@@ -371,10 +371,10 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 	if req.Stream != nil && *req.Stream {
 		ch, berr := g.BF.ResponsesStreamRequest(bctx, breq)
 		if berr != nil {
-			g.upstreamFailed(w, snap, p, m, ts, berr, start)
+			g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 			return
 		}
-		g.pump(w, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
+		g.pump(w, bctx, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
 			ev := c.BifrostResponsesStreamResponse
 			if ev == nil {
 				return "", nil, "", nil
@@ -392,14 +392,14 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, berr := g.BF.ResponsesRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
 	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
 	}
-	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
+	l.Provider = g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
 	setCost(w, g.record(p, m, l, start))
 	resp.Model = m.ID
 	writeJSONHidden(w, l.Provider, resp)
@@ -462,7 +462,7 @@ type usagePair struct{ in, out int }
 
 // pump writes a Bifrost stream as server-sent events. conv maps one chunk to (event name or "",
 // payload, serving provider, usage if present); a nil payload skips the chunk.
-func (g *Gateway) pump(w http.ResponseWriter, snap *Snapshot, p *principal, m store.Model, ts []store.Target, ch chan *schemas.BifrostStreamChunk, start time.Time,
+func (g *Gateway) pump(w http.ResponseWriter, bctx *schemas.BifrostContext, snap *Snapshot, p *principal, m store.Model, ts []store.Target, ch chan *schemas.BifrostStreamChunk, start time.Time,
 	conv func(*schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair)) {
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -521,6 +521,6 @@ func (g *Gateway) pump(w http.ResponseWriter, snap *Snapshot, p *principal, m st
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 		_ = rc.Flush()
 	}
-	l.Provider = g.settle(snap, m, ts, served, targetFault(l.Status), start, l.OutTokens)
+	l.Provider = g.settle(bctx, snap, m, ts, served, targetFault(l.Status), start, l.InTokens, l.OutTokens)
 	g.record(p, m, l, start)
 }

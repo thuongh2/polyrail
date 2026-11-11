@@ -253,4 +253,6 @@ Design in docs/KEYS.md: per-key status (available / cooldown / quarantined / dis
 hourly stats on the AddAgg pipeline, bulk add/test/enable APIs, and alert channels through
 `github.com/nicholas-fedor/shoutrrr` (one URL per channel: Telegram, Discord, Slack, Teams, email,
 ntfy, …) instead of hand-written integrations. Cooldown only stops sending to a failing key; it is
-not used to rotate around provider limits.
+not used to rotate around provider limits. Implementation ruling: the gateway builds shoutrrr
+services directly (not its router, which imports XMPP/MQTT clients); `smtp` and `generic` are behind
+`-tags alertsfull` because their `text/template` use costs +16 MB of binary (CONFIG.md).

@@ -20,6 +20,7 @@ type Snapshot struct {
 	Models    map[string]store.Model    // by owner + "|" + model id ("_" = public)
 	Pools     []store.ProxyPool         // operator proxy pools (member passwords decrypted)
 	byBifrost map[schemas.ModelProvider]string
+	keyOwner  map[string]string // provider key id -> provider id (loaded providers)
 }
 
 // MultiInstance reports whether many providers of this type can coexist (public and per-org):
@@ -90,7 +91,7 @@ func loadSnapshot(ctx context.Context, s *store.Store) (*Snapshot, error) {
 		return nil, err
 	}
 	snap := &Snapshot{Version: ver, Providers: map[string]store.Provider{}, Models: map[string]store.Model{},
-		Pools: pools, byBifrost: map[schemas.ModelProvider]string{}}
+		Pools: pools, byBifrost: map[schemas.ModelProvider]string{}, keyOwner: map[string]string{}}
 	sort.Slice(ps, func(i, j int) bool { return ps[i].CreatedAt.Before(ps[j].CreatedAt) })
 	for _, p := range ps {
 		if !p.Enabled {
@@ -102,6 +103,9 @@ func loadSnapshot(ctx context.Context, s *store.Store) (*Snapshot, error) {
 		}
 		snap.byBifrost[k] = p.ID
 		snap.Providers[p.ID] = p
+		for _, pk := range p.Keys {
+			snap.keyOwner[pk.ID] = p.ID
+		}
 	}
 	for _, m := range ms {
 		owner := m.OrgID
@@ -163,6 +167,10 @@ type account struct {
 	tenantProxy  bool // AllowTenantProxy: org providers' own proxy settings apply
 	pools        *poolForwarder
 	poolNoProxy  string // UPSTREAM_NO_PROXY, for the global pool
+	// keys filters out unavailable keys (nil: no status filtering, for pinned-key lookups);
+	// unavailable is called when a provider has no available key.
+	keys        *keyHealth
+	unavailable func(store.Provider)
 }
 
 func (a *account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
@@ -183,6 +191,13 @@ func (a *account) provider(k schemas.ModelProvider) (store.Provider, error) {
 	return p, nil
 }
 
+// GetKeysForProvider returns the provider's available keys: not disabled, not quarantined, not
+// cooling down (docs/KEYS.md). Bifrost calls it per request. When none is available it reports
+// the provider unavailable and returns every enabled key, so the request still runs and fails
+// over through normal routing; with no enabled key at all it returns an error, which Bifrost
+// treats as this provider failing.
+// shortcut: availability ignores the requested model; a pool whose only available keys do not
+// serve the model fails over like an unavailable provider.
 func (a *account) GetKeysForProvider(_ context.Context, k schemas.ModelProvider) ([]schemas.Key, error) {
 	p, err := a.provider(k)
 	if err != nil {
@@ -192,7 +207,8 @@ func (a *account) GetKeysForProvider(_ context.Context, k schemas.ModelProvider)
 		// Bifrost reads these servers' URL from a key; keyless providers get one implicit key.
 		return []schemas.Key{withServerURL(p, schemas.Key{ID: p.ID, Name: "default", Models: schemas.WhiteList{"*"}, Weight: 1})}, nil
 	}
-	keys := make([]schemas.Key, 0, len(p.Keys))
+	enabled := make([]schemas.Key, 0, len(p.Keys))
+	avail := make([]schemas.Key, 0, len(p.Keys))
 	for _, pk := range p.Keys {
 		w := pk.Weight
 		if w <= 0 {
@@ -201,9 +217,29 @@ func (a *account) GetKeysForProvider(_ context.Context, k schemas.ModelProvider)
 		if p.OrgID != "" && pk.Bedrock != nil && pk.Value == "" && pk.Bedrock.AccessKey == "" {
 			continue // tenants never borrow the gateway host's AWS identity (admin rejects this too)
 		}
-		keys = append(keys, withServerURL(p, bifrostKey(p.Type, pk, w)))
+		if a.keys == nil { // pinned-key lookup: every key
+			avail = append(avail, withServerURL(p, bifrostKey(p.Type, pk, w)))
+			continue
+		}
+		if pk.Disabled {
+			continue
+		}
+		bk := withServerURL(p, bifrostKey(p.Type, pk, w))
+		enabled = append(enabled, bk)
+		if _, cooling := a.keys.cooling(pk.ID); !pk.Quarantined && !cooling {
+			avail = append(avail, bk)
+		}
 	}
-	return keys, nil
+	if len(avail) > 0 || len(p.Keys) == 0 {
+		return avail, nil
+	}
+	if a.unavailable != nil {
+		a.unavailable(p)
+	}
+	if len(enabled) == 0 {
+		return nil, fmt.Errorf("provider %s has no enabled key", k)
+	}
+	return enabled, nil
 }
 
 // withServerURL sets the per-key server URL Bifrost requires for Ollama, SGLang and vLLM to the
@@ -254,7 +290,8 @@ func bifrostKey(t string, pk store.ProviderKey, w float64) schemas.Key {
 	if len(models) == 0 {
 		models = schemas.WhiteList{"*"} // empty means every model here; Bifrost reads empty as none
 	}
-	k := schemas.Key{ID: pk.ID, Name: pk.Name, Value: secret(pk.Value), Models: models, Weight: w}
+	// Name is the stored key id as well: Bifrost reports the serving key's name in RoutingInfo.Key.
+	k := schemas.Key{ID: pk.ID, Name: pk.ID, Value: secret(pk.Value), Models: models, Weight: w}
 	if a := pk.Azure; a != nil {
 		k.AzureKeyConfig = &schemas.AzureKeyConfig{Endpoint: secret(strings.TrimRight(a.Endpoint, "/"))}
 		var cfg *schemas.AzureAliasCfg

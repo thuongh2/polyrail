@@ -65,10 +65,10 @@ func (g *Gateway) AnthropicMessages(rw http.ResponseWriter, r *http.Request) {
 	if req.Stream != nil && *req.Stream {
 		ch, berr := g.BF.ResponsesStreamRequest(bctx, breq)
 		if berr != nil {
-			g.upstreamFailed(w, snap, p, m, ts, berr, start)
+			g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 			return
 		}
-		g.pump(w, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
+		g.pump(w, bctx, snap, p, m, ts, ch, start, func(c *schemas.BifrostStreamChunk) (string, any, schemas.ModelProvider, *usagePair) {
 			ev := c.BifrostResponsesStreamResponse
 			if ev == nil {
 				return "", nil, "", nil
@@ -95,14 +95,14 @@ func (g *Gateway) AnthropicMessages(rw http.ResponseWriter, r *http.Request) {
 	}
 	resp, berr := g.BF.ResponsesRequest(bctx, breq)
 	if berr != nil {
-		g.upstreamFailed(w, snap, p, m, ts, berr, start)
+		g.upstreamFailed(w, bctx, snap, p, m, ts, berr, start)
 		return
 	}
 	l := store.RequestLog{Status: 200, Upstream: resp.ExtraFields.RoutingInfo.Model}
 	if resp.Usage != nil {
 		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
 	}
-	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
+	l.Provider = g.settle(bctx, snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.InTokens, l.OutTokens)
 	g.record(p, m, l, start)
 	resp.Model = m.ID
 	writeJSONHidden(w, l.Provider, anthropic.ToAnthropicResponsesResponse(bctx, resp))

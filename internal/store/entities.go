@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -136,6 +137,11 @@ type ProviderKey struct {
 	Vertex  *VertexConfig  `json:"vertex,omitempty"`
 	// Cloudflare is the Workers AI account; Value holds the API token.
 	Cloudflare *CloudflareConfig `json:"cloudflare,omitempty"`
+	// Key status (docs/KEYS.md). Stored keys without these fields read as enabled. They are set
+	// through the key API and the gateway; a provider PUT keeps the stored values of existing keys.
+	Disabled     bool   `json:"disabled,omitempty"`      // manual: never used
+	Quarantined  bool   `json:"quarantined,omitempty"`   // repeated auth failures or an operator action
+	StatusReason string `json:"status_reason,omitempty"` // why quarantined (no upstream text)
 }
 
 // CloudflareConfig is the per-key Cloudflare Workers AI setup.
@@ -193,7 +199,8 @@ func (k *ProviderKey) secrets() map[string][2]*string {
 // Redacted returns the key without any secret material (plaintext or sealed); non-secret
 // config (endpoint, region, deployments) stays so clients can edit it.
 func (k ProviderKey) Redacted() ProviderKey {
-	out := ProviderKey{ID: k.ID, Name: k.Name, Weight: k.Weight, Models: k.Models}
+	out := ProviderKey{ID: k.ID, Name: k.Name, Weight: k.Weight, Models: k.Models,
+		Disabled: k.Disabled, Quarantined: k.Quarantined, StatusReason: k.StatusReason}
 	if k.Azure != nil {
 		a := *k.Azure
 		out.Azure = &a
@@ -495,7 +502,7 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range kbOrgPrefixes(id) {
+	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id)) {
 		if err := s.DeletePrefix(ctx, p); err != nil {
 			return err
 		}
@@ -719,11 +726,14 @@ func (s *Store) PutProvider(ctx context.Context, p *Provider) error {
 			}
 			var prev map[string][2]*string
 			keyRehost := rehost
+			k.Quarantined, k.StatusReason = false, "" // new keys start available
 			if old != nil {
 				for j := range old.Keys {
 					if ok := &old.Keys[j]; ok.ID == k.ID {
 						prev = ok.secrets()
 						keyRehost = keyRehost || (ok.Azure != nil && k.Azure != nil && ok.Azure.Endpoint != k.Azure.Endpoint)
+						// status belongs to the key API: a provider PUT keeps it
+						k.Disabled, k.Quarantined, k.StatusReason = ok.Disabled, ok.Quarantined, ok.StatusReason
 					}
 				}
 			}
@@ -818,23 +828,122 @@ func (s *Store) ListProviders(ctx context.Context, decrypt bool) ([]Provider, er
 		return ps, err
 	}
 	for i := range ps {
-		if x := ps[i].Proxy; x != nil && x.SealedPassword != "" {
-			if x.Password, err = s.box.Open(x.SealedPassword); err != nil {
-				return nil, fmt.Errorf("provider %s proxy password: %w", ps[i].ID, err)
-			}
-		}
-		for j := range ps[i].Keys {
-			for name, f := range ps[i].Keys[j].secrets() {
-				if *f[1] == "" {
-					continue
-				}
-				if *f[0], err = s.box.Open(*f[1]); err != nil {
-					return nil, fmt.Errorf("provider %s key %s %s: %w", ps[i].ID, ps[i].Keys[j].ID, name, err)
-				}
-			}
+		if err := s.openProvider(&ps[i]); err != nil {
+			return nil, err
 		}
 	}
 	return ps, nil
+}
+
+// openProvider fills in the plaintext of p's sealed secrets.
+func (s *Store) openProvider(p *Provider) error {
+	var err error
+	if x := p.Proxy; x != nil && x.SealedPassword != "" {
+		if x.Password, err = s.box.Open(x.SealedPassword); err != nil {
+			return fmt.Errorf("provider %s proxy password: %w", p.ID, err)
+		}
+	}
+	for j := range p.Keys {
+		for name, f := range p.Keys[j].secrets() {
+			if *f[1] == "" {
+				continue
+			}
+			if *f[0], err = s.box.Open(*f[1]); err != nil {
+				return fmt.Errorf("provider %s key %s %s: %w", p.ID, p.Keys[j].ID, name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// GetProviderSecrets returns one provider with its secrets decrypted (gateway and key API use
+// only: never encode it to a client).
+func (s *Store) GetProviderSecrets(ctx context.Context, id string) (*Provider, error) {
+	p, err := s.GetProvider(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return p, s.openProvider(p)
+}
+
+// KeyHash is the SHA-256 (hex) of a provider key value, used to find duplicates.
+func KeyHash(v string) string {
+	h := sha256.Sum256([]byte(v))
+	return hex.EncodeToString(h[:])
+}
+
+// AddProviderKeys appends keys to provider id of owner org ("" = platform), sealing their
+// values. A key whose value equals an existing key's value (or an earlier one in keys) is
+// skipped and counted as a duplicate. It returns the added keys (without secrets).
+func (s *Store) AddProviderKeys(ctx context.Context, org, id string, keys []ProviderKey) ([]ProviderKey, int, error) {
+	var added []ProviderKey
+	dups := 0
+	err := s.update(ctx, func(tx Tx) error {
+		added, dups = nil, 0
+		p, err := getJSON[Provider](tx.Get, "prov/"+id)
+		if err != nil {
+			return err
+		}
+		if p.OrgID != org {
+			return ErrNotFound
+		}
+		seen := map[string]bool{}
+		for _, k := range p.Keys {
+			if k.Sealed == "" {
+				continue
+			}
+			v, err := s.box.Open(k.Sealed)
+			if err != nil {
+				return fmt.Errorf("provider %s key %s: %w", p.ID, k.ID, err)
+			}
+			seen[KeyHash(v)] = true
+		}
+		for _, k := range keys {
+			h := KeyHash(k.Value)
+			if seen[h] {
+				dups++
+				continue
+			}
+			seen[h] = true
+			k.ID, k.Quarantined, k.StatusReason = NewID(), false, ""
+			if k.Sealed, err = s.box.Seal(k.Value); err != nil {
+				return err
+			}
+			k.Value = ""
+			p.Keys = append(p.Keys, k)
+			added = append(added, k.Redacted())
+		}
+		return putJSON(tx, "prov/"+p.ID, p)
+	})
+	return added, dups, err
+}
+
+// UpdateProviderKeys applies fn to the stored provider id of owner org ("" = platform) and
+// saves it. fn edits key metadata (status, weight, name, models) or removes keys; sealed
+// secrets are kept as stored and plaintext set by fn is dropped.
+func (s *Store) UpdateProviderKeys(ctx context.Context, org, id string, fn func(*Provider) error) (*Provider, error) {
+	var out *Provider
+	err := s.update(ctx, func(tx Tx) error {
+		p, err := getJSON[Provider](tx.Get, "prov/"+id)
+		if err != nil {
+			return err
+		}
+		if p.OrgID != org {
+			return ErrNotFound
+		}
+		if err := fn(p); err != nil {
+			return err
+		}
+		p.ID, p.OrgID = id, org
+		for i := range p.Keys {
+			for _, f := range p.Keys[i].secrets() {
+				*f[0] = ""
+			}
+		}
+		out = p
+		return putJSON(tx, "prov/"+id, p)
+	})
+	return out, err
 }
 
 // ---- models ----
@@ -994,8 +1103,14 @@ func (s *Store) PruneLogs(ctx context.Context, keepDays int) error {
 	return s.KV.DeleteRange(ctx, "log/", "log/"+cutoff)
 }
 
-// PruneHealth deletes hourly provider health counters older than keepDays.
+// PruneHealth deletes hourly provider health and per-key counters (keystat/) older than keepDays.
+// Counters of deleted keys and providers are left to this retention.
 func (s *Store) PruneHealth(ctx context.Context, keepDays int) error {
 	cutoff := time.Now().AddDate(0, 0, -keepDays).UTC().Format("2006010215")
-	return s.KV.DeleteRange(ctx, "health/", "health/"+cutoff)
+	for _, p := range []string{"health/", "keystat/"} {
+		if err := s.KV.DeleteRange(ctx, p, p+cutoff); err != nil {
+			return err
+		}
+	}
+	return nil
 }

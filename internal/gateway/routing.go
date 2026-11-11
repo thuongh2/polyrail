@@ -305,7 +305,8 @@ func affinityKey(cacheKey *string, prefix ...any) string {
 // settleErr updates breakers and stats after a request failed at every target. The top-level
 // error is the primary's; fallbacks' statuses come from Bifrost's FallbackAttempts. A 429 with a
 // Retry-After hint opens the primary until then.
-func (g *Gateway) settleErr(snap *Snapshot, m store.Model, ts []store.Target, be *schemas.BifrostError, start time.Time) {
+func (g *Gateway) settleErr(bctx *schemas.BifrostContext, snap *Snapshot, m store.Model, ts []store.Target, be *schemas.BifrostError, start time.Time) {
+	g.settleKeys(bctx, snap, false, be, start, 0, 0)
 	attempts := map[string]schemas.FallbackAttempt{}
 	for _, a := range be.ExtraFields.FallbackAttempts {
 		attempts[string(a.Provider)+"|"+a.Model] = a

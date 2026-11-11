@@ -68,7 +68,8 @@ Never waits on a synchronous DB write; reads are cached.
 3. **Budget** — org balance = `credits` (org record) − `spend/org` counter. A node keeps a local
    spend cache, adds its own unflushed deltas, and refreshes from the store every flush (1 s).
    Max overspend ≈ one second of one node's traffic per org. Same rule for key monthly budgets.
-4. **Guardrails** — max input chars, blocked regexes (compiled once per config version), PII mask.
+4. **Guardrails** — lossless compression, max input chars, blocked regexes (compiled once per config
+   version), prompt-injection tripwire (user text), credential and PII masking (D14).
 5. **Cache** — exact match, opt-in by header, bounded TTL cache (entries + bytes, random eviction),
    key = sha256(org + raw request body). Skipped for streams and MCP requests.
 6. **Router** — resolve model (org-private first, then public) from the in-memory catalog snapshot

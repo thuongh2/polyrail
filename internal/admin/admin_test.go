@@ -593,6 +593,20 @@ func TestMalformedJSON(t *testing.T) {
 	expect(t, f.do(t, "owner", "POST", A+"/keys", `{"name":"`+strings.Repeat("a", 2<<20)+`"}`), 400, "oversized body")
 }
 
+func TestOrgGuardrailEnums(t *testing.T) {
+	f := setup(t, Config{})
+	A := "/api/orgs/" + f.orgA.ID
+	expect(t, f.do(t, "admin", "PATCH", A, `{"guardrails":{"prompt_injection":"loud"}}`), 400, "bad prompt_injection")
+	expect(t, f.do(t, "admin", "PATCH", A, `{"guardrails":{"compression":"lossy"}}`), 400, "bad compression")
+	r := f.do(t, "admin", "PATCH", A, `{"guardrails":{"mask_secrets":true,"prompt_injection":"block","compression":"lossless"}}`)
+	expect(t, r, 200, "valid guardrails")
+	var o store.Org
+	r.json(t, &o)
+	if g := o.Guardrails; !g.MaskSecrets || g.PromptInjection != "block" || g.Compression != "lossless" {
+		t.Fatalf("guardrails not saved: %+v", g)
+	}
+}
+
 // F6-AC1: revocation is immediate on the node that served the admin call (the key cache must not
 // keep serving a revoked key until the next catalog poll).
 func TestKeyRevocationImmediateOnSameNode(t *testing.T) {

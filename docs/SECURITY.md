@@ -107,6 +107,28 @@ the UI build in `internal/web/dist` was being regenerated concurrently.
 | L14 | low | `GET /v1/batches` refreshes up to 100 unbilled batches upstream per call (amplification). Batch spend is only admitted at creation, so one batch can exceed the remaining budget. | Accepted (rate limits apply per call; usage is billed exactly once). |
 | L15 | low | Non-batch file uploads (`user_data`, `vision`, …) are not guardrailed; MCP execute with a bare tool name present on several servers picks the last one (then denies if not granted). Responses/Anthropic `instructions`/`system` text is not guardrail-checked (pre-existing). | Open. |
 
+## Guardrails: credential masking, prompt injection, compression (2026-11-11)
+
+Per-org, opt-in (`docs/API.md` → Guardrails, D14).
+
+- **Credential masker** (`mask_secrets`): fixed, precompiled patterns for provider keys, cloud and
+  SaaS tokens, JWTs and PEM private keys, replaced with `[REDACTED:<type>]` before the request
+  leaves the gateway. Patterns require a word boundary and a minimum token length, so prose such as
+  `risk-assessment-…` or `scikit-learn` is not hit (tested). Generic `password=` / `api_key=`
+  assignments are deliberately not masked (mostly `os.getenv(...)` calls in code). The masker cuts
+  accidental leaks to providers; it is not DLP: unknown key formats pass.
+- **Prompt-injection detector** (`prompt_injection`): a single precompiled regex of high-signal
+  phrasings, run on user-role text only and on at most 16 KB per request (bounded CPU). `block`
+  answers 400 `prompt_injection`; `warn` passes and sets `X-GW-Guardrail`. Neither logs the text;
+  only `gateway_prompt_injection_total{action}` is counted. Regexes are easy to evade (paraphrase,
+  other languages, encodings); treat it as a tripwire, not a defence. System/developer text is the
+  tenant's own and is not scanned.
+- **Lossless compression** (`compression`): whitespace-only rewrite outside code fences; tool
+  results, JSON-looking text and assistant tool calls are never changed. The response cache key is
+  still the raw request body, so identical bodies always share a key.
+- Order: compression → blocked patterns / max chars → injection → secret masking → PII masking.
+  Blocked patterns therefore see unmasked text.
+
 Checked and fine: stored secrets go to Bifrost as literal `SecretVar`s (no `env.`/`vault.` resolution);
 job ids are validated and scoped `<kind>/<org>/<id>` (another org's id is a 404), upstream ids never
 leave the gateway, `ClaimBilling` is exactly-once and batch output stays hidden until billed; batch

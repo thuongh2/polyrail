@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -39,17 +40,36 @@ func (g *Gateway) targetFor(w http.ResponseWriter, p *principal, id, kind string
 	return m, ts, g.snap.Load(), true
 }
 
-// guard applies the org's guardrails to segs; false means the response was already written.
+// guard applies the org's guardrails to segs (not scanned for prompt injection, not compressed);
+// false means the response was already written.
 func (g *Gateway) guard(w http.ResponseWriter, p *principal, m store.Model, segs []*string, start time.Time) bool {
-	reason, err := applyGuardrails(p.Org, segs)
+	return g.guardIn(w, p, m, guardInput{all: segs}, start)
+}
+
+// guardIn applies the org's guardrails and sets the X-GW-Guardrail / X-GW-Compressed-Chars
+// headers; false means the error response was already written.
+func (g *Gateway) guardIn(w http.ResponseWriter, p *principal, m store.Model, in guardInput, start time.Time) bool {
+	v, err := applyGuardrails(p.Org, in)
 	if err != nil {
 		writeError(w, errf(500, "api_error", "guardrail_config", "%v", err))
 		return false
 	}
-	if reason != "" {
-		g.record(p, m, store.RequestLog{Status: 400, Error: "guardrail: " + reason}, start)
-		writeError(w, errf(400, "invalid_request_error", "guardrail_blocked", "%s", reason))
+	if v.injection {
+		action := "warn"
+		if v.reason != "" {
+			action = "block"
+		}
+		mInjection.WithLabelValues(action).Inc()
+		w.Header().Set("X-GW-Guardrail", "prompt_injection")
+	}
+	if v.reason != "" {
+		g.record(p, m, store.RequestLog{Status: 400, Error: "guardrail: " + v.reason}, start)
+		writeError(w, errf(400, "invalid_request_error", v.code, "%s", v.reason))
 		return false
+	}
+	if v.saved > 0 {
+		mCompressed.Add(float64(v.saved))
+		w.Header().Set("X-GW-Compressed-Chars", strconv.Itoa(v.saved))
 	}
 	return true
 }
@@ -272,7 +292,7 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 			segs = append(segs, &in.PromptArray[i])
 		}
 	}
-	if !g.guard(w, p, m, segs, start) {
+	if !g.guardIn(w, p, m, guardInput{all: segs, user: segs}, start) {
 		return
 	}
 	if breq.Params == nil {
@@ -388,20 +408,30 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 // prepareResponses applies guardrails, the org's max-token cap and the route plan to a Responses
 // request; false means the error response was already written.
 func (g *Gateway) prepareResponses(w http.ResponseWriter, p *principal, m store.Model, ts []store.Target, snap *Snapshot, breq *schemas.BifrostResponsesRequest, start time.Time) bool {
-	var segs []*string
+	var in guardInput
 	for i := range breq.Input {
-		if c := breq.Input[i].Content; c != nil {
-			if c.ContentStr != nil {
-				segs = append(segs, c.ContentStr)
+		c := breq.Input[i].Content
+		if c == nil {
+			continue
+		}
+		var segs []*string
+		if c.ContentStr != nil {
+			segs = append(segs, c.ContentStr)
+		}
+		for j := range c.ContentBlocks {
+			if c.ContentBlocks[j].Text != nil {
+				segs = append(segs, c.ContentBlocks[j].Text)
 			}
-			for j := range c.ContentBlocks {
-				if c.ContentBlocks[j].Text != nil {
-					segs = append(segs, c.ContentBlocks[j].Text)
-				}
+		}
+		in.all = append(in.all, segs...)
+		if r := breq.Input[i].Role; r != nil { // message items; tool outputs carry no role
+			in.prose = append(in.prose, segs...)
+			if *r == schemas.ResponsesInputMessageRoleUser {
+				in.user = append(in.user, segs...)
 			}
 		}
 	}
-	if !g.guard(w, p, m, segs, start) {
+	if !g.guardIn(w, p, m, in, start) {
 		return false
 	}
 	if breq.Params == nil {

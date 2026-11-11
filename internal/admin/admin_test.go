@@ -828,3 +828,15 @@ func TestCloudProviderValidationAndRedaction(t *testing.T) {
 		t.Fatalf("provider types: %+v", cfg.ProviderTypes)
 	}
 }
+
+// The model editor round-trips GET → PUT, so the list must return the strategy it saves.
+func TestModelListReturnsStrategy(t *testing.T) {
+	f := setup(t, Config{})
+	var p struct{ ID string }
+	f.do(t, "op", "POST", "/api/admin/providers", `{"name":"up","type":"openai","base_url":"https://api.example.com","keys":[{"value":"k"}],"enabled":true}`).json(t, &p)
+	expect(t, f.do(t, "op", "POST", "/api/admin/models", `{"id":"x/m","name":"M","kind":"chat","strategy":"latency","targets":[{"provider_id":"`+p.ID+`","model":"m"}],"enabled":true}`), 200, "create")
+	r := f.do(t, "op", "GET", "/api/admin/models", "")
+	if !strings.Contains(r.body, `"strategy":"latency"`) {
+		t.Fatalf("strategy missing from list: %s", r.body)
+	}
+}

@@ -96,7 +96,7 @@ export const publicApi = {
 export type Role = "viewer" | "member" | "admin" | "owner";
 export type User = { id: string; email: string; name: string; operator: boolean; disabled?: boolean; created_at: string };
 export type OrgRef = { id: string; name: string; role: Role };
-export type AuthConfig = { signup: boolean; sso: boolean; provider_types: { platform: string[]; org: string[] } };
+export type AuthConfig = { signup: boolean; sso: boolean; provider_types: { platform: string[]; org: string[]; org_fixed_url?: string[] } };
 
 export const authApi = {
   config: () => get<AuthConfig>("/api/auth/config"),

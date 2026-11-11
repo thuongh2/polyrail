@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -138,19 +139,22 @@ type Target struct {
 }
 
 type Model struct {
-	ID            string    `json:"id"` // public id, e.g. "openai/gpt-4o-mini"
-	OrgID         string    `json:"org_id,omitempty"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description,omitempty"`
-	Kind          string    `json:"kind"` // chat | embedding
-	ContextLength int       `json:"context_length,omitempty"`
-	MaxOutput     int       `json:"max_output_tokens,omitempty"`
-	Modalities    []string  `json:"modalities,omitempty"`
-	InputPrice    int64     `json:"input_price_micros"`  // micro-USD per 1M input tokens
-	OutputPrice   int64     `json:"output_price_micros"` // micro-USD per 1M output tokens
-	Targets       []Target  `json:"targets"`
-	Enabled       bool      `json:"enabled"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            string   `json:"id"` // public id, e.g. "openai/gpt-4o-mini"
+	OrgID         string   `json:"org_id,omitempty"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description,omitempty"`
+	Kind          string   `json:"kind"` // chat | embedding | speech (text to speech) | transcription (speech to text)
+	ContextLength int      `json:"context_length,omitempty"`
+	MaxOutput     int      `json:"max_output_tokens,omitempty"`
+	Modalities    []string `json:"modalities,omitempty"`
+	InputPrice    int64    `json:"input_price_micros"`  // micro-USD per 1M input tokens
+	OutputPrice   int64    `json:"output_price_micros"` // micro-USD per 1M output tokens
+	// AudioMinutePrice is micro-USD per minute of input audio, for transcription models whose
+	// provider reports duration instead of tokens.
+	AudioMinutePrice int64     `json:"audio_minute_price_micros,omitempty"`
+	Targets          []Target  `json:"targets"`
+	Enabled          bool      `json:"enabled"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type AuditEntry struct {
@@ -631,10 +635,10 @@ func (s *Store) PutModel(ctx context.Context, m *Model) error {
 	if m.Kind == "" {
 		m.Kind = "chat"
 	}
-	if m.Kind != "chat" && m.Kind != "embedding" {
-		return fmt.Errorf("%w: kind must be chat or embedding", ErrInvalid)
+	if !slices.Contains([]string{"chat", "embedding", "speech", "transcription"}, m.Kind) {
+		return fmt.Errorf("%w: kind must be chat, embedding, speech or transcription", ErrInvalid)
 	}
-	if m.InputPrice < 0 || m.OutputPrice < 0 {
+	if m.InputPrice < 0 || m.OutputPrice < 0 || m.AudioMinutePrice < 0 {
 		return fmt.Errorf("%w: prices must be >= 0", ErrInvalid)
 	}
 	return s.update(ctx, func(tx Tx) error {

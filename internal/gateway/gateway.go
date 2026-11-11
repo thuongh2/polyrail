@@ -334,7 +334,7 @@ func cost(m store.Model, in, out int) int64 {
 func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start time.Time) {
 	l.ID, l.OrgID, l.KeyID, l.Model, l.At = store.NewID(), p.Org.ID, p.Key.ID, m.ID, start.UTC()
 	l.LatencyMs = time.Since(start).Milliseconds()
-	if !l.Cached {
+	if !l.Cached && l.Cost == 0 { // callers may price by something other than tokens (audio minutes)
 		l.Cost = cost(m, l.InTokens, l.OutTokens)
 	}
 	if p.Key.TPM > 0 && l.InTokens+l.OutTokens > 0 {
@@ -622,8 +622,9 @@ type ModelInfo struct {
 	MaxOutput     int      `json:"max_output_tokens,omitempty"`
 	Modalities    []string `json:"modalities,omitempty"`
 	Pricing       struct {
-		Input  string `json:"input"`  // USD per 1M tokens
-		Output string `json:"output"` // USD per 1M tokens
+		Input       string `json:"input"`                  // USD per 1M tokens (speech: per 1M characters without token usage)
+		Output      string `json:"output"`                 // USD per 1M tokens
+		AudioMinute string `json:"audio_minute,omitempty"` // USD per minute of audio (transcription)
 	} `json:"pricing"`
 	Private   bool     `json:"private,omitempty"`
 	Providers []string `json:"providers,omitempty"` // public models only: names of serving providers
@@ -635,6 +636,9 @@ func Info(m store.Model) ModelInfo {
 		Description: m.Description, Kind: m.Kind, ContextLength: m.ContextLength, MaxOutput: m.MaxOutput, Modalities: m.Modalities, Private: m.OrgID != ""}
 	mi.Pricing.Input = usd(m.InputPrice)
 	mi.Pricing.Output = usd(m.OutputPrice)
+	if m.AudioMinutePrice > 0 {
+		mi.Pricing.AudioMinute = usd(m.AudioMinutePrice)
+	}
 	return mi
 }
 

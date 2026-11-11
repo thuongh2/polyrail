@@ -51,6 +51,7 @@ type Gateway struct {
 	resp *ttlCache[[]byte]
 	rt   *router
 	mcp  mcpState
+	idem idemStore
 }
 
 type principal struct {
@@ -351,7 +352,8 @@ func cost(m store.Model, in, out int) int64 {
 	return (int64(in)*m.InputPrice + int64(out)*m.OutputPrice + 500_000) / 1_000_000 // nearest micro-USD: unbiased over many requests
 }
 
-func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start time.Time) {
+// record bills and logs one request and returns the micros billed.
+func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start time.Time) int64 {
 	l.ID, l.OrgID, l.KeyID, l.Model, l.At = store.NewID(), p.Org.ID, p.Key.ID, m.ID, start.UTC()
 	l.LatencyMs = time.Since(start).Milliseconds()
 	if !l.Cached && l.Cost == 0 { // callers may price by something other than tokens (audio minutes)
@@ -372,6 +374,12 @@ func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start 
 	mLatency.WithLabelValues(label).Observe(time.Since(start).Seconds())
 	mTokens.WithLabelValues(label, "in").Add(float64(l.InTokens))
 	mTokens.WithLabelValues(label, "out").Add(float64(l.OutTokens))
+	return l.Cost
+}
+
+// setCost sets X-GW-Cost-Micros on a non-stream response (streams have sent headers already).
+func setCost(w http.ResponseWriter, micros int64) {
+	w.Header().Set("X-GW-Cost-Micros", strconv.FormatInt(micros, 10))
 }
 
 func (g *Gateway) readBody(w http.ResponseWriter, r *http.Request) ([]byte, *apiError) {
@@ -456,7 +464,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		cacheKey = hex.EncodeToString(h[:])
 		if out, ok := g.resp.Get(cacheKey); ok {
 			mCacheHits.Inc()
-			g.record(p, m, store.RequestLog{Status: 200, Cached: true, Provider: "cache"}, start)
+			setCost(w, g.record(p, m, store.RequestLog{Status: 200, Cached: true, Provider: "cache"}, start))
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("x-gateway-cache-hit", "true")
 			_, _ = w.Write(out)
@@ -489,7 +497,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if cacheKey != "" {
 		g.resp.Set(cacheKey, out, len(out), ttl)
 	}
-	g.record(p, m, l, start)
+	setCost(w, g.record(p, m, l, start))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("x-gateway-provider", provName)
 	w.Header().Set("X-GW-Route", routeHeader(m, provName, resp.ExtraFields.RoutingInfo.Model))
@@ -630,7 +638,7 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 	if resp.Usage != nil {
 		l.InTokens = resp.Usage.PromptTokens
 	}
-	g.record(p, m, l, start)
+	setCost(w, g.record(p, m, l, start))
 	resp.Model = m.ID
 	out, _ := hideExtra(resp)
 	w.Header().Set("Content-Type", "application/json")

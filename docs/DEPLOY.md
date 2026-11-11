@@ -217,3 +217,26 @@ Upgrading a running deployment from a v1.2.38 build:
 - Models see MCP tools as `<server>-<tool>`; `POST /v1/mcp/tool/execute` accepts that name or the
   bare tool name.
 - Idle memory is about 55 MB (was about 28 MB); still well inside a 2 GB VPS.
+
+## CI/CD and container images (GitHub Actions)
+
+- `.github/workflows/ci.yml` — on every push and pull request: gofmt, `go vet`, `go test -race`
+  against Postgres 16 and Redis 7 service containers, an `alertsfull` build, the web type check plus
+  a check that the committed `internal/web/dist` matches a fresh `npm run build` (Node 22), and a
+  multi-arch Docker build without pushing.
+- `.github/workflows/release.yml` — pushes `ghcr.io/<owner>/polyrail` for `linux/amd64` and
+  `linux/arm64` with SBOM, max provenance and a GitHub build attestation:
+  - push to the default branch → tags `edge` and `sha-<short>`;
+  - tag `v1.2.3` → `1.2.3`, `1.2`, `1` (not for `v0.x`) and `latest`, plus a GitHub release with
+    `polyrail-<os>-<arch>` binaries and `SHA256SUMS`.
+- Authentication uses the workflow's `GITHUB_TOKEN` (`packages: write`); no secrets to add. The first
+  push creates the package as private: make it public under the package's settings on GitHub if
+  you want anonymous pulls.
+- The Dockerfile cross-compiles in the builder's native platform (no QEMU), so the arm64 image builds
+  as fast as amd64. `.dockerignore` keeps `.env*`, `.demo-key`, logs and local data out of the build
+  context.
+- Dependabot (`.github/dependabot.yml`) opens weekly update PRs for actions, the base images, Go
+  modules and npm packages.
+
+Release: `git tag v0.1.0 && git push origin v0.1.0`. Run: `docker run -p 8080:8080 -v polyrail:/data
+-e MASTER_KEY=… ghcr.io/<owner>/polyrail:latest`.

@@ -29,6 +29,8 @@ export function providersPath(scope: Scope, orgId?: string) {
 export const providerHref = (scope: Scope, id: string) =>
   `${scope === "platform" ? "/platform" : ""}/providers/${encodeURIComponent(id)}`;
 
+const STD_REGIONS = ["global", "europe", "us"];
+
 export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
   const { org, can, user } = useSession();
   const base = providersPath(scope, org?.id);
@@ -303,7 +305,11 @@ export function ProviderDialog({
   const [zdr, setZdr] = useState(pv?.zdr ?? false);
   const [trains, setTrains] = useState(pv?.trains_on_data ?? false);
   const [retention, setRetention] = useState(pv?.retention_days ? String(pv.retention_days) : "");
-  const [region, setRegion] = useState(pv?.region ?? "");
+  // Stored normalized (docs/API.md "Policies"): global (also when empty), europe, us, or another name.
+  const [region, setRegion] = useState(pv?.region || "global");
+  const [otherRegion, setOtherRegion] = useState(pv?.region && !STD_REGIONS.includes(pv.region) ? pv.region : "");
+  const regionChoice = STD_REGIONS.includes(region) ? region : "other";
+  const regionValue = regionChoice === "other" ? otherRegion.trim().toLowerCase() : region;
   // A stored password is kept while the proxy URL and username stay the same.
   const keepsProxyPass = !!provider?.proxy?.username && provider.proxy.url === proxyURL.trim() && provider.proxy.username === proxyUser.trim();
 
@@ -326,7 +332,7 @@ export function ProviderDialog({
       no_proxy: noProxy,
       proxy_pool: pool || undefined,
       privacy: declare
-        ? { zdr, trains_on_data: trains, retention_days: zdr || !retention ? undefined : Number(retention), region: region || undefined }
+        ? { zdr, trains_on_data: trains, retention_days: zdr || !retention ? undefined : Number(retention), region: regionValue || undefined }
         : undefined,
       enabled,
       // Cloud types: the form edits the first key; other stored keys are kept as they are.
@@ -462,22 +468,38 @@ export function ProviderDialog({
                     <Input id={id} aria-describedby={hint} type="number" min={0} max={36500} step={1} inputMode="numeric" disabled={zdr} value={retention} onChange={(e) => setRetention(e.target.value)} />
                   )}
                 </Field>
-                <Field label="Region" hint="Where prompts are processed.">
+                <Field label="Region" hint="Where prompts are processed. Policies can allow only some regions.">
                   {(id, hint) => (
-                    <Select value={region || "none"} onValueChange={(v) => setRegion(v === "none" ? "" : v)}>
+                    <Select value={regionChoice} onValueChange={(v) => setRegion(v === "other" ? otherRegion || "other" : v)}>
                       <SelectTrigger id={id} aria-describedby={hint} className="w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">Not stated</SelectItem>
                         <SelectItem value="global">Global</SelectItem>
                         <SelectItem value="europe">Europe</SelectItem>
                         <SelectItem value="us">United States</SelectItem>
-                        {region && !["global", "europe", "us"].includes(region) && <SelectItem value={region}>{region}</SelectItem>}
+                        <SelectItem value="other">Other…</SelectItem>
                       </SelectContent>
                     </Select>
                   )}
                 </Field>
+                {regionChoice === "other" && (
+                  <Field label="Region name" hint="Lowercase letters, digits and -, such as apac. eu-west-1 is saved as europe, us-east-1 as us.">
+                    {(id, hint) => (
+                      <Input
+                        id={id}
+                        aria-describedby={hint}
+                        required
+                        pattern="[a-z0-9-]+"
+                        value={otherRegion}
+                        onChange={(e) => setOtherRegion(e.target.value)}
+                        placeholder="apac"
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                    )}
+                  </Field>
+                )}
               </div>
             </>
           )}

@@ -9,8 +9,8 @@ from playwright.sync_api import sync_playwright
 base, email, password = sys.argv[1].rstrip("/"), sys.argv[2], sys.argv[3]
 public = ["/", "/models", "/status", "/docs"]
 console = ["activity", "logs", "playground", "keys", "credits", "models", "presets", "kbs", "providers", "members", "policies",
-           "settings", "webhooks", "alerts", "audit", "account", "platform/activity", "platform/orgs", "platform/providers",
-           "platform/models", "platform/users", "platform/mcp", "platform/alerts", "platform/proxies", "platform/audit"]
+           "settings", "webhooks", "alerts", "observability", "sso", "audit", "account", "platform/activity", "platform/orgs", "platform/providers",
+           "platform/models", "platform/users", "platform/mcp", "platform/alerts", "platform/observability", "platform/proxies", "platform/audit"]
 failures, errors = [], []
 
 def check(pg, what):
@@ -25,7 +25,8 @@ with sync_playwright() as p:
     for path in public:
         pg.goto(base + path); pg.wait_for_load_state("networkidle"); check(pg, "open " + path)
     pg.goto(base + "/login")
-    pg.fill("input[type=email]", email); pg.fill("input[type=password]", password); pg.keyboard.press("Enter")
+    pg.fill("input[type=email]", email); pg.keyboard.press("Enter")  # email first: the domain picks SSO or password
+    pg.fill("input[type=password]", password); pg.keyboard.press("Enter")
     pg.wait_for_url("**/app/**")
     for path in console:
         pg.goto(f"{base}/app/{path}"); pg.wait_for_load_state("networkidle"); check(pg, "open /app/" + path)

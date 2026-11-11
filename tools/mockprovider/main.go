@@ -143,6 +143,31 @@ type chatReq struct {
 	} `json:"messages"`
 }
 
+// keyFaults lets demos and e2e tests exercise key status (docs/KEYS.md): a key starting with
+// "bad-" gets 401, one starting with "rl-" or "slow-" gets 429 with Retry-After: 5. Other keys
+// (and requests without a key) are served normally.
+func keyFaults(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if key == "" {
+			key = r.Header.Get("x-api-key")
+		}
+		switch {
+		case strings.HasPrefix(key, "bad-"):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":{"message":"Incorrect API key provided","type":"invalid_request_error","code":"invalid_api_key"}}`)
+		case strings.HasPrefix(key, "rl-"), strings.HasPrefix(key, "slow-"):
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "5")
+			w.WriteHeader(http.StatusTooManyRequests)
+			fmt.Fprint(w, `{"error":{"message":"Rate limit reached","type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
 func main() {
 	http.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) { // lets "Discover models" work in the demo
 		var data []any
@@ -317,7 +342,7 @@ func main() {
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	})
 	asyncmock.Register(http.DefaultServeMux) // files, batches, videos
-	if err := http.ListenAndServe("127.0.0.1:9901", nil); err != nil {
+	if err := http.ListenAndServe("127.0.0.1:9901", keyFaults(http.DefaultServeMux)); err != nil {
 		log.Fatalf("mockprovider: %v (is another mock already running on 9901?)", err)
 	}
 }

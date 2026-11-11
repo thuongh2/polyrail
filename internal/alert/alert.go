@@ -95,6 +95,39 @@ func Services() []string {
 var vendorHosted = map[string]bool{"telegram": true, "discord": true, "slack": true, "teams": true,
 	"googlechat": true, "pushover": true, "ntfy": true}
 
+// onVendorHost reports whether a vendor-hosted service's URL keeps the vendor's API host: ntfy
+// and googlechat take the host from the URL, telegram from its apiurl query parameter.
+func onVendorHost(name string, u *url.URL) bool {
+	switch name {
+	case "ntfy":
+		return u.Hostname() == "" || u.Hostname() == ntfy.DefaultHost
+	case "googlechat":
+		return u.Hostname() == "" || u.Hostname() == googlechat.DefaultHost
+	case "telegram":
+		for k := range u.Query() {
+			if strings.EqualFold(k, "apiurl") {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// TenantServices lists the services org channels may use: the vendor-hosted ones, or every
+// supported service when allowPrivate (ALLOW_PRIVATE_PROVIDER_URLS) is set.
+func TenantServices(allowPrivate bool) []string {
+	if allowPrivate {
+		return Services()
+	}
+	var out []string
+	for _, s := range Services() {
+		if vendorHosted[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // Service is the service name of a channel URL ("generic+https://..." is "generic").
 func Service(raw string) string {
 	u, err := url.Parse(raw)
@@ -120,10 +153,15 @@ func CheckURL(raw string, tenant, allowPrivate bool) error {
 	if err != nil {
 		return fmt.Errorf("not a valid %s URL", name)
 	}
+	if name == "teams" { // the workflow URL is only checked at send time by shoutrrr
+		if err := teams.ValidateWebhookURL(u.Query().Get("host")); err != nil {
+			return errors.New("teams needs host= a Power Automate workflow webhook URL")
+		}
+	}
 	if !tenant {
 		return nil
 	}
-	if vendorHosted[name] && (name != "ntfy" || u.Hostname() == "" || u.Hostname() == ntfy.DefaultHost) {
+	if vendorHosted[name] && onVendorHost(name, u) {
 		return nil
 	}
 	if !allowPrivate {

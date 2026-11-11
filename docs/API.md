@@ -403,7 +403,7 @@ Design and status rules: [KEYS.md](KEYS.md).
   a stored key of the provider (compared by SHA-256 of the decrypted values) or to an earlier one in
   the call counts as a `duplicate`. Cloud types (`azure`, `bedrock`, `bedrock_mantle`, `sagemaker`,
   `vertex`, `cloudflare`) answer 400: their keys carry per-key config, added in the provider dialog.
-- PATCH `enabled: true` also lifts a quarantine and the cooldown. `weight` 0–1000000, `name` ≤ 100
+- PATCH `enabled: true` also lifts a quarantine and the cooldown. `weight` 0–1000000 (0 routes like 1 and is listed as 1), `name` ≤ 100
   characters, `models` ≤ 1000 names. Deleting the last key of a cloud-type provider answers 400.
 - Bulk: at most 1000 ids (100 for `test`, run 8 at a time); unknown ids get `{"ok": false, "error":
   "not found"}`; `clear` lifts quarantine and cooldown.
@@ -427,7 +427,11 @@ rest and never returned. At most 20 channels per org and 20 platform channels.
 
 - Services: `telegram`, `discord`, `slack`, `teams`, `googlechat`, `pushover`, `ntfy`, `gotify`,
   `matrix`, `mattermost`. `smtp` and `generic` only in binaries built with `-tags alertsfull`
-  (CONFIG.md). An unknown service or a URL its service cannot parse answers 400 without quoting
+  (CONFIG.md). `GET /api/auth/config` lists them as `alert_services: {platform: [...], org: [...]}`
+  (`org` = the services org channels may use on this server).
+- Teams takes a Power Automate workflow URL: `teams://?host=<URL-encoded workflow URL>` (Office 365
+  connector URLs are retired; other hosts answer 400). Org channels on `telegram` may not set
+  `apiurl`, on `googlechat` only the default host. An unknown service or a URL its service cannot parse answers 400 without quoting
   the URL.
 - Org channels: `telegram`, `discord`, `slack`, `teams`, `googlechat`, `pushover`, and `ntfy` on
   `ntfy.sh`. Services with their own host (`gotify`, `matrix`, `mattermost`, self-hosted `ntfy`,

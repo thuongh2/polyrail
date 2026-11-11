@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,11 +107,13 @@ func (k *keyHealth) result(id string, status int, retryAfter time.Duration) (qua
 	return false
 }
 
-// clear forgets key id's cooldown and failure counts.
+// clear forgets key id's cooldown and failure counts (its last use stays).
 func (k *keyHealth) clear(id string) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	delete(k.st, id)
+	if s := k.st[id]; s != nil {
+		k.st[id] = &keyState{last: s.last}
+	}
 }
 
 func (k *keyHealth) claim(id string) bool {
@@ -332,6 +335,9 @@ func (g *Gateway) TestKey(ctx context.Context, pid, kid, model string) (TestKeyR
 	if be != nil {
 		res.Status = statusOf(be.StatusCode)
 		res.Error = fromBifrost(be, p.OrgID != "").msg
+		if v := p.Keys[i].Value; len(v) >= 8 { // an upstream may echo the key in its message
+			res.Error = strings.ReplaceAll(res.Error, v, MaskKey(v))
+		}
 		g.keyResult(snap, kid, res.Status, time.Duration(be.ExtraFields.RetryAfter)*time.Millisecond, 0, 0, 0)
 		return res, nil
 	}

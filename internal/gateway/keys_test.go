@@ -56,6 +56,11 @@ func TestKeyHealthTransitions(t *testing.T) {
 	if k.result("d", 401, 0) {
 		t.Fatal("success did not reset the auth count")
 	}
+	// clear (re-enable, Clear status) lifts the cooldown but keeps the last use
+	k.clear("d")
+	if _, ok := k.cooling("d"); ok || k.lastUsed("d") != now || k.result("d", 401, 0) {
+		t.Fatal("clear: cooldown, last use or auth count wrong")
+	}
 	if MaskKey("sk-abcdefghijklmnop") != "sk-a****mnop" || MaskKey("short-key") != "****" {
 		t.Fatal("mask")
 	}
@@ -92,7 +97,7 @@ func keySetup(t *testing.T, keys ...store.ProviderKey) *keyFixture {
 		if strings.HasPrefix(v, "bad") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(401)
-			fmt.Fprint(w, `{"error":{"message":"invalid api key sk-secretvalue123","type":"invalid_request_error"}}`)
+			fmt.Fprintf(w, `{"error":{"message":"invalid api key sk-secretvalue123 (sent %s)","type":"invalid_request_error"}}`, v)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -337,8 +342,8 @@ func TestTestKeyPinsAndSanitizes(t *testing.T) {
 	if f.hit("good-key-0001") != before || f.hit("bad-key-00001") == 0 {
 		t.Fatal("test was not pinned to the key")
 	}
-	if strings.Contains(res.Error, "sk-secretvalue123") {
-		t.Fatalf("secret-like text not redacted: %q", res.Error)
+	if strings.Contains(res.Error, "sk-secretvalue123") || strings.Contains(res.Error, "bad-key-00001") || !strings.Contains(res.Error, "bad-****0001") {
+		t.Fatalf("secret-like text or the key not redacted: %q", res.Error)
 	}
 	if st, _ := f.g.KeyStatus(f.g.Snapshot().Providers[f.prov.ID].Keys[1]); st != KeyCooldown {
 		t.Fatalf("failed test should cool the key: %s", st)

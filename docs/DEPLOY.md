@@ -28,6 +28,11 @@ open Platform → Providers, edit a provider, paste its API key and enable it; i
 the catalog and the API within 2 seconds. Installs that already have providers keep them as they are
 and can add the catalog with Platform → Models → Load model catalog.
 
+Email (`smtp://`) and generic HTTP (`generic://`) alert channels are not in the default binary
+(+16 MB): build with `make build TAGS=alertsfull` if you need them (docs/CONFIG.md "Build tags").
+Telegram, Discord, Slack, Teams, Google Chat, Pushover, ntfy, Gotify, Matrix and Mattermost work in
+every build.
+
 Put TLS in front with any reverse proxy (Caddy: `gateway.example.com { reverse_proxy 127.0.0.1:8080 }`)
 and set `PUBLIC_URL=https://gateway.example.com`. Streaming needs the proxy not to buffer responses;
 the gateway sends `X-Accel-Buffering: no` for nginx.

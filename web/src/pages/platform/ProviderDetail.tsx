@@ -106,13 +106,13 @@ function usePolled<T>(fn: () => Promise<T>, deps: unknown[], ms: number) {
 }
 
 /** Current time, ticking every second while `on` (for cooldown countdowns). */
-function useNow(on: boolean) {
+/** The current time, ticking every second while `fast` (a cooldown counts down), else every 15 s. */
+function useNow(fast: boolean) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    if (!on) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    const t = setInterval(() => setNow(Date.now()), fast ? 1000 : 15000);
     return () => clearInterval(t);
-  }, [on]);
+  }, [fast]);
   return now;
 }
 
@@ -540,7 +540,7 @@ function KeyCard({
       <dl className="grid grid-cols-2 gap-2 text-xs">
         <div>
           <dt className="text-muted-foreground">Last used</dt>
-          <dd title={k.last_used_at ? new Date(k.last_used_at).toLocaleString() : undefined}>{k.last_used_at ? ago(k.last_used_at, now) : "Never"}</dd>
+          <dd title={k.last_used_at ? new Date(k.last_used_at).toLocaleString() : undefined}>{k.last_used_at ? ago(k.last_used_at, Math.max(now, Date.now())) : "Never"}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Weight</dt>
@@ -556,7 +556,7 @@ function KeyCard({
           <span className={cn("inline-flex items-center gap-0.5", s.errors ? "text-danger" : "")} title="Failed requests in 24 hours">
             <X className="size-3.5" aria-hidden /><span className="sr-only">failed</span>{compact(s.errors)}
           </span>
-          {s.requests > 0 && <span title="Average latency in 24 hours">{ms(s.avg_latency_ms)}</span>}
+          {s.requests > s.errors && <span title="Average latency of successful requests in 24 hours">{ms(s.avg_latency_ms)}</span>}
         </p>
         <div className="flex gap-0.5">
           <Button size="icon-sm" variant="ghost" aria-label={`Usage chart for ${label}`} title="Usage chart" onClick={onChart}>

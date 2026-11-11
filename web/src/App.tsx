@@ -49,32 +49,36 @@ export function App() {
           <Switch>
             <Route path="/login">{() => <Login mode="login" />}</Route>
             <Route path="/signup">{() => <Login mode="signup" />}</Route>
-            <Route path="/app" nest>
+            {/* The layout sits outside the nested router so its links and active state use absolute
+                /app/... paths; pages inside the nest link relative to /app. */}
+            <Route path="/app/*?">
               <ConsoleLayout>
-                <Suspense fallback={<Fallback />}>
-                  <Switch>
-                    <Route path="/" component={() => <Redirect to="/activity" />} />
-                    <Route path="/activity" component={page(Activity, "org")} />
-                    <Route path="/logs" component={page(Logs)} />
-                    <Route path="/playground" component={page(Playground)} />
-                    <Route path="/keys" component={page(Keys)} />
-                    <Route path="/credits" component={page(Credits)} />
-                    <Route path="/models" component={page(ModelsAdmin, "org")} />
-                    <Route path="/providers" component={page(ProvidersAdmin, "org")} />
-                    <Route path="/members" component={page(Members)} />
-                    <Route path="/settings" component={page(Settings)} />
-                    <Route path="/audit" component={page(Audit, "org")} />
-                    <Route path="/account" component={page(Account)} />
-                    <Route path="/platform/activity" component={page(Activity, "platform")} />
-                    <Route path="/platform/orgs" component={page(Orgs)} />
-                    <Route path="/platform/providers" component={page(ProvidersAdmin, "platform")} />
-                    <Route path="/platform/models" component={page(ModelsAdmin, "platform")} />
-                    <Route path="/platform/users" component={page(Users)} />
-                    <Route path="/platform/mcp" component={page(MCP)} />
-                    <Route path="/platform/audit" component={page(Audit, "platform")} />
-                    <Route>{() => <NotFound />}</Route>
-                  </Switch>
-                </Suspense>
+                <Route path="/app" nest>
+                  <Suspense fallback={<Fallback />}>
+                    <Switch>
+                      <Route path="/" component={() => <Redirect to="/activity" />} />
+                      <Route path="/activity" component={page(Activity, "org")} />
+                      <Route path="/logs" component={page(Logs)} />
+                      <Route path="/playground" component={page(Playground)} />
+                      <Route path="/keys" component={page(Keys)} />
+                      <Route path="/credits" component={page(Credits)} />
+                      <Route path="/models" component={page(ModelsAdmin, "org")} />
+                      <Route path="/providers" component={page(ProvidersAdmin, "org")} />
+                      <Route path="/members" component={page(Members)} />
+                      <Route path="/settings" component={page(Settings)} />
+                      <Route path="/audit" component={page(Audit, "org")} />
+                      <Route path="/account" component={page(Account)} />
+                      <Route path="/platform/activity" component={page(Activity, "platform")} />
+                      <Route path="/platform/orgs" component={page(Orgs)} />
+                      <Route path="/platform/providers" component={page(ProvidersAdmin, "platform")} />
+                      <Route path="/platform/models" component={page(ModelsAdmin, "platform")} />
+                      <Route path="/platform/users" component={page(Users)} />
+                      <Route path="/platform/mcp" component={page(MCP)} />
+                      <Route path="/platform/audit" component={page(Audit, "platform")} />
+                      <Route>{() => <NotFound />}</Route>
+                    </Switch>
+                  </Suspense>
+                </Route>
               </ConsoleLayout>
             </Route>
             <Route>

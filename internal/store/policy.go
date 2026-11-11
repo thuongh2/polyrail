@@ -30,7 +30,7 @@ type Policy struct {
 	Filters            []PolicyFilter `json:"filters,omitempty"`
 	RequireZDR         bool           `json:"require_zdr,omitempty"`          // only providers declaring zero data retention
 	DenyDataCollection bool           `json:"deny_data_collection,omitempty"` // only providers declaring no training on data
-	AllowedRegions     []string       `json:"allowed_regions,omitempty"`      // stored for data regions (W2); not enforced yet
+	AllowedRegions     []string       `json:"allowed_regions,omitempty"`      // data regions (NormalizeRegion); empty = any
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          time.Time      `json:"updated_at"`
 }
@@ -63,6 +63,30 @@ var reFilterName = regexp.MustCompile(`^[A-Za-z0-9 _.-]{0,64}$`)
 
 func policyKey(orgID, id string) string { return "policy/" + orgID + "/" + id }
 
+// NormalizeRegion maps a data region to its canonical name: "" and "global" are global; eu,
+// europe and their sub-regions (eu-west-1, europe-west4) are europe; us, usa and us-* are us;
+// anything else is kept lowercased (e.g. apac).
+func NormalizeRegion(r string) string {
+	r = strings.ToLower(strings.TrimSpace(r))
+	switch {
+	case r == "" || r == "global":
+		return "global"
+	case r == "eu" || r == "europe" || strings.HasPrefix(r, "eu-") || strings.HasPrefix(r, "europe-"):
+		return "europe"
+	case r == "us" || r == "usa" || strings.HasPrefix(r, "us-"):
+		return "us"
+	}
+	return r
+}
+
+// Region is the provider's normalized data region; global when it declares none.
+func (p Provider) Region() string {
+	if p.Privacy == nil {
+		return "global"
+	}
+	return NormalizeRegion(p.Privacy.Region)
+}
+
 func (p *Policy) validate() error {
 	inv := func(f string, a ...any) error { return fmt.Errorf("%w: "+f, append([]any{ErrInvalid}, a...)...) }
 	p.Name = strings.TrimSpace(p.Name)
@@ -81,6 +105,13 @@ func (p *Policy) validate() error {
 			return inv("%s entries must be non-empty (at most 200 characters)", name)
 		}
 	}
+	var regions []string
+	for _, r := range p.AllowedRegions {
+		if r = NormalizeRegion(r); !slices.Contains(regions, r) {
+			regions = append(regions, r)
+		}
+	}
+	p.AllowedRegions = regions
 	if b := p.Budget; b != nil {
 		if b.LimitMicros <= 0 {
 			return inv("budget limit must be > 0")

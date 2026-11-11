@@ -394,3 +394,36 @@ TestCheckURLTenantServices, TestSendNtfyHTTP, TestDispatcherDedupeScopeAndAutoDi
   read any org's content (they act as owners). Only `/v1/chat/completions` is captured.
   [TestContentSealedPurgedAndOrgDelete, TestContentLoggingOptIn, TestContentLoggingStream,
   TestContentLoggingSettingAndRead]
+
+## Data regions and trace exports (2026-11-11, W2-F, D30, developer notes for review)
+
+- **Region enforcement.** `allowed_regions` (policies) and `REGION_LOCK` (deployment) are provider
+  filters in `policyTargets`, which every model request passes through (`resolve`); they remove
+  targets before Bifrost sees them, so no fallback reaches a provider outside the region. A provider
+  without a declared region is `global` and fails both unless `global` is listed. Regions are the
+  provider admin's declaration, not verified: the operator must declare platform providers
+  correctly, and org admins declare their own providers' regions (they only constrain their own
+  keys). [TestAllowTargetRegions, TestRegionLockAndPolicyRegions, TestNormalizeRegion]
+- **Trace export SSRF.** Tenant endpoints get the webhook rules: https on a public host at save time
+  (`webhook.CheckURL` → `CheckPublicURL`), re-checked before every batch and test, a dialer that
+  refuses non-public addresses after DNS (`PublicDialer`), no proxy, no redirects. Only the status
+  code of a test is returned; collector bodies are discarded (64 KB drained). With
+  `ALLOW_PRIVATE_PROVIDER_URLS` any http(s) URL is allowed, as for webhooks.
+  [TestSSRFAndLangfuse, TestTraceExportNeedsPublicHTTPS]
+- **Secrets.** Export headers (bearer tokens, Langfuse key pair as Basic auth) are sealed with
+  AES-256-GCM under `MASTER_KEY` (`trace/<org|_>/<id>`), `json:"-"`; responses list header names
+  only; audit entries record type and endpoint host (no path or query). Hop-by-hop and framing
+  headers (`Host`, `Content-Length`, …) and CR/LF in values are refused. [TestTraceExportSealedCRUD,
+  TestTraceExportAPI]
+- **Content.** Prompt and completion leave the gateway only when the export has `include_content`
+  and the org itself turned content logging on (the gateway passes captured bodies only then), cut
+  at 16 KB each. Platform exports with `include_content` send org content to the operator's
+  collector — the same data operators can already read through the content-log API.
+  [TestExportFiltersAndContentGating, TestTracerReceivesRequests]
+- **Isolation and load.** Org exports see only their org's requests; key filters of org exports must
+  name the org's keys. Spans wait in a bounded buffer (`TRACE_QUEUE`), one org's exports may hold a
+  tenth of it, one batch per export is in flight, and 10 consecutive failed batches disable the
+  export, so a slow or dead collector cannot grow memory or starve other orgs. The request path
+  only appends to a slice under a mutex after an atomic check (`Wants`). [TestFairShare,
+  TestRetryThenDisable, TestBatchingAndHeaders]
+

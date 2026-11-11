@@ -50,7 +50,7 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 |---|---|---|
 | ZDR enforcement (account / guardrail / request `provider.zdr`, OR-ed) | have | provider `privacy` metadata; policy `require_zdr` filters targets (D26); request `provider.zdr` filters on top (D27) — both apply |
 | `data_collection: deny` | have | policy `deny_data_collection` (D26) and request `provider.data_collection` (D27), composed |
-| Data regions (`allowed_data_regions`: global / europe / us), regional endpoints | gap · W2 | provider `region` tag + policy; regional hostnames are a deploy concern |
+| Data regions (`allowed_data_regions`: global / europe / us), regional endpoints | have | D30; provider `privacy.region` normalized to global / europe / us / other, policy `allowed_regions`, `REGION_LOCK` for a regional deployment (eu.example.com); no request-level field (OpenRouter uses hostnames) |
 | Prompt / response logging off by default, opt-in per workspace | have | D28; per org (no workspaces yet), AES-GCM sealed, 1–90 day TTL, chat completions only |
 | BYOK with declared ZDR | have | org providers take the same `privacy` declaration |
 
@@ -71,7 +71,7 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 | OpenRouter | Polyrail | Notes |
 |---|---|---|
 | Activity export CSV, group by model / key / creator | have | D28; `usage/export.csv` (model / key / creator / day), `logs/export.csv` |
-| Broadcast to OTel, Langfuse, Datadog, S3, … with sampling and key filters | gap · W2 | OTel GenAI spans first (covers most backends), S3/NDJSON second |
+| Broadcast to OTel, Langfuse, Datadog, S3, … with sampling and key filters | have | D30; org + platform trace exports: OTLP/HTTP JSON GenAI spans (Tempo, Jaeger, Datadog Agent, Grafana Cloud, …) and Langfuse via its OTLP endpoint; sampling, key filter, opt-in content; S3/NDJSON not built |
 | Prometheus | have | OpenRouter has none |
 
 ## Proposed waves

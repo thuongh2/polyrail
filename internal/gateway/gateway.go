@@ -48,6 +48,9 @@ type Config struct {
 	ProxyNoProxy string
 	// ProxyHealthInterval is how often pool members are probed (0: never).
 	ProxyHealthInterval time.Duration
+	// RegionLock (REGION_LOCK, normalized) routes every request only to providers of that data
+	// region, for a regional deployment; "" = no lock.
+	RegionLock string
 }
 
 // Events receives org events for webhooks (internal/webhook) and alert channels (internal/alert).
@@ -65,14 +68,32 @@ func (f Fanout) Emit(orgID, typ string, data map[string]any) {
 	}
 }
 
+// Tracer receives finished requests for trace export (internal/broadcast, D30). Wants is a cheap
+// check that the org or the platform has an enabled export; Export must not block.
+type Tracer interface {
+	Wants(orgID string) bool
+	Export(t Trace)
+}
+
+// Trace is one finished request for a Tracer.
+type Trace struct {
+	Log    store.RequestLog
+	Kind   string // model kind: chat, embedding, image, ...
+	System string // type of the serving provider (openai, anthropic, ...); "" when unknown
+	// Request and Response are the captured bodies, set only when the org logs content
+	// (store.ContentLogging); exports add them only when they include content.
+	Request, Response string
+}
+
 type Gateway struct {
-	S     *store.Store
-	Usage *usage.Pipeline
-	Lim   limits.Limiter
-	BF    *bifrost.Bifrost
-	Hooks Events      // nil: no webhooks
-	KB    *kb.Service // nil: no knowledge-base grounding
-	cfg   Config
+	S      *store.Store
+	Usage  *usage.Pipeline
+	Lim    limits.Limiter
+	BF     *bifrost.Bifrost
+	Hooks  Events      // nil: no webhooks
+	Traces Tracer      // nil: no trace export
+	KB     *kb.Service // nil: no knowledge-base grounding
+	cfg    Config
 
 	snap  atomic.Pointer[Snapshot]
 	auth  *ttlCache[*principal]
@@ -103,6 +124,9 @@ func HashKey(secret string) string {
 }
 
 func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipeline, cfg Config) (*Gateway, error) {
+	if cfg.RegionLock != "" {
+		cfg.RegionLock = store.NormalizeRegion(cfg.RegionLock)
+	}
 	g := &Gateway{S: s, Usage: up, Lim: lim, cfg: cfg,
 		auth: newTTLCache[*principal](50_000, 0),
 		resp: newTTLCache[[]byte](100_000, cfg.CacheMB<<20),
@@ -457,6 +481,13 @@ func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start 
 	g.Usage.Record(l)
 	g.recordPolicySpend(p, m, l.Cost)
 	g.saveContent(p, l)
+	if g.Traces != nil && g.Traces.Wants(p.Org.ID) {
+		tr := Trace{Log: l, Kind: m.Kind, System: g.snap.Load().providerType(m, l.Provider)}
+		if c := p.content; c != nil {
+			tr.Request, tr.Response = c.req, c.res.String()
+		}
+		g.Traces.Export(tr)
+	}
 	if l.Error != "" && l.Status >= 400 && l.Status != 499 && !strings.HasPrefix(l.Error, "guardrail") {
 		// upstream failure after all fallbacks; no prompt or upstream text in the payload
 		g.emit(p.Org.ID, "request.failed", map[string]any{"model": m.ID, "status": l.Status, "code": "provider_error", "key_id": p.Key.ID})

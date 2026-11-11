@@ -210,10 +210,10 @@ All policies that apply to a key combine:
 | `allowed_models` (globs, `*` matches any run including `/`) | intersect: a model must match an entry of every list. Otherwise 403 `policy_model_not_allowed`; `/v1/models` lists only allowed models. |
 | `allowed_providers` (provider type, name or id; case-insensitive) | intersect. Targets of other providers are skipped. |
 | `require_zdr`, `deny_data_collection` | OR. Only targets whose provider declares `privacy.zdr: true` / `privacy.trains_on_data: false`; undeclared privacy fails both. |
-| (provider filters above) | If no target of the model is left: 403 `policy_no_eligible_provider`; the gateway never falls back to a disallowed provider. |
+| (provider filters above and `allowed_regions`) | If no target of the model is left: 403 `policy_no_eligible_provider` (`policy` names the policies, plus `REGION_LOCK` on a region-locked deployment, CONFIG.md); the gateway never falls back to a disallowed provider. |
 | `filters: [{name, pattern, action}]` | union. RE2 patterns (linear time; at most 100 KB per policy) on the request's input text (the same text org guardrails see, batch files included), before org guardrails. Any `block` match: 403 `policy_filter_blocked`, and redactions are skipped. `redact` replaces matches with `[REDACTED:<name>]` (`[REDACTED]` without a name). |
 | `budget: {limit_usd \| limit_micros, interval, include_byok}` | each budget is checked on its own. `interval`: `daily`, `weekly` (from Monday), `monthly` (from the 1st), `lifetime`, all UTC. A budget applies per person and per key: a policy reaching the key as org default or through `member_ids` limits the spend of the key's creator across all their keys; through `key_ids` it limits the key's own spend (a key without a creator is budgeted per key). Spend on org (BYOK) models counts only with `include_byok`. Over the limit: 403 `policy_budget_exceeded` and a `budget.exceeded` event with `code: policy_budget_exceeded`, `policy`. |
-| `allowed_regions` | stored for data regions (W2); not enforced yet. |
+| `allowed_regions` (`global`, `europe`, `us`, or another region name) | intersect: a provider's declared `privacy.region` must be in every list. A provider without a region (or without `privacy`) is `global`, which passes only when `global` is listed. Entries are normalized on save (`eu`, `eu-west-1` → `europe`; `us-east-1`, `usa` → `us`). Counts as a provider filter for `policy_no_eligible_provider`. |
 
 Budgets count spend while the policy applies to the key (counters are written only for keys under
 a budget), with the same per-node delta as key budgets (D7). Org guardrails, key `models` and
@@ -247,8 +247,10 @@ Effective policy response:
 
 Providers (platform and org) take `privacy: {zdr, trains_on_data, retention_days, region}` on
 POST/PUT: what the provider's admin declares about prompt data. `retention_days` 0–36500 (not with
-`zdr: true`), `region` lowercase letters, digits and `-`. It is returned with the provider and per
-provider in `GET /api/public/models/{id}`.
+`zdr: true`), `region` lowercase letters, digits and `-`, stored normalized (`eu`, `eu-west-1`,
+`europe-west4` → `europe`; `us`, `usa`, `us-east-1` → `us`; `global`; others as given, e.g. `apac`;
+empty = `global`). It is returned with the provider and per provider in
+`GET /api/public/models/{id}`.
 
 ### Semantic cache
 
@@ -655,6 +657,66 @@ rest and never returned. At most 20 channels per org and 20 platform channels.
 | `key.recovered` | a quarantine is lifted (test success, re-enable, `clear`, or the key served a request) | `provider_id`, `provider`, `key_id`, `key_name` |
 | `provider.unavailable` | a request found no available key on a provider | `provider_id`, `provider` |
 | `budget.exceeded`, `request.failed` | as for webhooks | as for webhooks |
+
+### Trace exports
+
+Send one OpenTelemetry span per request (OpenRouter "Broadcast") to an OTLP collector or Langfuse.
+Same routes under `/api/orgs/{org}/trace-exports` (the org's requests, admin) and
+`/api/admin/trace-exports` (every org's requests, operator):
+
+| Method | Path | |
+|---|---|---|
+| GET | `…/trace-exports` | bare array |
+| POST | `…/trace-exports` | create → 201 |
+| PATCH | `…/trace-exports/{id}` | change the fields sent → 200 |
+| DELETE | `…/trace-exports/{id}` | → 204 |
+| POST | `…/trace-exports/{id}/test` | post one test span now → `{"ok", "status", "error"?}` (the collector's body is never returned; `failures` is unchanged) |
+
+Body: `name` (1–100, required), `type` (`otlp` \| `langfuse`, required), `endpoint` (required;
+`otlp`: the full OTLP/HTTP traces URL, e.g. `https://otlp.example.com/v1/traces`; `langfuse`: the
+Langfuse base URL, e.g. `https://cloud.langfuse.com`, spans go to `<base>/api/public/otel/v1/traces`),
+`headers` (object, write-only, at most 20; replaces all headers when sent; `Host`, `Content-Type`,
+`Content-Length`, `Transfer-Encoding`, `Connection`, `User-Agent` refused), `langfuse:
+{public_key, secret_key}` (type `langfuse`: becomes the `Authorization: Basic` header, required on
+create), `sample_rate` (0–1, default 1; the decision is a hash of the request id), `key_ids` (only
+these API keys' requests; org exports: keys of the org, else 400; empty = all), `include_content`
+(default false), `enabled` (default true; re-enabling resets `failures`).
+
+Response: `{id, org_id, name, type, endpoint, header_names, sample_rate, key_ids?, include_content,
+enabled, failures, created_at}`. Header values are encrypted at rest and never returned. At most 5
+exports per org and 5 platform exports. Mutations and tests are audited (`trace_export.create`,
+`.update`, `.delete`, `.test`) with the type and endpoint host only.
+
+- Endpoint check: https on a public host (re-checked before every batch, connections pinned to
+  public addresses, no redirects, no proxy), or any http(s) URL with `ALLOW_PRIVATE_PROVIDER_URLS`.
+- Delivery: spans wait in per-export buffers and go out as one OTLP/HTTP JSON request of up to 100
+  spans, at least every 2 s. Network errors, 429 and 5xx are retried 3 times (1 s, 2 s, 4 s); after
+  10 consecutive failed batches the export is disabled. Buffers hold `TRACE_QUEUE` spans in total
+  (default 10000) and one org's exports at most a tenth of it (at least 1000); excess spans are
+  dropped and counted in `gateway_trace_spans_total{result="dropped"}`. Spans are best effort: a
+  restart loses buffered spans. Export changes apply on the node that made them at once, on other
+  nodes within 10 s.
+- Content: `gen_ai.prompt` (the request body) and `gen_ai.completion` (the response) are added only
+  when the export has `include_content` **and** the request's org has content logging on (chat
+  completions); each is cut at 16 KB.
+
+Span (one per request, kind `CLIENT`, name `<operation> <model>`, trace id derived from the request
+log id, span id = the request log id, status OK or ERROR with the error text):
+
+| Attribute | Value |
+|---|---|
+| `gen_ai.operation.name` | `chat`, `embeddings`, or the model kind (`image`, `speech`, …) |
+| `gen_ai.system`, `gen_ai.provider.name` | type of the provider that served (`openai`, `anthropic`, …) |
+| `gen_ai.request.model`, `gen_ai.response.model` | the Polyrail model id; the upstream model |
+| `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` | tokens |
+| `gen_ai.usage.cost` | billed USD (double) |
+| `http.response.status_code`, `error.type` | status; `error.type` (the status) on errors |
+| `user.id`, `polyrail.end_user` | the request's `user`, when sent |
+| `polyrail.request_id`, `polyrail.org_id`, `polyrail.key_id`, `polyrail.provider` | ids and the provider name |
+| `polyrail.cost_micros`, `polyrail.latency_ms`, `polyrail.cached`, `polyrail.stream` | billing and timing |
+| `gen_ai.prompt`, `gen_ai.completion` | content, only as above |
+
+The resource has `service.name: polyrail`. Example payload: `internal/broadcast/testdata/span.golden.json`.
 
 ### Proxy pools (operator only)
 

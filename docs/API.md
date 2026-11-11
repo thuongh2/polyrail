@@ -66,8 +66,9 @@ runs again.
 ### Cost header
 
 Successful non-stream responses of chat completions, completions, responses, embeddings and image
-generations carry `X-GW-Cost-Micros: <int>`, the micro-USD billed for that request (the same number
-recorded in usage; 0 for response-cache hits). Token counts are in the body's `usage`. Streams do not
+generations, edits and variations carry `X-GW-Cost-Micros: <int>`, the micro-USD billed for that
+request (the same number recorded in usage; 0 for response-cache and semantic-cache hits; the
+semantic cache's embedding call is logged and billed as its own request and not included). Token counts are in the body's `usage`. Streams do not
 get the header: it is sent before the usage is known.
 
 Anthropic SDK: `Anthropic(base_url="https://gw.example.com/anthropic", api_key="sk-gw-…")`.
@@ -99,8 +100,8 @@ status 400 `INVALID_ARGUMENT`, 401 `UNAUTHENTICATED`, 402 `FAILED_PRECONDITION`,
 
 ## Guardrails
 
-Set per org in `guardrails` on `PATCH /api/orgs/{org}` (admin). Applied before routing and before
-the response-cache lookup, in this order:
+Set per org in `guardrails` on `PATCH /api/orgs/{org}` (admin). Applied after the model is resolved
+and before the response-cache lookup and the upstream call, in this order:
 
 | Field | Effect |
 |---|---|

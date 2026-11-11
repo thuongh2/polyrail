@@ -309,7 +309,7 @@ curl ${base}/batches \\
               rows={[
                 ["x-gateway-cache: <seconds>", "Serve an identical earlier non-stream request from cache (max 86400). Cache hits cost nothing."],
                 ["x-gateway-mcp-clients: name1,name2 or *", "Inject tools from these MCP servers (only servers granted to your org)."],
-                ["Idempotency-Key: <up to 255 chars>", "Non-stream chat, embeddings, responses and image requests: a retry with the same key and body within 24 h returns the stored response without billing again (Idempotent-Replayed: true). Kept per node."],
+                ["Idempotency-Key: <up to 255 chars>", "Non-stream chat, embeddings, responses and image generation requests: a retry with the same key and body within 24 h returns the stored response without billing again (Idempotent-Replayed: true). Kept per node."],
               ]}
             />
             <h3 className="pt-2 font-medium text-foreground">Response</h3>

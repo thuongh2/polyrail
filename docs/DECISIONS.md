@@ -74,9 +74,9 @@ hostnames. Not tested against real Azure/AWS/GCP in the sandbox (no cloud accoun
 **D14 Routing strategies.** `store.Model.strategy` picks how `plan()` orders healthy targets
 (`internal/gateway/routing.go`): weighted (default), priority, round-robin, random, p2c, least-used,
 latency, cost, cache-affinity (OmniRoute parity, wave 1). Open-circuit targets always go last, so
-every strategy keeps the failover chain. Stats (in-flight, EWMA latency and error rate, alpha 0.2,
-round-robin counters) are per node and in memory, keyed by `provider|upstream model`, so bounded by
-the catalog; no cross-node sharing (each node balances its own traffic). In-flight is counted only
+every strategy keeps the failover chain. Stats (in-flight, EWMA latency and error rate, alpha 0.2)
+keyed by `provider|upstream model` and round-robin counters keyed by model are per node and in
+memory, so bounded by the catalog; no cross-node sharing (each node balances its own traffic). In-flight is counted only
 around the chat completions and Responses upstream calls, the hot paths; latency is whole-request
 time (streams included) recorded in `settle`, not time to first token. Cache-affinity uses
 rendezvous hashing of `prompt_cache_key` (else SHA-256 of the system/tools prefix) × target id, so
@@ -136,6 +136,6 @@ The embedding is computed by calling Bifrost's `EmbeddingRequest` with the org's
 the same resolve/settle/record path as `/v1/embeddings` (no HTTP self-call), billed to the calling
 key; the key's model allowlist is skipped because the model is an org setting. Vectors are normalized
 float32; lookup is a linear dot-product scan of the org's ≤ 1,000 entries (≈ 1.5 M multiply-adds at
-1,536 dims, under a per-org lock), LRU eviction inside the org and a global byte budget shared with
-`RESPONSE_CACHE_MB`. No vector DB or ANN index: the ponytail ladder stops at a slice; revisit if
+1,536 dims, under a per-org lock), LRU eviction inside the org and a global byte budget of
+`RESPONSE_CACHE_MB` (separate from the response cache's own, SECURITY L18). No vector DB or ANN index: the ponytail ladder stops at a slice; revisit if
 orgs need more than ~10k entries or cross-node sharing. Fail open on any embedding error.

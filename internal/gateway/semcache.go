@@ -211,7 +211,7 @@ func (g *Gateway) semanticCache(w http.ResponseWriter, r *http.Request, p *princ
 	}
 	if out, score, ok := g.sem.lookup(p.Org.ID, m.ID, sc.Model, vec, thresh, time.Now()); ok {
 		mCacheHits.Inc()
-		g.record(p, m, store.RequestLog{Status: 200, Cached: true, Provider: "cache"}, start)
+		setCost(w, g.record(p, m, store.RequestLog{Status: 200, Cached: true, Provider: "cache"}, start))
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-GW-Cache", "semantic")
 		w.Header().Set("X-GW-Cache-Score", strconv.FormatFloat(score, 'f', 4, 64))

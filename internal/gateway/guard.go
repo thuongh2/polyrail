@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -247,7 +248,7 @@ func chatGuard(g store.Guardrails, msgs []schemas.ChatMessage) ([]schemas.ChatMe
 			if (m.Role == schemas.ChatMessageRoleSystem || m.Role == schemas.ChatMessageRoleDeveloper) && m.Content != nil && m.Content.ContentStr != nil {
 				k := string(m.Role) + "\x00" + compressText(*m.Content.ContentStr)
 				if seen[k] {
-					in.dropped += len(*m.Content.ContentStr)
+					in.dropped += utf8.RuneCountInString(*m.Content.ContentStr)
 					continue
 				}
 				seen[k] = true

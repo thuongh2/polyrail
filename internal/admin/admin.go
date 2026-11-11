@@ -487,6 +487,30 @@ func (a *API) patchOrg(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, o)
 }
 
+// checkSemanticCache validates and fills defaults; an empty model turns the cache off (nil).
+func (a *API) checkSemanticCache(org string, sc *store.SemanticCache) (*store.SemanticCache, error) {
+	if sc.Model == "" {
+		return nil, nil
+	}
+	if m, ok := a.G.Snapshot().Model(org, sc.Model); !ok || m.Kind != "embedding" {
+		return nil, fmt.Errorf("%w: semantic_cache.model must be an embedding model available to the organization", store.ErrInvalid)
+	}
+	out := *sc
+	if out.Threshold == 0 {
+		out.Threshold = gateway.SemDefaultThresh
+	}
+	if !(out.Threshold >= 0.5 && out.Threshold <= 0.999) {
+		return nil, fmt.Errorf("%w: semantic_cache.threshold must be between 0.5 and 0.999", store.ErrInvalid)
+	}
+	if out.TTLSeconds == 0 {
+		out.TTLSeconds = gateway.SemDefaultTTL
+	}
+	if out.TTLSeconds < 1 || out.TTLSeconds > gateway.SemMaxTTL {
+		return nil, fmt.Errorf("%w: semantic_cache.ttl_seconds must be between 1 and %d", store.ErrInvalid, gateway.SemMaxTTL)
+	}
+	return &out, nil
+}
+
 func (a *API) deleteOrg(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("org")
 	if err := a.S.DeleteOrg(r.Context(), id); err != nil {

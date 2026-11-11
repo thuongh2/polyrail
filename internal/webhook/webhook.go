@@ -46,6 +46,7 @@ const (
 	disableAfter   = 10 // consecutive failed deliveries
 	dedupeWindow   = time.Minute
 	maxDedupeKeys  = 10_000
+	queueShare     = 10 // an org may hold 1/queueShare of the queue (queued or being delivered); 16 minimum
 	MaxPerOrg      = 20
 	maxURLLen      = 2048
 	responseDrain  = 64 << 10
@@ -122,10 +123,11 @@ type Dispatcher struct {
 	AllowPrivate bool
 	Backoff      time.Duration // delay before the first retry, doubled per retry
 
-	client *http.Client
-	q      chan Event
-	mu     sync.Mutex
-	seen   map[string]time.Time
+	client  *http.Client
+	q       chan Event
+	mu      sync.Mutex
+	seen    map[string]time.Time
+	pending map[string]int // per org: events queued or being delivered
 }
 
 // New makes a dispatcher with a queue of size queue; call Start to deliver.
@@ -144,7 +146,7 @@ func New(s *store.Store, allowPrivate bool, queue int) *Dispatcher {
 	return &Dispatcher{S: s, AllowPrivate: allowPrivate, Backoff: defaultBackoff,
 		client: &http.Client{Transport: tr, Timeout: timeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		q: make(chan Event, queue), seen: map[string]time.Time{}}
+		q: make(chan Event, queue), seen: map[string]time.Time{}, pending: map[string]int{}}
 }
 
 // Start runs workers until ctx ends.
@@ -159,13 +161,15 @@ func (d *Dispatcher) Start(ctx context.Context, workers int) {
 					return
 				case ev := <-d.q:
 					d.dispatch(ctx, ev)
+					d.release(ev.OrgID)
 				}
 			}
 		}()
 	}
 }
 
-// Emit queues an event without blocking; it is dropped (and counted) when the queue is full.
+// Emit queues an event without blocking; it is dropped (and counted) when the queue is full or
+// the org already holds its share of it.
 // request.failed goes out at most once per minute per org and model, budget.exceeded once per
 // org, code and key.
 func (d *Dispatcher) Emit(orgID, typ string, data map[string]any) {
@@ -178,10 +182,35 @@ func (d *Dispatcher) Emit(orgID, typ string, data map[string]any) {
 			return
 		}
 	}
+	if !d.reserve(orgID) {
+		mDeliveries.WithLabelValues("dropped").Inc()
+		return
+	}
 	select {
 	case d.q <- NewEvent(orgID, typ, data):
 	default:
+		d.release(orgID)
 		mDeliveries.WithLabelValues("dropped").Inc()
+	}
+}
+
+// reserve claims one of the org's queue slots, so an org with many or slow endpoints cannot
+// fill the shared queue and make other orgs' events drop.
+func (d *Dispatcher) reserve(orgID string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.pending[orgID] >= max(cap(d.q)/queueShare, min(cap(d.q), 16)) { // small queues: no share limit
+		return false
+	}
+	d.pending[orgID]++
+	return true
+}
+
+func (d *Dispatcher) release(orgID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.pending[orgID]--; d.pending[orgID] <= 0 {
+		delete(d.pending, orgID)
 	}
 }
 

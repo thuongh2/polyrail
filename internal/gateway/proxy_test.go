@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -31,19 +32,19 @@ func TestProxyConfigPrecedence(t *testing.T) {
 		{"tenant proxy ignored unless allowed", store.Provider{OrgID: "o1", Proxy: own}, "http://corp:3128"},
 	}
 	for _, c := range cases {
-		got := a.proxyConfig(c.p)
-		if (got == nil) != (c.want == "") || (got != nil && got.URL.GetValue() != c.want) {
+		got, err := a.proxyConfig(c.p)
+		if err != nil || (got == nil) != (c.want == "") || (got != nil && got.URL.GetValue() != c.want) {
 			t.Fatalf("%s: %+v", c.name, got)
 		}
 	}
-	if (&account{}).proxyConfig(store.Provider{}) != nil {
+	if cfg, _ := (&account{}).proxyConfig(store.Provider{}); cfg != nil {
 		t.Fatal("no global proxy and no own proxy must mean direct")
 	}
-	g := a.proxyConfig(store.Provider{})
+	g, _ := a.proxyConfig(store.Provider{})
 	if g.Type != schemas.HTTPProxy || g.NoProxy != ".internal" || g.Username.GetValue() != "u" || g.Password.GetValue() != "env.HOME" || g.CACertPEM != nil {
 		t.Fatalf("global proxy config: %+v (secrets must stay literal, never resolve env.*)", g)
 	}
-	o := (&account{proxy: global, tenantProxy: true}).proxyConfig(store.Provider{OrgID: "o1", Proxy: own})
+	o, _ := (&account{proxy: global, tenantProxy: true, allowPrivate: true}).proxyConfig(store.Provider{OrgID: "o1", Proxy: own})
 	if o.Type != schemas.Socks5Proxy || o.NoProxy != "" || o.Password.GetValue() != "env.PATH" || o.CACertPEM.GetValue() != "pem" {
 		t.Fatalf("own proxy config: %+v", o)
 	}
@@ -181,5 +182,56 @@ func TestChatGoesThroughProviderProxy(t *testing.T) {
 	}
 	if targets, _ = px.seen(); len(targets) != before || f.okHits.Load() != hits+1 {
 		t.Fatalf("call still went through the proxy: %v", targets)
+	}
+}
+
+// A tenant proxy hop is dialed by Bifrost without the private-address check, so the vetted
+// address is pinned into the config: a proxy host that rebinds to 127.0.0.1 after the check
+// cannot become the hop (M12).
+func TestTenantProxyPinnedToPublicIP(t *testing.T) {
+	answers := map[string][]net.IP{
+		"px.example":     {net.ParseIP("8.8.8.8")},
+		"rebind.example": {net.ParseIP("8.8.4.4"), net.ParseIP("127.0.0.1")},
+		"v6.example":     {net.ParseIP("2001:4860:4860::8888")},
+	}
+	old := lookupProxyIP
+	lookupProxyIP = func(host string) ([]net.IP, error) {
+		if ips, ok := answers[host]; ok {
+			return ips, nil
+		}
+		return nil, errors.New("no such host")
+	}
+	defer func() { lookupProxyIP = old }()
+	for raw, want := range map[string]string{
+		"http://px.example:3128":   "http://8.8.8.8:3128",
+		"socks5://px.example":      "socks5://8.8.8.8",
+		"socks5://v6.example:1080": "socks5://[2001:4860:4860::8888]:1080",
+		"https://px.example:443":   "https://px.example:443", // TLS to the proxy names its host: keep it
+		"http://1.1.1.1:8080":      "http://1.1.1.1:8080",
+	} {
+		got, err := pinProxyURL(raw)
+		if err != nil || got != want {
+			t.Fatalf("pin %s = %q %v, want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"http://rebind.example:3128", "socks5://127.0.0.1:1080", "http://nxdomain.example", "https://rebind.example"} {
+		if got, err := pinProxyURL(raw); err == nil {
+			t.Fatalf("pinned %s to %q", raw, got)
+		}
+	}
+	a := &account{tenantProxy: true}
+	if cfg, err := a.proxyConfig(store.Provider{OrgID: "o1", Proxy: &store.ProviderProxy{URL: "http://rebind.example:3128"}}); err == nil {
+		t.Fatalf("tenant proxy on a rebinding host configured: %+v", cfg)
+	}
+	cfg, err := a.proxyConfig(store.Provider{OrgID: "o1", Proxy: &store.ProviderProxy{URL: "http://px.example:3128"}})
+	if err != nil || cfg.URL.GetValue() != "http://8.8.8.8:3128" {
+		t.Fatalf("tenant proxy not pinned: %+v %v", cfg, err)
+	}
+	// operators and AllowPrivateURLs keep the host name
+	if cfg, err := a.proxyConfig(store.Provider{Proxy: &store.ProviderProxy{URL: "http://corp.internal:3128"}}); err != nil || cfg.URL.GetValue() != "http://corp.internal:3128" {
+		t.Fatalf("operator proxy: %+v %v", cfg, err)
+	}
+	if cfg, err := (&account{tenantProxy: true, allowPrivate: true}).proxyConfig(store.Provider{OrgID: "o1", Proxy: &store.ProviderProxy{URL: "http://rebind.example:3128"}}); err != nil || cfg.URL.GetValue() != "http://rebind.example:3128" {
+		t.Fatalf("private URLs allowed: %+v %v", cfg, err)
 	}
 }

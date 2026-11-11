@@ -158,6 +158,9 @@ func (v *kvVectorStore) load(ctx context.Context, org, kbID string) (*index, err
 				return nil, err
 			}
 			ix.add(di, seq, bytesInt8(rec.V), rec.K, plain)
+			if int64(len(ix.vecs))+int64(ix.chunks())*12 > v.cache.budget {
+				return nil, errIndexBudget // stop before materializing an index the budget cannot hold
+			}
 		}
 		if len(items) < 1000 {
 			break

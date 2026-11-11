@@ -90,12 +90,18 @@ func units(body string, size int) []string {
 		}
 		var cur string
 		for _, s := range sentences(para) {
-			for utf8.RuneCountInString(s) > size { // hard cut on a rune boundary
-				head, rest := cutRunes(s, size)
+			if utf8.RuneCountInString(s) > size { // hard cut on rune boundaries, in one pass
 				if cur != "" {
 					out, cur = append(out, cur), ""
 				}
-				out, s = append(out, head), strings.TrimSpace(rest)
+				rs := []rune(s)
+				for len(rs) > size {
+					out, rs = append(out, string(rs[:size])), rs[size:]
+					for len(rs) > 0 && unicode.IsSpace(rs[0]) {
+						rs = rs[1:]
+					}
+				}
+				s = string(rs)
 			}
 			switch {
 			case s == "":

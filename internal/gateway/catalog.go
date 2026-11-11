@@ -289,6 +289,10 @@ func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.Provid
 	if timeout <= 0 {
 		timeout = 120
 	}
+	proxy, err := a.proxyConfig(p)
+	if err != nil {
+		return nil, err
+	}
 	cfg := &schemas.ProviderConfig{
 		NetworkConfig: schemas.NetworkConfig{
 			BaseURL:                        p.BaseURL,
@@ -301,7 +305,7 @@ func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.Provid
 			AllowPrivateNetwork: p.OrgID == "" || a.allowPrivate,
 		},
 		ConcurrencyAndBufferSize: schemas.ConcurrencyAndBufferSize{Concurrency: a.concurrency, BufferSize: a.buffer},
-		ProxyConfig:              a.proxyConfig(p),
+		ProxyConfig:              proxy,
 	}
 	if MultiInstance(p.Type) {
 		cfg.CustomProviderConfig = &schemas.CustomProviderConfig{

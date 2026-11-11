@@ -81,9 +81,9 @@ counts, `Rev++`; delete KB = DeleteRange all prefixes; `DeleteOrg` adds `kb*/<or
   rune boundary; `overlap_chars` from the previous chunk within a section; drop chunks < 20 chars.
   Embedded text = `filename § section\n\ntext` (contextual header).
 - Queue/worker: upload writes `kbsrc` + doc(`queued`) + `kbq/` in one `Update`, returns 202.
-  `KB_WORKERS` (default 1) goroutines per node scan `kbq/` every 1 s (up to 1000 entries, oldest
-  doc first), claim with a 2 min lease (renewed per batch); chunk → embed in batches ≤64 inputs /
-  200k chars → `VectorStore.Upsert` (replaces the doc's chunks, so a failed run keeps the old ones)
+  `KB_WORKERS` (default 1) goroutines per node scan `kbq/` every 1 s (the whole queue, each org's
+  oldest doc in turn so one org's backlog cannot hold up others), claim with a 2 min lease (renewed per batch); chunk → embed in batches ≤64 inputs /
+  200k chars (vectors over 8,192 dims fail the doc) → `VectorStore.Upsert` (replaces the doc's chunks, so a failed run keeps the old ones)
   → doc `ready`, counts, `Rev++`, drop the queue entry. Expired lease = retry; 3 attempts →
   `failed`; transient failures retry after 10 s; a doc or KB deleted mid-run has its chunks removed.
 - Billing: the gateway `Embedder` goes through resolve → admit → settle → record; one request log
@@ -102,7 +102,9 @@ counts, `Rev++`; delete KB = DeleteRange all prefixes; `DeleteOrg` adds `kb*/<or
 - Fusion: RRF `Σ 1/(60+rank)` → `top_k` → pack until `max_context_tokens` (chars/4). Winners' text
   fetched by point `Get` + `Open`. Reported `score` = cosine (0 if BM25-only).
 - Index: per KB per node `{rev, dims, vecs []int8 flat, scales, refs, docs, postings, lens}`, loaded
-  with singleflight by paging `Scan` (1000), global LRU byte budget `KB_INDEX_MB` (default 256);
+  with singleflight by paging `Scan` (1000), global LRU byte budget `KB_INDEX_MB` (default 256; one load at a time,
+  and a KB whose index alone exceeds the budget is not loaded: search answers `limit_exceeded`,
+  grounding fails open);
   KB metadata cached 2 s; rev change → full reload (`// shortcut: incremental append later`).
 - Measured (`BenchmarkSearch100k`, 1 CPU of a 2.1 GHz Xeon): 100k × 512 dims ≈ 31 ms per hybrid
   search; ~1.6 KB per chunk (512 B vector + ~1.1 KB postings for ~1,600-char chunks of a large

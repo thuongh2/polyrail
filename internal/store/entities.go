@@ -704,6 +704,10 @@ func (s *Store) PutProvider(ctx context.Context, p *Provider) error {
 			}
 			p.CreatedAt = old.CreatedAt
 			rehost = old.BaseURL != p.BaseURL || old.Type != p.Type
+			if old.OrgID != "" { // a tenant's new proxy or proxy CA could read the keys in transit
+				was, now := proxyOf(old), proxyOf(p)
+				rehost = rehost || was.URL != now.URL || was.CACertPEM != now.CACertPEM
+			}
 		}
 		for i := range p.Keys {
 			k := &p.Keys[i]
@@ -743,6 +747,13 @@ func (s *Store) PutProvider(ctx context.Context, p *Provider) error {
 		}
 		return putJSON(tx, "prov/"+p.ID, p)
 	})
+}
+
+func proxyOf(p *Provider) ProviderProxy {
+	if p.Proxy == nil {
+		return ProviderProxy{}
+	}
+	return *p.Proxy
 }
 
 // sealProxy seals the proxy password. An empty password keeps the stored one while the proxy URL

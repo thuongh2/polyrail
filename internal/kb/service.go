@@ -62,6 +62,7 @@ const (
 	MaxKBsPerRequest        = 3
 	MaxSearchResults        = 50
 	MaxQueryChars           = 2000
+	MaxDimensions           = 8192 // longest embedding vector stored
 	maxAttempts             = 3
 )
 
@@ -171,7 +172,7 @@ var (
 	mIndexBytes = prometheus.NewGauge(prometheus.GaugeOpts{Name: "gw_kb_index_bytes", Help: "Estimated bytes of knowledge-base indexes held by this node."})
 	mIndexLoads = prometheus.NewCounter(prometheus.CounterOpts{Name: "gw_kb_index_loads_total", Help: "Knowledge-base index loads (cold, evicted or changed)."})
 	mIngest     = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "gw_kb_ingest_total", Help: "Document ingestion runs by outcome (ready, retry, failed)."}, []string{"status"})
-	mQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{Name: "gw_kb_queue_depth", Help: "Documents waiting in the ingestion queue (capped at 1000)."})
+	mQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{Name: "gw_kb_queue_depth", Help: "Documents waiting in the ingestion queue."})
 )
 
 func init() {
@@ -229,7 +230,7 @@ func validateKB(k *store.KB) error {
 		return invalid("description must be at most 1024 characters")
 	case k.EmbedModel == "" || len(k.EmbedModel) > 256:
 		return invalid("embedding_model required")
-	case k.Dimensions < 0 || k.Dimensions > 8192:
+	case k.Dimensions < 0 || k.Dimensions > MaxDimensions:
 		return invalid("dimensions must be 0 (native) to 8192")
 	case k.ChunkChars < 200 || k.ChunkChars > 8000:
 		return invalid("chunk_chars must be 200-8000")

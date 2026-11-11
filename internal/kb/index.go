@@ -3,6 +3,7 @@ package kb
 import (
 	"container/list"
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 
@@ -182,7 +183,12 @@ type indexCache struct {
 	ll   *list.List // front = most recent; values *cacheEntry
 	m    map[string]*list.Element
 	sf   singleflight.Group
+
+	loadMu sync.Mutex
 }
+
+// errIndexBudget: a KB's index alone exceeds the node's index budget (KB_INDEX_MB).
+var errIndexBudget = fmt.Errorf("%w: knowledge base index is larger than KB_INDEX_MB", ErrLimit)
 
 type cacheEntry struct {
 	key string
@@ -203,9 +209,14 @@ func (c *indexCache) get(ctx context.Context, org, kb string, rev int64) (*index
 		if ix := c.cached(key, rev); ix != nil { // a load finished between the check and Do
 			return ix, nil
 		}
+		c.loadMu.Lock() // one load at a time: peak memory stays near the budget plus one index
 		ix, err := c.load(context.WithoutCancel(ctx), org, kb)
+		c.loadMu.Unlock()
 		if err != nil {
 			return nil, err
+		}
+		if ix.size > c.budget {
+			return nil, errIndexBudget
 		}
 		c.put(key, ix)
 		return ix, nil
@@ -232,7 +243,7 @@ func (c *indexCache) put(key string, ix *index) {
 	c.removeLocked(key)
 	c.m[key] = c.ll.PushFront(&cacheEntry{key, ix})
 	c.used += ix.size
-	for c.used > c.budget && c.ll.Len() > 1 { // the newest index stays even when over budget alone
+	for c.used > c.budget && c.ll.Len() > 1 {
 		c.removeLocked(c.ll.Back().Value.(*cacheEntry).key)
 	}
 	mIndexBytes.Set(float64(c.used))

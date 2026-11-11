@@ -37,11 +37,15 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | Header | Effect |
 |---|---|
 | `Authorization: Bearer sk-gw-…` or `x-api-key` | API key (`x-api-key` is what the Anthropic SDKs send). |
+| `x-goog-api-key` or `?key=` | API key on `/genai/*` (what the Google GenAI SDKs send). |
 | `anthropic-version`, `anthropic-beta` | Accepted (and allowed by CORS) on `/anthropic/v1/*`, ignored. |
 | `x-gateway-cache: <seconds>` | Serve an identical earlier non-stream request from cache (max 86400). Cache hits cost nothing. |
 | `x-gateway-mcp-clients: name1,name2` or `*` | Inject tools from these MCP servers (only servers granted to your org and, if the key has `mcp_servers`, listed there). |
 
 SDK base URLs: OpenAI SDKs use `https://<host>/v1` or the alias `https://<host>/openai/v1`;
-Anthropic SDKs use `https://<host>/anthropic`.
+Anthropic SDKs use `https://<host>/anthropic`; Google GenAI SDKs use `https://<host>/genai` as
+`http_options.base_url` (Python `genai.Client(api_key="sk-gw-…", http_options={"base_url": "https://<host>/genai"})`,
+JS `new GoogleGenAI({apiKey: "sk-gw-…", httpOptions: {baseUrl: "https://<host>/genai"}})`) and catalog
+ids as model names (`model="vendor/name"`).
 
 Response headers: `x-gateway-provider` (provider that served), `x-gateway-request-id`, `x-gateway-cache-hit`.

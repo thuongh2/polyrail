@@ -128,8 +128,8 @@ func (a *account) GetKeysForProvider(_ context.Context, k schemas.ModelProvider)
 	if err != nil {
 		return nil, err
 	}
-	if len(p.Keys) == 0 && (p.Type == "ollama" || p.Type == "sgl") {
-		// Bifrost now reads these servers' URL from a key; keyless providers get one implicit key.
+	if len(p.Keys) == 0 && (p.Type == "ollama" || p.Type == "sgl" || p.Type == "vllm") {
+		// Bifrost reads these servers' URL from a key; keyless providers get one implicit key.
 		return []schemas.Key{withServerURL(p, schemas.Key{ID: p.ID, Name: "default", Models: schemas.WhiteList{"*"}, Weight: 1})}, nil
 	}
 	keys := make([]schemas.Key, 0, len(p.Keys))
@@ -146,10 +146,12 @@ func (a *account) GetKeysForProvider(_ context.Context, k schemas.ModelProvider)
 	return keys, nil
 }
 
-// withServerURL sets the per-key server URL Bifrost requires for Ollama and SGLang to the
+// withServerURL sets the per-key server URL Bifrost requires for Ollama, SGLang and vLLM to the
 // provider's base URL (the only place the platform configures it).
 func withServerURL(p store.Provider, k schemas.Key) schemas.Key {
 	switch p.Type {
+	case "vllm":
+		k.VLLMKeyConfig = &schemas.VLLMKeyConfig{URL: secret(p.BaseURL)}
 	case "ollama":
 		k.OllamaKeyConfig = &schemas.OllamaKeyConfig{URL: secret(p.BaseURL)}
 	case "sgl":

@@ -12,7 +12,10 @@ import { useSession } from "@/lib/session";
 /** Only same-origin paths, so ?next= can't send people to another site. */
 function nextPath() {
   const n = new URLSearchParams(location.search).get("next") ?? "";
-  return n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/\\") ? n : "/app";
+  if (!n.startsWith("/")) return "/app";
+  // The URL parser strips tabs and newlines and reads a backslash as "/", so compare the resolved origin.
+  const u = new URL(n, location.origin);
+  return u.origin === location.origin ? u.pathname + u.search + u.hash : "/app";
 }
 
 export default function Login({ mode }: { mode: "login" | "signup" }) {

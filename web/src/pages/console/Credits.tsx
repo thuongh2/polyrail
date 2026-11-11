@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { BarChart } from "@/components/console/BarChart";
-import { Section, Stat, StatStrip, TableFrame, dayDate, usdTick } from "@/components/console/bits";
+import { Section, Stat, StatStrip, TableFrame, dayDate, money, usdTick } from "@/components/console/bits";
 import { DataState, EmptyState, ErrorState, LoadingRows, PageHeader } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -8,7 +8,6 @@ import { fmt, get, orgBase, usd, type Org, type UsageReport } from "@/lib/api";
 import { useAsync } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 
-const money = (v: number) => usd(Math.round(v * 1e6));
 const label = (k: string) => dayDate(k).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
 export default function Credits() {

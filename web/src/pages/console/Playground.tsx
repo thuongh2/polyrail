@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Eraser, Send, Square } from "lucide-react";
-import { Field } from "@/components/console/bits";
-import { ms } from "@/components/console/bits";
+import { Field, ms } from "@/components/console/bits";
 import { EmptyState, ErrorState, PageHeader } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,10 +41,17 @@ async function readSSE(body: ReadableStream<Uint8Array>, onData: (json: unknown)
         reader.cancel().catch(() => {});
         return;
       }
+      let json: unknown;
       try {
-        onData(JSON.parse(data));
+        json = JSON.parse(data);
       } catch {
-        // ignore a malformed line rather than dropping the whole answer
+        continue; // ignore a malformed line rather than dropping the whole answer
+      }
+      try {
+        onData(json);
+      } catch (e) {
+        reader.cancel().catch(() => {}); // a provider error chunk ends the answer
+        throw e;
       }
     }
   }

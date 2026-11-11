@@ -28,7 +28,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-40 border-b bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:gap-6">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-4 sm:gap-6">
           <Wordmark />
           <nav aria-label="Main" className="flex items-center gap-1 text-sm">
             {nav.map((n) => (
@@ -37,7 +37,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
                 href={n.href}
                 aria-current={loc.startsWith(n.href) ? "page" : undefined}
                 className={cn(
-                  "rounded-md px-3 py-1.5 text-muted-foreground hover:text-foreground",
+                  "rounded-md px-2 py-1.5 text-muted-foreground sm:px-3 hover:text-foreground",
                   loc.startsWith(n.href) && "bg-accent text-foreground",
                 )}
               >

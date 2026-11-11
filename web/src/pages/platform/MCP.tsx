@@ -145,11 +145,11 @@ export default function MCP() {
 
 function Connection({ server, client }: { server: MCPServer; client?: MCPClient }) {
   if (!server.enabled) return <EnabledText on={false} />;
-  if (!client) return <span className="text-warning">Not connected</span>;
+  if (!client) return <span className="text-muted-foreground">Not connected</span>;
   const ok = client.state === "connected";
   return (
     <div>
-      <span className={ok ? "text-success" : client.state === "error" ? "text-destructive" : "text-warning"}>{ok ? "Connected" : client.state === "error" ? "Error" : client.state === "disconnected" ? "Disconnected" : client.state || "Unknown"}</span>
+      <span className={ok ? "text-success" : client.state === "error" ? "text-destructive" : "text-foreground"}>{ok ? "Connected" : client.state === "error" ? "Error" : client.state === "disconnected" ? "Disconnected" : client.state || "Unknown"}</span>
       {client.tools.length > 0 ? (
         <p className="mt-0.5 font-mono text-muted-foreground" title={client.tools.map((t) => t.name).join(", ")}>
           {client.tools.length} tool{client.tools.length === 1 ? "" : "s"}: {client.tools.map((t) => t.name).join(", ")}

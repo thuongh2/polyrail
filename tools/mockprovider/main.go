@@ -11,10 +11,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -57,6 +59,83 @@ func tone(text string) []byte {
 	return b.Bytes()
 }
 
+var reWord = regexp.MustCompile(`[a-z0-9]+`)
+
+// hashEmbed is a deterministic, similarity-meaningful embedding (docs/KB.md §9): a hashed bag of
+// lowercase words (fnv32a % dims, sign from bit 31), L2-normalized. Returns the vector and the
+// word count.
+func hashEmbed(text string, dims int) ([]float64, int) {
+	v := make([]float64, dims)
+	words := reWord.FindAllString(strings.ToLower(text), -1)
+	for _, w := range words {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(w))
+		x := h.Sum32()
+		if x&(1<<31) != 0 {
+			v[x%uint32(dims)]--
+		} else {
+			v[x%uint32(dims)]++
+		}
+	}
+	var n float64
+	for _, x := range v {
+		n += x * x
+	}
+	if n > 0 {
+		for i := range v {
+			v[i] /= math.Sqrt(n)
+		}
+	}
+	return v, len(words)
+}
+
+// embeddings answers OpenAI /v1/embeddings with one hashEmbed vector per input item;
+// size = "dimensions" (1..4096) else 64.
+func embeddings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Model      string `json:"model"`
+		Input      any    `json:"input"`
+		Dimensions int    `json:"dimensions"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&req); err != nil {
+		http.Error(w, `{"error":{"message":"invalid JSON body"}}`, http.StatusBadRequest)
+		return
+	}
+	dims := req.Dimensions
+	if dims <= 0 || dims > 4096 {
+		dims = 64
+	}
+	var inputs []string
+	switch in := req.Input.(type) {
+	case string:
+		inputs = []string{in}
+	case []any:
+		for _, it := range in {
+			if s, ok := it.(string); ok {
+				inputs = append(inputs, s)
+			} else {
+				inputs = append(inputs, fmt.Sprint(it)) // token arrays: hashed by their printed form
+			}
+		}
+	default:
+		http.Error(w, `{"error":{"message":"input must be a string or an array"}}`, http.StatusBadRequest)
+		return
+	}
+	data := make([]any, len(inputs))
+	tokens := 0
+	for i, s := range inputs {
+		v, n := hashEmbed(s, dims)
+		tokens += n
+		data[i] = map[string]any{"object": "embedding", "index": i, "embedding": v}
+	}
+	model := req.Model
+	if model == "" {
+		model = "mock"
+	}
+	writeJSON(w, map[string]any{"object": "list", "model": model, "data": data,
+		"usage": map[string]int{"prompt_tokens": tokens, "total_tokens": tokens}})
+}
+
 type chatReq struct {
 	Stream   bool `json:"stream"`
 	Messages []struct {
@@ -72,10 +151,7 @@ func main() {
 		}
 		writeJSON(w, map[string]any{"object": "list", "data": data})
 	})
-	http.HandleFunc("/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"object":"list","model":"mock","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3]}],"usage":{"prompt_tokens":3,"total_tokens":3}}`))
-	})
+	http.HandleFunc("/v1/embeddings", embeddings)
 	http.HandleFunc("/v1/audio/speech", func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input string }
 		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)

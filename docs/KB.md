@@ -12,7 +12,7 @@ pluggable vector store. *(memory)* marks facts recalled rather than read from a 
   portable and keeps the provider prefix cache.
 - OmniRoute memory fuses FTS5 + vectors with RRF k=60 and injects a system message.
 - No pure-Go PDF lib in go.mod; `golang.org/x/net/html` is already in the module graph.
-- `tools/mockprovider` embeddings return a static vector → must change for retrieval tests (§9).
+- `tools/mockprovider` embeddings returned a static vector; now a hashed bag of words (§9).
 - OpenAI `/v1/vector_stores` shapes in §5 are *(memory)*; LiteLLM/Portkey only pass them through
   *(memory)*; ours is gateway-native and works with any embedding provider.
 
@@ -36,8 +36,11 @@ type KB struct {
 }
 type KBDoc struct {
   ID, KBID, OrgID, Filename, Source /*upload|text|url*/, URL, ContentType string
-  Bytes int64; Chars, Chunks, InTokens int; CostMicros int64
+  Bytes int64; Chars, Chunks int
+  InTokens int                 // estimated embedded tokens (chars/4); billed cost is in request logs
   EmbedModel string            // model its chunks were embedded with
+  Dimensions int               // dimensions its chunks were embedded with
+  KeyID string                 // API key that added it; its embeddings are billed to it ("" = console)
   Status string                // queued|processing|ready|failed
   Error  string                // safe message, never an upstream body
   Attempts int
@@ -52,35 +55,41 @@ type KBDoc struct {
 | `kbdoc/<org>/<kb>/<doc>` | KBDoc JSON |
 | `kbsrc/<org>/<kb>/<doc>` | extracted text, sealed with `Box` (re-embed without re-upload) |
 | `kbchunk/<org>/<kb>/<doc>/<seq %06d>` | `{"x":sealed(section+"\n"+text),"v":int8 bytes b64,"k":scale}` |
-| `kbq/<jobid>` | queue `{org,kb,doc,owner,lease_until}` |
+| `kbq/<doc>` | queue `{org,kb,doc,owner,lease_until,again}`: one entry per doc, so two workers never process one doc; a requeue while leased sets `again` (run once more) |
 
 KB writes do not bump `meta/version` (like webhooks, D17). Chunk/source text sealed (AES-GCM);
 vectors plaintext (accepted: partial invertibility). Limits: 20 KBs/org, 5,000 docs/KB, 100k
 chunks/KB, 300k chunks/org (`KB_MAX_ORG_CHUNKS`), upload 10 MB (`KB_MAX_DOC_MB`), extracted text
 2 MB/doc, 200 queued docs/org, 3 KBs/request. Delete doc = DeleteRange its chunks + doc + src,
 counts, `Rev++`; delete KB = DeleteRange all prefixes; `DeleteOrg` adds `kb*/<org>/`. Stale
-`kb_ids` on keys are ignored (metric). No TTL in v1.
+`kb_ids` on keys are ignored (metric). No TTL in v1. Create-time zero values take the defaults
+(`overlap_chars` only when `chunk_chars` is also 0; `min_score` 0 → 0.25). `DeleteKB` removes
+`kb`, `kbdoc`, `kbsrc`, `kbchunk` and the KB's queue entries.
 
 ## 2. Ingestion — `internal/kb`
 - Formats: text/plain, text/markdown, text/csv as text; application/json validated + re-indented;
   text/html via `x/net/html` (drop script/style/nav/footer/head; keep title and h1–h6 as markdown
   headings); else 415 `unsupported_media_type`. PDF later via the org's OCR model. UTF-8 only, NUL
   stripped.
-- URL ingest: `gateway.CheckPublicURL` at save, fetch with `PublicDialer`, 15 s timeout, ≤3
-  redirects each re-checked, 5 MB cap, allowed content types only, UA `agent-gateway`; only
-  `ALLOW_PRIVATE_PROVIDER_URLS` relaxes it.
+- URL ingest (synchronous in `AddDoc`): `kb.Config.CheckURL` at save and on every redirect,
+  connections through `kb.Config.DialContext`; the gateway injects `gateway.CheckPublicURL` and
+  `PublicDialer` (kb never imports gateway; both nil = URL ingest disabled). 15 s timeout, ≤3
+  redirects, 5 MB cap, allowed content types only, UA `agent-gateway`, errors never echo bodies;
+  only `ALLOW_PRIVATE_PROVIDER_URLS` relaxes it.
 - Chunker (`chunk.go`): split into sections at `#`–`###` keeping the heading path (`A > B > C`);
   pack paragraphs up to `chunk_chars`; oversize paragraphs split at sentence ends, then hard cut on a
   rune boundary; `overlap_chars` from the previous chunk within a section; drop chunks < 20 chars.
   Embedded text = `filename § section\n\ntext` (contextual header).
 - Queue/worker: upload writes `kbsrc` + doc(`queued`) + `kbq/` in one `Update`, returns 202.
-  `KB_WORKERS` (default 1) goroutines per node scan `kbq/` every 1 s (limit 16), claim with a 2 min
-  lease (renewed per batch); delete old chunks → chunk → embed in batches ≤64 inputs / 200k chars →
-  write chunks → doc `ready`, counts, `Rev++`, drop the queue entry. Expired lease = retry; 3
-  attempts → `failed`.
+  `KB_WORKERS` (default 1) goroutines per node scan `kbq/` every 1 s (up to 1000 entries, oldest
+  doc first), claim with a 2 min lease (renewed per batch); chunk → embed in batches ≤64 inputs /
+  200k chars → `VectorStore.Upsert` (replaces the doc's chunks, so a failed run keeps the old ones)
+  → doc `ready`, counts, `Rev++`, drop the queue entry. Expired lease = retry; 3 attempts →
+  `failed`; transient failures retry after 10 s; a doc or KB deleted mid-run has its chunks removed.
 - Billing: the gateway `Embedder` goes through resolve → admit → settle → record; one request log
   per batch billed to the org (uploading key, or `""` for console). Prepaid org without credits →
-  doc `failed` "insufficient credits".
+  the Embedder returns an error wrapping `kb.ErrInsufficientCredits` → doc `failed` "insufficient
+  credits" without retries.
 - Re-embed: PATCH of `embedding_model`, `dimensions` or chunk settings re-queues every doc. The
   index only uses docs whose `EmbedModel == kb.EmbedModel` (never mixes vector spaces).
 
@@ -88,14 +97,17 @@ counts, `Rev++`; delete KB = DeleteRange all prefixes; `DeleteOrg` adds `kb*/<or
 - Vector leg: L2-normalize, int8 `q[i]=round(127·x[i]/max|x|)`, `scale=max|x|/127`; score
   `sA·sB·Σ int32(qA·qB)`; top 50 with cos ≥ `min_score`.
 - Keyword leg: BM25 (k1 1.2, b 0.75), tokens lowercase `[\p{L}\p{N}_-]+`, small stopword list,
-  fnv32 term hashes; postings built at index load (text decrypted, tokenized, dropped); top 50.
+  fnv32 term hashes; postings (4 bytes: chunk id << 8 | tf) built at index load (text decrypted,
+  tokenized, dropped); top 50.
 - Fusion: RRF `Σ 1/(60+rank)` → `top_k` → pack until `max_context_tokens` (chars/4). Winners' text
   fetched by point `Get` + `Open`. Reported `score` = cosine (0 if BM25-only).
 - Index: per KB per node `{rev, dims, vecs []int8 flat, scales, refs, docs, postings, lens}`, loaded
   with singleflight by paging `Scan` (1000), global LRU byte budget `KB_INDEX_MB` (default 256);
   KB metadata cached 2 s; rev change → full reload (`// shortcut: incremental append later`).
-- Estimate (verify with `BenchmarkSearch`): 100k × 512 dims ≈ 30–50 ms on 1 vCPU; ~d + 0.5 KB per
-  chunk; 256 MB ≈ 250k chunks @512; ~1M chunks needs `KB_INDEX_MB=1024` or the pgvector/Qdrant seam.
+- Measured (`BenchmarkSearch100k`, 1 CPU of a 2.1 GHz Xeon): 100k × 512 dims ≈ 31 ms per hybrid
+  search; ~1.6 KB per chunk (512 B vector + ~1.1 KB postings for ~1,600-char chunks of a large
+  synthetic vocabulary); 256 MB ≈ 160k chunks @512; ~1M chunks needs `KB_INDEX_MB≈1600` or the
+  pgvector/Qdrant seam.
 - Filters: doc `attributes` `eq`/`in`, ANDed, search endpoints only, applied before ranking.
 
 ## 4. Auto-grounding — `internal/gateway/kb.go`
@@ -156,7 +168,7 @@ Later: file batches, `file_id` from `/v1/files`, Responses `file_search` transla
 package kb
 type Chunk struct{ Seq int; Text, Section string; Vec []float32 }
 type Query struct{ Org, KB string; Rev int64; Vec []float32; Text string; TopK int; MinScore float64; Filter map[string][]string }
-type Hit   struct{ KB, Doc string; Seq int; Score float64; Text, Section string }
+type Hit   struct{ KB, Doc string; Seq int; Score float64; Text, Section, Filename string; Attributes map[string]string }
 type VectorStore interface {
   Upsert(ctx context.Context, org, kb, doc string, chunks []Chunk) error // replaces the doc's chunks
   DeleteDoc(ctx context.Context, org, kb, doc string) error
@@ -199,12 +211,16 @@ fail-open, cache separation by kbsig, stream, Responses/Anthropic/GenAI, embeddi
 grounded chat (mock echoes system text) → embedding cost in usage.
 
 ## 10. Work breakdown
-- **A (engine)**: `internal/store/kb.go`, `APIKey.KBIDs`, `DeleteOrg`; `internal/kb/*`;
-  mockprovider embeddings. Exposes `kb.Service`: `New(s, emb, cfg)`, `Start(ctx)`,
-  `CreateKB/GetKB/ListKBs/UpdateKB/DeleteKB/Reindex`, `AddDoc(ctx, org, kb, DocInput{Filename,
-  ContentType, Data, URL, Attributes, KeyID})`, `ListDocs/GetDoc/DeleteDoc`, `Search(ctx, org,
-  kbIDs, query, keyID, SearchOpts{TopK, MinScore, Filter, MaxContextTokens})`; errors
-  `store.ErrNotFound`, `store.ErrInvalid`, `kb.ErrLimit`, `kb.ErrUnsupported`.
+- **A (engine, done)**: `internal/store/kb.go`, `APIKey.KBIDs`, `DeleteOrg`; `internal/kb/*`;
+  mockprovider embeddings. Exposes `kb.Service` (API listed in the `internal/kb` package doc):
+  `New(s, emb, cfg)`, `Start(ctx)`, `CreateKB(ctx, *store.KB)`, `GetKB/ListKBs`,
+  `UpdateKB(ctx, org, id, fn func(*store.KB) error)`, `DeleteKB/Reindex`, `AddDoc(ctx, org, kb,
+  DocInput{Filename, ContentType, Data, Text, URL, Attributes, KeyID})`, `ListDocs/GetDoc/DeleteDoc`,
+  `Search(ctx, org, kbIDs, query, keyID, SearchOpts{TopK, MinScore, Filter, MaxContextTokens})
+  ([]Hit, error)`, `Sig(ctx, org, kbIDs)` (sorted `id@rev`, cached 2 s; ErrNotFound for unknown
+  ids); errors `store.ErrNotFound`, `store.ErrInvalid`, `kb.ErrLimit` (= `store.ErrLimit`),
+  `kb.ErrUnsupported`; Embedder error `kb.ErrInsufficientCredits`. `kb.Config{Workers, IndexMB,
+  MaxOrgChunks, MaxDocMB, VectorStore, CheckURL, DialContext}`.
 - **B (gateway + APIs)**: `internal/gateway/kb.go`, hooks in gateway.go/extra.go/semcache.go,
   `vectorstores.go`, `internal/admin/kb.go`, key `kb_ids`, `RequestLog.KBChunks`, main.go wiring,
   env vars, API/CONFIG docs, e2e.

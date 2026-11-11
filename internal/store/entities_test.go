@@ -164,3 +164,63 @@ func TestPruneHealth(t *testing.T) {
 		t.Fatalf("health after prune: %v", m)
 	}
 }
+
+func TestProviderConfigSecretsSealedAndKept(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	p := &Provider{Name: "br", Type: "bedrock", Keys: []ProviderKey{
+		{Bedrock: &BedrockConfig{AccessKey: "AKIA-SECRET", SecretKey: "aws-SECRET", SessionToken: "tok-SECRET", Region: "us-east-1",
+			Deployments: map[string]string{"claude": "anthropic.claude-v2"}}},
+		{Vertex: &VertexConfig{ProjectID: "proj", Region: "us-central1", AuthCredentials: `{"private_key":"gcp-SECRET"}`}},
+	}}
+	if err := s.PutProvider(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := s.KV.Get(ctx, "prov/"+p.ID)
+	if strings.Contains(string(raw), "SECRET") || !strings.Contains(string(raw), "sealed_secret_key") || !strings.Contains(string(raw), "us-east-1") {
+		t.Fatalf("config secrets not sealed at rest: %s", raw)
+	}
+	// redaction keeps editable config, drops every secret
+	red, _ := json.Marshal(p.Keys[0].Redacted())
+	red2, _ := json.Marshal(p.Keys[1].Redacted())
+	if strings.Contains(string(red)+string(red2), "sealed") || !strings.Contains(string(red), "anthropic.claude-v2") || !strings.Contains(string(red2), "us-central1") {
+		t.Fatalf("redacted: %s %s", red, red2)
+	}
+	// empty inputs keep the stored secrets; a new session token replaces only that one
+	p.Keys[0].Bedrock.SessionToken = "tok2-SECRET"
+	p.Keys[1].Vertex.Region = "europe-west4"
+	if err := s.PutProvider(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := s.ListProviders(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, v := ps[0].Keys[0].Bedrock, ps[0].Keys[1].Vertex
+	if b.AccessKey != "AKIA-SECRET" || b.SecretKey != "aws-SECRET" || b.SessionToken != "tok2-SECRET" ||
+		v.AuthCredentials != `{"private_key":"gcp-SECRET"}` || v.Region != "europe-west4" {
+		t.Fatalf("decrypted config: %+v %+v", b, v)
+	}
+	// stored secrets never follow a type change
+	p.Type = "openai"
+	if err := s.PutProvider(ctx, p); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("type change kept config secrets: %v", err)
+	}
+}
+
+func TestAzureEndpointChangeNeedsKey(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	p := &Provider{Name: "az", Type: "azure", Keys: []ProviderKey{{Value: "az-key", Azure: &AzureConfig{Endpoint: "https://a.openai.azure.com"}}}}
+	if err := s.PutProvider(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	p.Keys[0].Azure = &AzureConfig{Endpoint: "https://evil.example"}
+	if err := s.PutProvider(ctx, p); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("endpoint change kept the key: %v", err)
+	}
+	p.Keys[0].Value = "az-key-2"
+	if err := s.PutProvider(ctx, p); err != nil {
+		t.Fatalf("endpoint change with a new key: %v", err)
+	}
+}

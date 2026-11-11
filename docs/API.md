@@ -85,6 +85,32 @@ names the key may use, intersected with the org grant; empty or absent = every g
 | GET | `/api/orgs/{org}/audit` | admin |
 | * | `/api/admin/providers`, `/api/admin/models`, `/api/admin/usage`, `/api/admin/audit`, `/api/admin/users`, `/api/admin/mcp` | operator |
 
+Provider bodies: `name`, `type`, `base_url`, `timeout_seconds`, `enabled`, `keys: [{id, name, value,
+weight, models}]`. `value` and every secret below are write-only: encrypted at rest, never returned;
+sending a key `id` with a secret left empty keeps the stored one, except when `base_url`, `type` or an
+Azure `endpoint` changes (re-enter secrets then). Types `azure`, `bedrock`, `vertex` take per-key
+config and no `base_url`; `elevenlabs` takes `value` and an optional `base_url`.
+
+- `azure` (platform only): `value` (API key) and `azure: {endpoint, api_version, deployments}`.
+- `bedrock` (platform and org): `bedrock: {region, access_key*, secret_key*, session_token*, arn,
+  deployments}`; or a Bedrock API key in `value`. No credentials = the gateway host's AWS identity
+  (IAM role, environment), operators only: org providers must supply keys.
+- `vertex` (platform only): `vertex: {project_id, project_number, region, auth_credentials*,
+  deployments}`; `auth_credentials` is service-account JSON, empty = host Google credentials.
+
+`*` = secret. `deployments` maps model name → deployment / inference profile; when set, only those
+models are served by that key. `GET /api/auth/config` lists the types per scope in
+`provider_types.platform` / `provider_types.org`.
+
+```json
+{"name":"azure-eu","type":"azure","enabled":true,"keys":[{"value":"<azure key>","azure":{
+  "endpoint":"https://my-res.openai.azure.com","api_version":"2024-10-21","deployments":{"gpt-4o":"prod-4o"}}}]}
+{"name":"bedrock-us","type":"bedrock","enabled":true,"keys":[{"bedrock":{"region":"us-east-1",
+  "access_key":"AKIA...","secret_key":"...","deployments":{"claude-sonnet":"us.anthropic.claude-3-5-sonnet-20241022-v2:0"}}}]}
+{"name":"vertex","type":"vertex","enabled":true,"keys":[{"vertex":{"project_id":"my-proj","region":"us-central1",
+  "auth_credentials":"{\"type\":\"service_account\",...}"}}]}
+```
+
 Prices in model bodies are `input_price_micros` / `output_price_micros`: micro-USD per 1M tokens
 (`$0.15` → `150000`).
 

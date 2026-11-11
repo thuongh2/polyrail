@@ -62,3 +62,4 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
 - 2026-11-10 Team, memory, PRD, architecture written. Bifrost core v1.2.38 builds on Go 1.24.
 - 2026-11-10 M1 + M2 built; QA found 3 bugs, security found 4 high / 8 medium; all fixed with regression tests.
 - 2026-11-10 Slop review fixes; resource smoke recorded.
+- 2026-11-11 Cloud providers: Azure OpenAI, AWS Bedrock (multi-instance, org-allowed), Google Vertex AI, ElevenLabs; per-key config sealed at rest (D13); provider dialog fields; screenshots in /tmp/claude-0/ui-shots/providers/.

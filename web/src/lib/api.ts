@@ -135,7 +135,33 @@ export type APIKey = {
   created_at: string;
 };
 
-export type ProviderKey = { id?: string; name?: string; value?: string; weight: number; models?: string[] };
+/** Per-key cloud config. Secret fields are write-only: the API never returns them. */
+export type AzureConfig = { endpoint: string; api_version?: string; deployments?: Record<string, string> };
+export type BedrockConfig = {
+  region: string;
+  arn?: string;
+  deployments?: Record<string, string>;
+  access_key?: string;
+  secret_key?: string;
+  session_token?: string;
+};
+export type VertexConfig = {
+  project_id: string;
+  project_number?: string;
+  region: string;
+  deployments?: Record<string, string>;
+  auth_credentials?: string;
+};
+export type ProviderKey = {
+  id?: string;
+  name?: string;
+  value?: string;
+  weight: number;
+  models?: string[];
+  azure?: AzureConfig;
+  bedrock?: BedrockConfig;
+  vertex?: VertexConfig;
+};
 export type Provider = {
   id: string;
   org_id?: string;

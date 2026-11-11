@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,8 +22,9 @@ type Snapshot struct {
 	byBifrost map[schemas.ModelProvider]string
 }
 
-// customBase lists the provider types Bifrost can instantiate many times under custom names.
-var customBase = map[string]bool{"openai": true, "anthropic": true, "gemini": true, "cohere": true}
+// customBase lists the provider types Bifrost can instantiate many times under custom names
+// (schemas.SupportedBaseProviders in Bifrost core v1.2.38).
+var customBase = map[string]bool{"openai": true, "anthropic": true, "gemini": true, "cohere": true, "bedrock": true}
 
 // MultiInstance reports whether many providers of this type can coexist (public and per-org).
 func MultiInstance(t string) bool { return customBase[t] }
@@ -134,9 +136,38 @@ func (a *account) GetKeysForProvider(_ *context.Context, k schemas.ModelProvider
 		if w <= 0 {
 			w = 1
 		}
-		keys = append(keys, schemas.Key{ID: pk.ID, Name: pk.Name, Value: pk.Value, Models: pk.Models, Weight: w})
+		if p.OrgID != "" && pk.Bedrock != nil && pk.Value == "" && pk.Bedrock.AccessKey == "" {
+			continue // tenants never borrow the gateway host's AWS identity (admin rejects this too)
+		}
+		keys = append(keys, bifrostKey(pk, w))
 	}
 	return keys, nil
+}
+
+// bifrostKey maps a stored provider key (secrets decrypted) to Bifrost's key schema.
+func bifrostKey(pk store.ProviderKey, w float64) schemas.Key {
+	k := schemas.Key{ID: pk.ID, Name: pk.Name, Value: pk.Value, Models: pk.Models, Weight: w}
+	if a := pk.Azure; a != nil {
+		k.AzureKeyConfig = &schemas.AzureKeyConfig{Endpoint: strings.TrimRight(a.Endpoint, "/"), Deployments: a.Deployments}
+		if a.APIVersion != "" {
+			k.AzureKeyConfig.APIVersion = &a.APIVersion
+		}
+	}
+	if b := pk.Bedrock; b != nil {
+		k.BedrockKeyConfig = &schemas.BedrockKeyConfig{AccessKey: b.AccessKey, SecretKey: b.SecretKey,
+			Region: &b.Region, Deployments: b.Deployments}
+		if b.SessionToken != "" {
+			k.BedrockKeyConfig.SessionToken = &b.SessionToken
+		}
+		if b.ARN != "" {
+			k.BedrockKeyConfig.ARN = &b.ARN
+		}
+	}
+	if v := pk.Vertex; v != nil {
+		k.VertexKeyConfig = &schemas.VertexKeyConfig{ProjectID: v.ProjectID, ProjectNumber: v.ProjectNumber,
+			Region: v.Region, AuthCredentials: v.AuthCredentials, Deployments: v.Deployments}
+	}
+	return k
 }
 
 func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.ProviderConfig, error) {

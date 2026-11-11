@@ -70,3 +70,30 @@ Bedrock/Vertex credentials mean the host's cloud identity (IAM), which only oper
 admin API rejects it for org providers and the Account drops such tenant keys. Regions and project
 ids are checked against `^[a-z0-9][a-z0-9-]{0,62}$` because Bifrost formats them into upstream
 hostnames. Not tested against real Azure/AWS/GCP in the sandbox (no cloud accounts).
+
+**D14 Webhooks: in-process queue, signed, SSRF-guarded.** New package `internal/webhook`. Events go
+into a bounded channel (`WEBHOOK_QUEUE`, drop + metric when full) served by 4 workers per node; the
+gateway hot path only calls a non-blocking `Emit` through the `gateway.Events` interface (no import
+cycle, no DB wait). Webhooks live in the KV under `hook/<org>/<id>` with the secret sealed by the
+existing `Box` (`storedWebhook` wrapper); their writes skip the config-version bump because no
+catalog snapshot depends on them and the failure counter changes on every failed delivery.
+Signature `t=<unix>,v1=<hex HMAC-SHA256(secret, t "." body)>` (Stripe-style, so receivers can reuse
+known code). Retries: 3 after the first attempt on network errors/5xx with 1/2/4 s backoff; a
+delivery that ends failed counts once toward the 10-failure auto-disable. Delivery is best effort
+(events in the queue are lost on restart): a durable outbox would need a KV queue and a leader per
+event, not worth it for notifications. `request.failed` is emitted from `record()` for any logged
+upstream error (status ≥ 400 except 499 and guardrail blocks), deduplicated per (org, model) per
+minute; `budget.exceeded` from `admit()` on the 402s, per (org, code, key) per minute. URL rules:
+https + public DNS at save and send, plus a dial-time check (`gateway.PublicDialer`);
+`ALLOW_PRIVATE_PROVIDER_URLS` is the one dev/test escape hatch, as for provider base URLs.
+
+**D15 Semantic cache: in-memory, per node, brute-force cosine.** Opt-in per org
+(`Org.SemanticCache{model, threshold, ttl_seconds}`), served in `gateway/semcache.go`. Only
+deterministic chat requests qualify (temperature explicitly 0, no tools/MCP/json_schema, non-stream).
+The embedding is computed by calling Bifrost's `EmbeddingRequest` with the org's embedding model on
+the same resolve/settle/record path as `/v1/embeddings` (no HTTP self-call), billed to the calling
+key; the key's model allowlist is skipped because the model is an org setting. Vectors are normalized
+float32; lookup is a linear dot-product scan of the org's ≤ 1,000 entries (≈ 1.5 M multiply-adds at
+1,536 dims, under a per-org lock), LRU eviction inside the org and a global byte budget shared with
+`RESPONSE_CACHE_MB`. No vector DB or ANN index: the ponytail ladder stops at a slice; revisit if
+orgs need more than ~10k entries or cross-node sharing. Fail open on any embedding error.

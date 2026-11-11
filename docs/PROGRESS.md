@@ -63,7 +63,6 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
 
 ## Next (not started)
 - OIDC test against a mock IdP; live MCP server test.
-- Semantic cache; Responses API, images, audio routes (Bifrost supports them).
 - Payment integration for credits (Stripe), email verification for sign-up.
 - Dial-time SSRF enforcement inside Bifrost's HTTP client (needs a Bifrost hook).
 
@@ -73,3 +72,4 @@ p99=55.0ms`; the usage endpoint then reported 5000 requests. Same load straight 
 - 2026-11-10 Slop review fixes; resource smoke recorded.
 - 2026-11-11 Cloud providers: Azure OpenAI, AWS Bedrock (multi-instance, org-allowed), Google Vertex AI, ElevenLabs; per-key config sealed at rest (D13); provider dialog fields; screenshots in /tmp/claude-0/ui-shots/providers/.
 - 2026-11-11 Bifrost core v1.2.38 → v1.15.2 on Go 1.27.3 (built from source, owner-approved). Same HTTP API; MCP names validated, tools exposed as `<server>-<tool>`. `make check` green; binary 33 → 47 MB, idle RSS 28 → 55 MB (D1).
+- 2026-11-11 OmniRoute wave 1: org webhooks (signed, retries, auto-disable, SSRF-guarded; D14) and opt-in semantic cache (D15). `go vet ./... && go test -race ./...` green incl. Postgres.

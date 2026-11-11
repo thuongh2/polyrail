@@ -35,7 +35,7 @@ Status: **have** = already in agent-gateway, **wave 1** = in progress / shipped 
 | OmniRoute | Status | Notes |
 |---|---|---|
 | exact response cache | have | |
-| semantic cache | wave 1 | org's embedding model, in-memory cosine, temperature 0 only |
+| semantic cache | have | org's embedding model, in-memory cosine, temperature 0 only (D15) |
 | idempotency keys | wave 1 | `Idempotency-Key`, per API key, non-stream |
 | cost response headers | wave 1 | `X-GW-Cost-Micros` |
 | model discovery `POST /v1/models/query` | wave 1 | |
@@ -53,7 +53,7 @@ Status: **have** = already in agent-gateway, **wave 1** = in progress / shipped 
 
 | OmniRoute | Status | Notes |
 |---|---|---|
-| webhooks (HMAC, retries, auto-disable) | wave 1 | per org |
+| webhooks (HMAC, retries, auto-disable) | have | per org, `internal/webhook` (D14) |
 | budgets, cost tracking | have | ours: org credits + per-key budgets |
 | multi-user, RBAC, SSO, audit | have | ours is multi-tenant; OmniRoute is single-tenant |
 | Prometheus metrics | have | OmniRoute has none |

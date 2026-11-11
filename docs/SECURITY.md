@@ -167,3 +167,31 @@ semantic cache shares answers between requests of one org.
   org. Only `temperature: 0` requests without tools, MCP or `json_schema` output qualify. A
   near-match can return another member's answer to a semantically similar prompt within the same
   org; orgs opt in knowing this. Memory is bounded per org (1,000) and globally (`RESPONSE_CACHE_MB`).
+
+## Review: OmniRoute wave 1 (2026-11-11)
+
+Scope: `git diff fd7e404..HEAD -- internal cmd` (routing strategies, guardrails, models query,
+Idempotency-Key, webhooks, semantic cache, `PublicDialer`). Verified by `go vet ./...` and
+`go test -race -count=1 ./...` with Postgres and Redis.
+
+Checked and fine: Idempotency-Key entries are scoped by API key id, method and path (another key,
+even in the same org, never gets a replay; a revoked key fails auth first) and only 2xx bodies are
+stored; semantic-cache entries are keyed by org, chat model and embedding model and looked up only
+after `resolve` (key model allowlist), `admit` and guardrails, so neither another org nor a key
+without access to the chat model can get a hit; the embedding call is billed to the key;
+`/v1/models/query` uses the same visibility and key allowlist as `GET /v1/models`; webhook
+secrets are sealed with the Box, `json:"-"`, returned once, and signatures are HMAC-SHA256 over
+`<t>.<body>`; webhook routes need org admin and every mutation is audited (host only); delivery
+re-checks the URL, dials through `PublicDialer` (IPv4-mapped addresses unmapped), uses no proxy and
+follows no redirects; the injection regex and secret patterns are RE2 (linear time) and the
+injection scan stops at 16 KB; block mode logs only the fixed reason; `X-GW-Route` values pass
+through `net/http`, which replaces CR/LF in header values.
+
+| ID | Severity | Finding | Resolution |
+|---|---|---|---|
+| M11 | medium | **One org could starve every org's webhooks.** The delivery queue (1,000) is shared and `key.created`/`key.revoked` are not deduplicated, so an org admin creating keys in a loop (or 20 slow endpoints) filled the queue and other orgs' events were dropped. | Fixed. An org may hold at most 1/10 of the queue (queued or being delivered, minimum 16); its excess events are dropped and counted, other orgs keep their slots. Residual: 20 endpoints that answer just under the 10 s timeout can still keep the 4 workers busy and delay (not drop) other orgs' events. [TestEmitPerOrgQueueShare] |
+| L16 | low | The deny list missed IPv4-compatible (`::a.b.c.d`), Teredo (`2001::/32`), 6to4 (`2002::/16`) and local NAT64 (`64:ff9b:1::/48`) addresses, which embed IPv4 addresses a relay could forward internally. | Fixed (`::/96`, `2001::/32`, `2002::/16`, `64:ff9b:1::/48` blocked). [TestBlockedIPRanges] |
+| L17 | low | The idempotency store has its own fixed 256 MB budget (not `RESPONSE_CACHE_MB`) with random eviction shared by all orgs: one key can fill it cheaply on a free model, and evicting another org's in-flight claim or stored result lets that org's retry run (and bill) twice. | Open. Size it from config and evict per key/org; Redis when multi-node. |
+| L18 | low | The semantic cache budget is separate from the response cache (total memory up to 2 × `RESPONSE_CACHE_MB`), and eviction only removes the adding org's entries, so one org can occupy the whole budget and other orgs' entries are skipped. | Open. Per-org byte share; count both caches against one budget. |
+| L19 | low | Router stats (`targetStats`) and breaker maps are never pruned when targets change; an org admin churning model targets grows them slowly (one entry per used target). | Accepted (bounded by admin writes plus requests); prune on snapshot reload. |
+| L20 | low | Upstream 401/403 now count as target faults on shared public targets; a tenant that can provoke a 403 with request content (for example a foreign file URI) can open a public target's breaker for 30 s for all orgs. Open targets are still tried last, so this reorders rather than denies. | Accepted. |

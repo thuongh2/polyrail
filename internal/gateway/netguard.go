@@ -17,7 +17,9 @@ var blockedNets = func() []netip.Prefix {
 	for _, s := range []string{
 		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
 		"192.0.0.0/24", "192.168.0.0/16", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4",
-		"::/128", "::1/128", "64:ff9b::/96", "fc00::/7", "fe80::/10", "ff00::/8",
+		"::/96", "64:ff9b::/96", "64:ff9b:1::/48", "2001::/32", "2002::/16", "fc00::/7", "fe80::/10", "ff00::/8",
+		// ::/96 covers ::, ::1 and IPv4-compatible addresses; 2001::/32 (Teredo) and 2002::/16
+		// (6to4) embed IPv4 addresses that a relay could forward to internal hosts.
 	} {
 		out = append(out, netip.MustParsePrefix(s))
 	}

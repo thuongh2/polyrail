@@ -198,3 +198,21 @@ func TestDedupeRequestFailed(t *testing.T) {
 		t.Fatal("bounded queue")
 	}
 }
+
+// One org flooding events must not fill the shared queue and drop other orgs' events.
+func TestEmitPerOrgQueueShare(t *testing.T) {
+	d := New(nil, false, 1000)
+	for range 1000 {
+		d.Emit("orgA", KeyCreated, nil)
+	}
+	d.Emit("orgB", KeyCreated, nil)
+	var b int
+	for len(d.q) > 0 {
+		if ev := <-d.q; ev.OrgID == "orgB" {
+			b++
+		}
+	}
+	if b != 1 {
+		t.Fatalf("orgB event dropped while orgA flooded the queue")
+	}
+}

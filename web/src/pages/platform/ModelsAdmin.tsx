@@ -17,7 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  api, compact, get, orgBase, pathID, perMillion, PLATFORM, type ModelInput, type ModelView, type Provider, type Target,
+  api, compact, get, kindLabel, orgBase, pathID, perMillion, perMinute, PLATFORM, type ModelInput, type ModelView, type Provider, type Target,
 } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
@@ -134,11 +134,11 @@ export default function ModelsAdmin({ scope = "org" }: { scope?: Scope }) {
                         )}
                         <div className="font-mono text-xs text-muted-foreground">{m.id}</div>
                       </TableCell>
-                      <TableCell>{m.kind === "embedding" ? "Embedding" : "Chat"}</TableCell>
+                      <TableCell className="whitespace-nowrap">{kindLabel[m.kind] ?? m.kind}</TableCell>
                       <TableCell className="text-right tabular-nums">{m.context_length ? compact(m.context_length) : "–"}</TableCell>
                       <TableCell className="text-right tabular-nums">{m.max_output_tokens ? compact(m.max_output_tokens) : "–"}</TableCell>
-                      <TableCell className="text-right tabular-nums">{perMillion(m.pricing.input)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{m.kind === "embedding" && Number(m.pricing.output) === 0 ? "–" : perMillion(m.pricing.output)}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">{m.pricing.audio_minute ? perMinute(m.pricing.audio_minute) : perMillion(m.pricing.input)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{m.kind !== "chat" && Number(m.pricing.output) === 0 ? "–" : perMillion(m.pricing.output)}</TableCell>
                       <TableCell className="text-xs">
                         <Routes model={m} provName={provName} />
                       </TableCell>
@@ -219,6 +219,13 @@ function Routes({ model, provName }: { model: ModelView; provName: Map<string, s
   );
 }
 
+const kindHelp: Record<ModelInput["kind"], string> = {
+  chat: "Served on /v1/chat/completions, /v1/completions and /v1/responses.",
+  embedding: "Served on /v1/embeddings.",
+  speech: "Text in, audio out on /v1/audio/speech.",
+  transcription: "Audio in, text out on /v1/audio/transcriptions.",
+};
+
 type TargetRow = { provider_id: string; model: string; weight: string };
 
 function ModelDialog({
@@ -234,6 +241,7 @@ function ModelDialog({
   const [mods, setMods] = useState<string[]>(model?.modalities?.length ? model.modalities : ["text"]);
   const [inPrice, setInPrice] = useState(model ? model.pricing.input : "");
   const [outPrice, setOutPrice] = useState(model ? model.pricing.output : "");
+  const [minPrice, setMinPrice] = useState(model?.pricing.audio_minute ?? "");
   const [enabled, setEnabled] = useState(model?.enabled ?? true);
   const [targets, setTargets] = useState<TargetRow[]>(
     model?.targets?.length
@@ -249,6 +257,8 @@ function ModelDialog({
     return Math.round(v * 1e6);
   };
 
+  const textModel = kind === "chat" || kind === "embedding";
+
   const save = async () => {
     const ts: Target[] = targets.map((t, i) => {
       if (!t.provider_id) throw new Error(`Route ${i + 1}: choose a provider.`);
@@ -263,11 +273,12 @@ function ModelDialog({
       name: name.trim(),
       description: desc.trim() || undefined,
       kind,
-      context_length: ctx ? Number(ctx) : undefined,
-      max_output_tokens: maxOut ? Number(maxOut) : undefined,
-      modalities: mods.length ? mods : ["text"],
+      context_length: textModel && ctx ? Number(ctx) : undefined,
+      max_output_tokens: textModel && maxOut ? Number(maxOut) : undefined,
+      modalities: textModel && mods.length ? mods : ["text"],
       input_price_micros: micros(inPrice, "Input price"),
       output_price_micros: micros(outPrice, "Output price"),
+      audio_minute_price_micros: kind === "transcription" ? micros(minPrice, "Audio price") : undefined,
       targets: ts,
       enabled,
     };
@@ -324,23 +335,29 @@ function ModelDialog({
         <div className="grid content-start gap-1.5">
           <Label htmlFor="model-kind">Kind</Label>
           <Select value={kind} onValueChange={(v) => setKind(v as ModelInput["kind"])}>
-            <SelectTrigger id="model-kind" className="w-full">
+            <SelectTrigger id="model-kind" className="w-full" aria-describedby="model-kind-help">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="chat">Chat</SelectItem>
-              <SelectItem value="embedding">Embedding</SelectItem>
+              {Object.entries(kindLabel).map(([v, label]) => (
+                <SelectItem key={v} value={v}>{label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
+          <p id="model-kind-help" className="text-xs text-muted-foreground">{kindHelp[kind]}</p>
         </div>
-        <Field label="Context length">
-          {(fid) => <Input id={fid} type="number" min={0} step={1} value={ctx} onChange={(e) => setCtx(e.target.value)} placeholder="128000" />}
-        </Field>
-        <Field label="Max output tokens">
-          {(fid) => <Input id={fid} type="number" min={0} step={1} value={maxOut} onChange={(e) => setMaxOut(e.target.value)} placeholder="16384" />}
-        </Field>
+        {textModel && (
+          <>
+            <Field label="Context length">
+              {(fid) => <Input id={fid} type="number" min={0} step={1} value={ctx} onChange={(e) => setCtx(e.target.value)} placeholder="128000" />}
+            </Field>
+            <Field label="Max output tokens">
+              {(fid) => <Input id={fid} type="number" min={0} step={1} value={maxOut} onChange={(e) => setMaxOut(e.target.value)} placeholder="16384" />}
+            </Field>
+          </>
+        )}
       </div>
-      <fieldset className="grid gap-2">
+      {textModel && <fieldset className="grid gap-2">
         <legend className="mb-1.5 text-sm font-medium">Input modalities</legend>
         <div className="flex gap-6">
           {["text", "image"].map((m) => (
@@ -350,13 +367,23 @@ function ModelDialog({
             </div>
           ))}
         </div>
-      </fieldset>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Input price (USD per 1M tokens)">
-          {(fid) => <Input id={fid} type="number" min={0} step="any" value={inPrice} onChange={(e) => setInPrice(e.target.value)} placeholder="0.15" />}
+      </fieldset>}
+      <div className={kind === "transcription" ? "grid gap-4 sm:grid-cols-3" : "grid gap-4 sm:grid-cols-2"}>
+        {kind === "transcription" && (
+          <Field label="Audio price, USD per minute" hint="Charged per minute of input audio.">
+            {(fid, hint) => (
+              <Input id={fid} aria-describedby={hint} type="number" min={0} step="any" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} placeholder="0.006" />
+            )}
+          </Field>
+        )}
+        <Field
+          label={kind === "speech" ? "Input price (USD per 1M characters or tokens)" : "Input price (USD per 1M tokens)"}
+          hint={kind === "speech" ? "Per 1M characters when the provider reports no token usage." : kind === "transcription" ? "Optional, when the provider reports tokens." : undefined}
+        >
+          {(fid, hint) => <Input id={fid} aria-describedby={hint} type="number" min={0} step="any" value={inPrice} onChange={(e) => setInPrice(e.target.value)} placeholder="0.15" />}
         </Field>
-        <Field label="Output price (USD per 1M tokens)">
-          {(fid) => <Input id={fid} type="number" min={0} step="any" value={outPrice} onChange={(e) => setOutPrice(e.target.value)} placeholder="0.60" />}
+        <Field label="Output price (USD per 1M tokens)" hint={textModel ? undefined : "Optional, when the provider reports output tokens."}>
+          {(fid, hint) => <Input id={fid} aria-describedby={hint} type="number" min={0} step="any" value={outPrice} onChange={(e) => setOutPrice(e.target.value)} placeholder="0.60" />}
         </Field>
       </div>
 

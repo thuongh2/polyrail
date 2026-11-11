@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/toast";
 import { cn, writeClipboard } from "@/lib/utils";
+import type { ModelKind } from "@/lib/api";
 
 /** Icon button that copies `text` and confirms briefly. */
 export function CopyButton({ text, label = "Copy", className }: { text: string; label?: string; className?: string }) {
@@ -66,8 +67,88 @@ export function CodeTabs({ samples, className }: { samples: Sample[]; className?
   );
 }
 
-/** curl, Python and TypeScript (OpenAI SDK) for one chat or embedding call against this gateway. */
-export function requestSamples(base: string, model: string, kind: "chat" | "embedding" = "chat"): Sample[] {
+/** curl, Python and TypeScript (OpenAI SDK) for one call of the model's kind against this gateway. */
+export function requestSamples(base: string, model: string, kind: ModelKind = "chat"): Sample[] {
+  if (kind === "speech")
+    return [
+      {
+        label: "curl",
+        code: `curl ${base}/audio/speech \\
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${model}",
+    "input": "Hello from the gateway.",
+    "voice": "alloy",
+    "response_format": "mp3"
+  }' \\
+  --output speech.mp3`,
+      },
+      {
+        label: "Python",
+        code: `import os
+from openai import OpenAI
+
+client = OpenAI(base_url="${base}", api_key=os.environ["GATEWAY_API_KEY"])
+
+res = client.audio.speech.create(
+    model="${model}",
+    voice="alloy",
+    input="Hello from the gateway.",
+    response_format="mp3",
+)
+res.write_to_file("speech.mp3")`,
+      },
+      {
+        label: "TypeScript",
+        code: `import fs from "node:fs";
+import OpenAI from "openai";
+
+const client = new OpenAI({ baseURL: "${base}", apiKey: process.env.GATEWAY_API_KEY });
+
+const res = await client.audio.speech.create({
+  model: "${model}",
+  voice: "alloy",
+  input: "Hello from the gateway.",
+  response_format: "mp3",
+});
+fs.writeFileSync("speech.mp3", Buffer.from(await res.arrayBuffer()));`,
+      },
+    ];
+  if (kind === "transcription")
+    return [
+      {
+        label: "curl",
+        code: `curl ${base}/audio/transcriptions \\
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \\
+  -F model=${model} \\
+  -F file=@audio.mp3`,
+      },
+      {
+        label: "Python",
+        code: `import os
+from openai import OpenAI
+
+client = OpenAI(base_url="${base}", api_key=os.environ["GATEWAY_API_KEY"])
+
+with open("audio.mp3", "rb") as f:
+    res = client.audio.transcriptions.create(model="${model}", file=f)
+print(res.text)`,
+      },
+      {
+        label: "TypeScript",
+        code: `import fs from "node:fs";
+import OpenAI from "openai";
+
+const client = new OpenAI({ baseURL: "${base}", apiKey: process.env.GATEWAY_API_KEY });
+
+const res = await client.audio.transcriptions.create({
+  model: "${model}",
+  file: fs.createReadStream("audio.mp3"),
+});
+console.log(res.text);`,
+      },
+    ];
   if (kind === "embedding")
     return [
       {

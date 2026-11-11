@@ -8,7 +8,11 @@ const sections = [
   ["base", "Base URL and auth"],
   ["chat", "Chat completions"],
   ["stream", "Streaming"],
+  ["completions", "Text completions"],
+  ["responses", "Responses API"],
   ["embeddings", "Embeddings"],
+  ["speech", "Text to speech"],
+  ["transcriptions", "Speech to text"],
   ["models", "List models"],
   ["mcp", "MCP tools"],
   ["headers", "Gateway headers"],
@@ -20,7 +24,7 @@ const errors: [string, string, string][] = [
   ["expired_api_key", "401", "The key is past its expiry date."],
   ["model_not_allowed", "403", "The key is limited to other models."],
   ["model_not_found", "404", "No model with this id is visible to your org."],
-  ["wrong_model_kind", "400", "A chat model on /v1/embeddings, or the reverse."],
+  ["wrong_model_kind", "400", "The model's kind does not match the endpoint, such as a chat model on /v1/embeddings."],
   ["guardrail_blocked", "400", "The org's guardrails rejected the input."],
   ["insufficient_credits", "402", "The prepaid org is out of credits."],
   ["key_budget_exceeded", "402", "The key reached its monthly budget."],
@@ -83,17 +87,71 @@ export default function Docs() {
             />
           </Section>
 
+          <Section id="completions" title="Text completions">
+            <Endpoint method="POST" path="/v1/completions" />
+            <p>
+              The legacy OpenAI completions API for chat models: send <C>prompt</C> instead of <C>messages</C>. The response
+              has <C>choices[].text</C>. <C>"stream": true</C> works as for chat.
+            </p>
+            <CodeBlock
+              code={`curl ${base}/completions \\
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model": "vendor/model", "prompt": "Write a haiku about routers.", "max_tokens": 64}'`}
+            />
+          </Section>
+
+          <Section id="responses" title="Responses API">
+            <Endpoint method="POST" path="/v1/responses" />
+            <p>
+              The OpenAI Responses API for chat models: send <C>input</C> (a string or a list of messages) and optional{" "}
+              <C>instructions</C>. With <C>"stream": true</C> the gateway sends named events: text arrives as{" "}
+              <C>event: response.output_text.delta</C> with the text in <C>delta</C>, and the stream ends with{" "}
+              <C>response.completed</C>.
+            </p>
+            <CodeBlock
+              code={`curl -N ${base}/responses \\
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model": "vendor/model", "input": "Hello", "stream": true}'`}
+            />
+          </Section>
+
           <Section id="embeddings" title="Embeddings">
             <Endpoint method="POST" path="/v1/embeddings" />
             <p>OpenAI request body. Only embedding models are accepted here.</p>
             <CodeBlock code={requestSamples(base, "vendor/embedding-model", "embedding")[0].code} />
           </Section>
 
+          <Section id="speech" title="Text to speech">
+            <Endpoint method="POST" path="/v1/audio/speech" />
+            <p>
+              Speech models only. JSON body: <C>model</C>, <C>input</C> (the text), <C>voice</C> (for example alloy, echo,
+              fable, onyx, nova, shimmer), <C>response_format</C> (<C>mp3</C>, <C>opus</C>, <C>aac</C>, <C>flac</C>,{" "}
+              <C>wav</C> or <C>pcm</C>), and optional <C>speed</C> and <C>instructions</C>. The response body is the audio
+              with an <C>audio/*</C> content type; <C>x-gateway-provider</C> names the provider. Input is billed per 1M
+              tokens, or per 1M characters when the provider reports no token usage.
+            </p>
+            <CodeTabs samples={requestSamples(base, "vendor/tts-model", "speech")} />
+          </Section>
+
+          <Section id="transcriptions" title="Speech to text">
+            <Endpoint method="POST" path="/v1/audio/transcriptions" />
+            <p>
+              Transcription models only. Send <C>multipart/form-data</C> with <C>file</C> (the audio), <C>model</C>, and
+              optional <C>language</C>, <C>prompt</C> and <C>response_format</C> (<C>json</C> by default, or <C>text</C>).
+              The JSON response has <C>text</C> and, when the provider returns them, <C>language</C>, <C>duration</C>{" "}
+              (seconds), <C>segments</C> and <C>usage</C>. Billing is per minute of audio where the model has an audio price.
+            </p>
+            <CodeTabs samples={requestSamples(base, "vendor/stt-model", "transcription")} />
+          </Section>
+
           <Section id="models" title="List models">
             <Endpoint method="GET" path="/v1/models" />
             <p>
-              Models visible to the key, each with <C>pricing.input</C> and <C>pricing.output</C> in USD per 1M tokens and{" "}
-              <C>context_length</C>. The public catalog is also browsable on the <Link href="/models">models page</Link>.
+              Models visible to the key, each with <C>kind</C> (chat, embedding, speech or transcription), <C>pricing.input</C> and{" "}
+              <C>pricing.output</C> in USD per 1M tokens, <C>pricing.audio_minute</C> in USD per audio minute for
+              transcription models, and <C>context_length</C>. The public catalog is also browsable on the <Link href="/models">models page</Link>.
             </p>
           </Section>
 

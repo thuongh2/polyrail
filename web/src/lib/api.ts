@@ -22,7 +22,16 @@ export const get = <T>(path: string) => api<T>("GET", path);
 
 // ---- public ----
 
-export type Pricing = { input: string; output: string }; // USD per 1M tokens, decimal strings
+/** USD decimal strings: input/output per 1M tokens (speech input: per 1M characters), audio_minute per minute of audio. */
+export type Pricing = { input: string; output: string; audio_minute?: string };
+
+export type ModelKind = "chat" | "embedding" | "speech" | "transcription";
+export const kindLabel: Record<ModelKind, string> = {
+  chat: "Chat",
+  embedding: "Embedding",
+  speech: "Text to speech",
+  transcription: "Speech to text",
+};
 
 export type ModelInfo = {
   id: string;
@@ -31,7 +40,7 @@ export type ModelInfo = {
   owned_by: string;
   name: string;
   description?: string;
-  kind: "chat" | "embedding";
+  kind: ModelKind;
   context_length?: number;
   max_output_tokens?: number;
   modalities?: string[];
@@ -145,12 +154,13 @@ export type ModelInput = {
   id: string;
   name: string;
   description?: string;
-  kind: "chat" | "embedding";
+  kind: ModelKind;
   context_length?: number;
   max_output_tokens?: number;
   modalities?: string[];
   input_price_micros: number;
   output_price_micros: number;
+  audio_minute_price_micros?: number; // transcription: micro-USD per audio minute
   targets: Target[];
   enabled: boolean;
 };
@@ -215,6 +225,9 @@ export function perMillion(p: string) {
   if (v === 0) return "Free";
   return "$" + (v < 0.1 ? v.toFixed(3) : v < 10 ? v.toFixed(2) : v.toFixed(1)).replace(/\.?0+$/, (m) => (m.startsWith(".") ? "" : m));
 }
+
+/** "$0.006 / min" from the API's USD-per-minute decimal string. */
+export const perMinute = (p: string) => (Number(p) === 0 ? "Free" : perMillion(p) + " / min");
 
 export const fmt = (n: number | undefined) => (n ?? 0).toLocaleString();
 

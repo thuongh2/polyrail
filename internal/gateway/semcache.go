@@ -187,8 +187,9 @@ type semPending struct {
 }
 
 // semanticCache serves a hit (and returns hit=true) or returns the pending entry to fill after
-// the upstream call; nil when the request is not eligible or embedding failed.
-func (g *Gateway) semanticCache(w http.ResponseWriter, r *http.Request, p *principal, m store.Model, breq *schemas.BifrostChatRequest, start time.Time) (*semPending, bool) {
+// the upstream call; nil when the request is not eligible or embedding failed. kbSig (the
+// grounding KBs' id@rev list) separates answers grounded on different knowledge.
+func (g *Gateway) semanticCache(w http.ResponseWriter, r *http.Request, p *principal, m store.Model, breq *schemas.BifrostChatRequest, kbSig string, start time.Time) (*semPending, bool) {
 	sc := p.Org.SemanticCache
 	if sc == nil || sc.Model == "" || g.cfg.CacheMB <= 0 || !semEligible(breq) {
 		return nil, false
@@ -197,9 +198,17 @@ func (g *Gateway) semanticCache(w http.ResponseWriter, r *http.Request, p *princ
 	if text == "" {
 		return nil, false
 	}
-	vec := g.embedOne(r, p, sc.Model, text)
-	if vec == nil {
+	vs, err := g.embed(r.Context(), p, sc.Model, 0, []string{text})
+	if err != nil {
 		return nil, false // fail open
+	}
+	vec := normalize32(vs[0])
+	if vec == nil {
+		return nil, false
+	}
+	emb := sc.Model
+	if kbSig != "" {
+		emb += "|" + kbSig
 	}
 	thresh := sc.Threshold
 	if thresh == 0 {
@@ -209,7 +218,7 @@ func (g *Gateway) semanticCache(w http.ResponseWriter, r *http.Request, p *princ
 	if ttl <= 0 {
 		ttl = SemDefaultTTL
 	}
-	if out, score, ok := g.sem.lookup(p.Org.ID, m.ID, sc.Model, vec, thresh, time.Now()); ok {
+	if out, score, ok := g.sem.lookup(p.Org.ID, m.ID, emb, vec, thresh, time.Now()); ok {
 		mCacheHits.Inc()
 		setCost(w, g.record(p, m, store.RequestLog{Status: 200, Cached: true, Provider: "cache"}, start))
 		w.Header().Set("Content-Type", "application/json")
@@ -218,7 +227,7 @@ func (g *Gateway) semanticCache(w http.ResponseWriter, r *http.Request, p *princ
 		_, _ = w.Write(out)
 		return nil, true
 	}
-	return &semPending{org: p.Org.ID, model: m.ID, emb: sc.Model, vec: vec, ttl: time.Duration(min(ttl, SemMaxTTL)) * time.Second}, false
+	return &semPending{org: p.Org.ID, model: m.ID, emb: emb, vec: vec, ttl: time.Duration(min(ttl, SemMaxTTL)) * time.Second}, false
 }
 
 func (g *Gateway) semStore(sp *semPending, out []byte) {
@@ -229,33 +238,11 @@ func (g *Gateway) semStore(sp *semPending, out []byte) {
 	g.sem.add(sp.org, &semEntry{model: sp.model, emb: sp.emb, vec: sp.vec, resp: out, exp: now.Add(sp.ttl), used: now})
 }
 
-// embedOne embeds text with the org's embedding model through Bifrost and bills it to the
-// request's key like an embeddings call. The key's model allowlist does not apply: the model
-// is an org setting. Returns nil on any error.
-func (g *Gateway) embedOne(r *http.Request, p *principal, model, text string) []float32 {
-	start := time.Now()
-	org := *p
-	org.Key.Models = nil
-	em, ts, e := g.resolve(&org, model, "embedding", nil)
-	if e != nil {
-		return nil
+// normalize32 L2-normalizes a float32 vector (nil for the zero vector).
+func normalize32(v []float32) []float32 {
+	f := make([]float64, len(v))
+	for i, x := range v {
+		f[i] = float64(x)
 	}
-	snap := g.snap.Load()
-	breq := &schemas.BifrostEmbeddingRequest{Input: []schemas.EmbeddingInputItem{{Content: schemas.EmbeddingContent{
-		{Type: schemas.EmbeddingContentPartTypeText, Text: &text}}}}}
-	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
-	resp, berr := g.BF.EmbeddingRequest(newBifrostCtx(r), breq)
-	if berr != nil {
-		g.settleErr(snap, em, ts, berr, start)
-		return nil
-	}
-	l := store.RequestLog{Status: 200, Provider: g.settle(snap, em, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, 0)}
-	if resp.Usage != nil {
-		l.InTokens = resp.Usage.PromptTokens
-	}
-	g.record(p, em, l, start)
-	if len(resp.Data) == 0 {
-		return nil
-	}
-	return normalize(resp.Data[0].Embedding.EmbeddingArray)
+	return normalize(f)
 }

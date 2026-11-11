@@ -332,8 +332,7 @@ export type KBDoc = {
   bytes: number;
   chars: number;
   chunks: number;
-  in_tokens: number;
-  cost_micros: number;
+  in_tokens: number; // estimated embedded tokens (chars/4); billed cost is in the request logs
   embedding_model?: string;
   status: KBDocStatus;
   error?: string;

@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { bytes, fmt, get, kbApi, kbLimits, orgBase, usd, when, type APIKey, type KB, type KBDoc, type KBHit } from "@/lib/api";
+import { bytes, fmt, get, kbApi, kbLimits, orgBase, when, type APIKey, type KB, type KBDoc, type KBHit } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
@@ -203,7 +203,7 @@ function Documents({ org, kb, docs, admin, onChange }: { org: string; kb: KB; do
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Chunks</TableHead>
                   <TableHead className="text-right">Size</TableHead>
-                  <TableHead className="text-right">Embedding cost</TableHead>
+                  <TableHead className="text-right">Tokens (est.)</TableHead>
                   <TableHead>Added</TableHead>
                   {admin && (
                     <TableHead>
@@ -235,7 +235,7 @@ function Documents({ org, kb, docs, admin, onChange }: { org: string; kb: KB; do
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{d.status === "ready" ? fmt(d.chunks) : "–"}</TableCell>
                       <TableCell className="text-right tabular-nums whitespace-nowrap">{bytes(d.bytes)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{d.status === "ready" ? usd(d.cost_micros) : "–"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{d.status === "ready" ? fmt(d.in_tokens) : "–"}</TableCell>
                       <TableCell className="whitespace-nowrap text-muted-foreground">{when(d.created_at)}</TableCell>
                       {admin && (
                         <TableCell className="text-right">

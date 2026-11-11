@@ -86,13 +86,18 @@ type Query struct {
 
 // Hit is one retrieved chunk. Score is the cosine similarity (0 when only BM25 matched).
 type Hit struct {
-	KB, Doc       string
-	Seq           int
-	Score         float64
-	Text, Section string
-	Filename      string
-	Attributes    map[string]string
+	KB         string            `json:"kb_id"`
+	Doc        string            `json:"doc_id"`
+	Seq        int               `json:"seq"`
+	Score      float64           `json:"score"`
+	Section    string            `json:"section,omitempty"`
+	Text       string            `json:"text"`
+	Filename   string            `json:"filename"`
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
+
+// MaxDocBytes is the upload limit (KB_MAX_DOC_MB).
+func (s *Service) MaxDocBytes() int64 { return int64(s.cfg.MaxDocMB) << 20 }
 
 // VectorStore stores chunks and answers hybrid searches. The default keeps everything on store.KV.
 type VectorStore interface {

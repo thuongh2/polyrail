@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/agent-gateway/agent-gateway/internal/kb"
 	"github.com/agent-gateway/agent-gateway/internal/limits"
 	"github.com/agent-gateway/agent-gateway/internal/store"
 	"github.com/agent-gateway/agent-gateway/internal/usage"
@@ -49,7 +50,8 @@ type Gateway struct {
 	Usage *usage.Pipeline
 	Lim   limits.Limiter
 	BF    *bifrost.Bifrost
-	Hooks Events // nil: no webhooks
+	Hooks Events      // nil: no webhooks
+	KB    *kb.Service // nil: no knowledge-base grounding
 	cfg   Config
 
 	snap atomic.Pointer[Snapshot]
@@ -62,8 +64,9 @@ type Gateway struct {
 }
 
 type principal struct {
-	Key store.APIKey
-	Org store.Org
+	Key      store.APIKey
+	Org      store.Org
+	kbChunks int // knowledge-base excerpts injected into this request (request log)
 }
 
 // HashKey is how API key secrets are stored and looked up.
@@ -371,6 +374,9 @@ func cost(m store.Model, in, out int) int64 {
 // record bills and logs one request and returns the micros billed.
 func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start time.Time) int64 {
 	l.ID, l.OrgID, l.KeyID, l.Model, l.At = store.NewID(), p.Org.ID, p.Key.ID, m.ID, start.UTC()
+	if l.KBChunks == 0 {
+		l.KBChunks = p.kbChunks
+	}
 	l.LatencyMs = time.Since(start).Milliseconds()
 	if !l.Cached && l.Cost == 0 { // callers may price by something other than tokens (audio minutes)
 		l.Cost = cost(m, l.InTokens, l.OutTokens)
@@ -468,19 +474,31 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if c := p.Org.MaxTokensCap; c > 0 && (breq.Params.MaxCompletionTokens == nil || *breq.Params.MaxCompletionTokens > c) {
 		breq.Params.MaxCompletionTokens = &c
 	}
+	sel, e := g.kbSelect(w, r, p)
+	if e != nil {
+		writeError(w, e)
+		return
+	}
 	snap := g.snap.Load()
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	usesMCP := g.withMCP(bctx, r, p)
 	w.Header().Set("x-gateway-request-id", store.NewID())
 
 	if req.Stream != nil && *req.Stream {
+		if sel != nil { // retrieval finishes before the stream sends headers
+			p = g.groundChat(ctx, w, p, sel, breq)
+		}
 		g.stream(w, bctx, p, m, ts, breq, start)
 		return
+	}
+	kbSig := ""
+	if sel != nil {
+		kbSig = sel.sig
 	}
 
 	cacheKey, ttl := "", cacheTTL(r)
 	if ttl > 0 && !usesMCP && g.cfg.CacheMB > 0 {
-		h := sha256.Sum256(append([]byte(p.Org.ID+"\x00"), body...))
+		h := sha256.Sum256(append([]byte(p.Org.ID+"\x00"+kbSig+"\x00"), body...))
 		cacheKey = hex.EncodeToString(h[:])
 		if out, ok := g.resp.Get(cacheKey); ok {
 			mCacheHits.Inc()
@@ -495,9 +513,12 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var sem *semPending
 	if !usesMCP {
 		var hit bool
-		if sem, hit = g.semanticCache(w, r, p, m, breq, start); hit {
+		if sem, hit = g.semanticCache(w, r, p, m, breq, kbSig, start); hit {
 			return
 		}
+	}
+	if sel != nil {
+		p = g.groundChat(ctx, w, p, sel, breq)
 	}
 
 	done := g.rt.begin(ts[0])

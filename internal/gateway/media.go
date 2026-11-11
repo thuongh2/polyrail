@@ -362,7 +362,7 @@ func (g *Gateway) countTokens(w http.ResponseWriter, r *http.Request, p *princip
 	if breq.Params != nil {
 		maxOut = breq.Params.MaxOutputTokens
 	}
-	if !g.prepareResponses(w, p, m, ts, snap, breq, start) {
+	if g.prepareResponses(w, nil, p, m, ts, snap, breq, start) == nil { // counting is not grounded
 		return nil
 	}
 	breq.Params.MaxOutputTokens = maxOut // the org's output cap does not apply to counting

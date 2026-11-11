@@ -1,6 +1,6 @@
 # Knowledge bases ("auto KB", gateway RAG)
 
-Status: design (Tech Lead, 2026-11-11), decision D21. Owner choices: gateway RAG; built-in,
+Status: implemented (tasks A engine, B gateway + APIs, C UI; 2026-11-11), decision D21. Owner choices: gateway RAG; built-in,
 pluggable vector store. *(memory)* marks facts recalled rather than read from a local source.
 
 ## 0. Research

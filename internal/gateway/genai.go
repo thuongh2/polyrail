@@ -110,7 +110,7 @@ func (g *Gateway) genaiGenerate(w http.ResponseWriter, r *http.Request, p *princ
 	bctx := newBifrostCtx(r)
 	req.Model, req.Stream = model, stream
 	breq := req.ToBifrostResponsesRequest(bctx)
-	if !g.prepareResponses(w, p, m, ts, snap, breq, start) {
+	if p = g.prepareResponses(w, r, p, m, ts, snap, breq, start); p == nil {
 		return
 	}
 	if stream {
@@ -175,7 +175,7 @@ func (g *Gateway) genaiCountTokens(w http.ResponseWriter, r *http.Request, p *pr
 		writeError(w, errf(400, "invalid_request_error", "bad_request", "body must have contents"))
 		return
 	}
-	if !g.prepareResponses(w, p, m, ts, snap, breq, start) {
+	if p = g.prepareResponses(w, nil, p, m, ts, snap, breq, start); p == nil {
 		return
 	}
 	resp, berr := g.BF.CountTokensRequest(bctx, breq)

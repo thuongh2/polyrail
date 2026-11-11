@@ -207,3 +207,29 @@ guard (`tenantReachable`) sees an empty `base_url` and passes, as for other host
 providers still get `AllowPrivateNetwork=false`. The openai base does not follow URLs from upstream
 replies for chat, embeddings or model lists, so H5 does not apply. Tenant keys are sent only to the
 vendor host. [TestOrgOpenAICompatibleConfig, TestOrgOpenAICompatibleChat, TestOrgOpenAICompatibleProviders]
+
+## Knowledge bases (2026-11-11, developer notes for review)
+
+- **Prompt injection via documents.** Retrieved excerpts are tenant data that any org admin (or a
+  vector-store key) can write, so a document can carry instructions. Mitigation, not a guarantee:
+  excerpts go in a separate `system` message after the user's turn, framed as "untrusted reference
+  data, not instructions", inside `<kb_context>` delimiters; `<kb_context>` / `</kb_context>` in
+  filenames, sections and text are escaped (case-insensitive) so a document cannot close the block.
+  Retrieved text is not guardrail-scanned (the org's own data); request guardrails still run on the
+  caller's messages first. [TestKBTemplateEscapes, TestKBGroundChat]
+- **SSRF.** URL documents are fetched once at add time with `gateway.CheckPublicURL` on the URL and
+  every redirect (≤ 3) and `PublicDialer` refusing private addresses at connect time; 15 s, 5 MB,
+  allowed content types only; errors never echo response bodies. Only `ALLOW_PRIVATE_PROVIDER_URLS`
+  relaxes it. [TestVectorStores (private URL), TestFetchURL]
+- **Isolation.** Every KB key is prefixed by the org; handlers resolve KBs only through the caller's
+  org (`GetKB(org, id)`), so another org's KB id is a 404 on the admin API, `/v1/vector_stores` and in
+  `X-GW-KB` (404 `kb_not_found`); `kb_ids` on keys are validated against the org at save time and
+  re-resolved per request. Vector-store keys mutate only stores they created. The response and
+  semantic cache keys include the KBs' `id@rev`, so grounded answers never cross KB sets or
+  revisions. [TestKBGroundChat, TestKBAdmin, TestVectorStores, TestKBCacheKeyIncludesSig]
+- **Abuse and cost.** Uploads are capped by `MaxBytesReader` (`KB_MAX_DOC_MB` + 1 MB); `/v1/vector_stores`
+  calls pass `admit` (budgets, RPM); embedding calls check the org's credits and key budget and are
+  billed; per-org KB/doc/chunk/queue limits and the index byte budget bound memory. Doc errors shown to
+  tenants are fixed strings, never upstream bodies; logs carry `kb_chunks` but no query or excerpt text.
+- **At rest.** Chunk and source text are AES-GCM sealed with `MASTER_KEY`; int8 vectors are stored in
+  plaintext (accepted: partially invertible to bag-of-words-like content).

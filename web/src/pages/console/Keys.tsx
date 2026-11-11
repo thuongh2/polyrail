@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { Plus, TriangleAlert } from "lucide-react";
 import { CopyButton, Field, TableFrame } from "@/components/console/bits";
+import { KBPicker } from "@/components/console/KBPicker";
+import { FormDialog } from "@/components/platform/kit";
 import { DataState, EmptyState, PageHeader } from "@/components/states";
 import { toast } from "@/components/toast";
 import {
@@ -14,7 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, compact, get, orgBase, usd, when, type APIKey, type Member, type ModelView } from "@/lib/api";
+import { api, compact, get, kbApi, orgBase, usd, when, type APIKey, type KB, type Member, type ModelView } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 
@@ -35,10 +37,14 @@ export default function Keys() {
   const [creating, setCreating] = useState(false);
   const [secret, setSecret] = useState<{ name: string; secret: string } | null>(null);
   const [revoking, setRevoking] = useState<APIKey | null>(null);
+  const [grounding, setGrounding] = useState<APIKey | null>(null);
+  const admin = can("admin");
+  const kbs = useAsync(() => (admin && org ? kbApi(org.id).list() : Promise.resolve([] as KB[])), [org?.id, admin]);
 
   if (!org) return <EmptyState title="You are not in an organization yet" />;
   const canCreate = can("member");
   const canRevoke = (k: APIKey) => !k.revoked && (can("admin") || (can("member") && k.created_by === user?.id));
+  const kbName = (id: string) => kbs.data?.find((k) => k.id === id)?.name ?? id;
   const who = (id: string) => (id === user?.id ? "You" : members.data?.find((m) => m.user_id === id)?.email ?? "–");
 
   async function revoke(k: APIKey) {
@@ -97,6 +103,7 @@ export default function Keys() {
                   <TableHead>Key</TableHead>
                   <TableHead>Limits</TableHead>
                   <TableHead>Models</TableHead>
+                  <TableHead>Knowledge bases</TableHead>
                   <TableHead>Expires</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Created</TableHead>
@@ -127,6 +134,15 @@ export default function Keys() {
                           <span className="text-muted-foreground">All</span>
                         )}
                       </TableCell>
+                      <TableCell className="max-w-48">
+                        {k.kb_ids?.length ? (
+                          <span className="block truncate text-xs" title={k.kb_ids.map(kbName).join(", ")}>
+                            {k.kb_ids.map(kbName).join(", ")}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">None</span>
+                        )}
+                      </TableCell>
                       <TableCell className="whitespace-nowrap">{k.expires_at ? day(k.expires_at) : <span className="text-muted-foreground">Never</span>}</TableCell>
                       <TableCell>
                         <Badge variant="outline" className={st.cls}>
@@ -137,7 +153,12 @@ export default function Keys() {
                         <span title={when(k.created_at)}>{day(k.created_at)}</span>
                         <span className="block text-xs text-muted-foreground">{who(k.created_by)}</span>
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right whitespace-nowrap">
+                        {admin && !k.revoked && (
+                          <Button variant="ghost" size="sm" onClick={() => setGrounding(k)} aria-label={`Knowledge bases for ${k.name}`}>
+                            Knowledge bases
+                          </Button>
+                        )}
                         {canRevoke(k) && (
                           <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => setRevoking(k)} aria-label={`Revoke ${k.name}`}>
                             Revoke
@@ -157,6 +178,7 @@ export default function Keys() {
         open={creating}
         onOpenChange={setCreating}
         base={base}
+        kbs={admin ? kbs : undefined}
         onCreated={(name, s) => {
           setCreating(false);
           setSecret({ name, secret: s });
@@ -187,6 +209,8 @@ export default function Keys() {
         </DialogContent>
       </Dialog>
 
+      <KeyKBDialog key={grounding?.id} k={grounding} base={base} kbs={kbs} onClose={() => setGrounding(null)} onSaved={keys.reload} />
+
       <AlertDialog open={!!revoking} onOpenChange={(o) => !o && setRevoking(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -207,15 +231,40 @@ export default function Keys() {
   );
 }
 
+type KBList = { data?: KB[]; error?: Error };
+
+/** Admin-only: which knowledge bases ground this key's chat requests (kb_ids, max 3). */
+function KeyKBDialog({ k, base, kbs, onClose, onSaved }: { k: APIKey | null; base: string; kbs: KBList; onClose: () => void; onSaved: () => void }) {
+  const [picked, setPicked] = useState<string[]>(k?.kb_ids ?? []);
+  return (
+    <FormDialog
+      open={!!k}
+      onOpenChange={(o) => !o && onClose()}
+      title={`Knowledge bases for “${k?.name}”`}
+      description="Chat requests with this key are grounded in the excerpts that best match the latest user message. The X-GW-KB header overrides this per request."
+      submitLabel="Save"
+      success="Key updated"
+      onSubmit={async () => {
+        await api("PATCH", `${base}/keys/${k!.id}`, { kb_ids: picked });
+        onSaved();
+      }}
+    >
+      <KBPicker legend="Knowledge bases" help="None selected: requests are not grounded." kbs={kbs.data} error={kbs.error} value={picked} onChange={setPicked} />
+    </FormDialog>
+  );
+}
+
 function CreateKeyDialog({
   open,
   onOpenChange,
   base,
+  kbs,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   base: string;
+  kbs?: KBList; // admins only: kb_ids is an admin field
   onCreated: (name: string, secret: string) => void;
 }) {
   const models = useAsync(() => (open ? get<ModelView[]>(`${base}/models`) : Promise.resolve([] as ModelView[])), [base, open]);
@@ -225,17 +274,18 @@ function CreateKeyDialog({
   const [budget, setBudget] = useState("");
   const [expires, setExpires] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
+  const [kbIDs, setKBIDs] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const reset = () => {
-    setName(""), setRpm(""), setTpm(""), setBudget(""), setExpires(""), setPicked([]), setErr("");
+    setName(""), setRpm(""), setTpm(""), setBudget(""), setExpires(""), setPicked([]), setKBIDs([]), setErr("");
   };
   const num = (s: string) => (s.trim() === "" ? undefined : Number(s));
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const body = { name: name.trim(), rpm: num(rpm), tpm: num(tpm), monthly_budget_usd: num(budget), expires_in_days: num(expires), models: picked.length ? picked : undefined };
+    const body = { name: name.trim(), rpm: num(rpm), tpm: num(tpm), monthly_budget_usd: num(budget), expires_in_days: num(expires), models: picked.length ? picked : undefined, kb_ids: kbIDs.length ? kbIDs : undefined };
     if ([body.rpm, body.tpm, body.monthly_budget_usd, body.expires_in_days].some((v) => v !== undefined && (!Number.isFinite(v) || v < 0))) {
       setErr("Limits must be positive numbers, or empty for none.");
       return;
@@ -299,6 +349,16 @@ function CreateKeyDialog({
               )}
             </div>
           </fieldset>
+          {kbs && (
+            <KBPicker
+              legend="Knowledge bases"
+              help="None selected: requests are not grounded. Up to 3."
+              kbs={kbs.data}
+              error={kbs.error}
+              value={kbIDs}
+              onChange={setKBIDs}
+            />
+          )}
           {err && (
             <p role="alert" className="text-sm text-destructive">
               {err}

@@ -86,6 +86,7 @@ numbers will differ; `docs/PROGRESS.md` has the method.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): design and storage tiers
 - [docs/SECURITY.md](docs/SECURITY.md): threat model and review findings
 - [docs/TESTING.md](docs/TESTING.md): acceptance criteria to tests
+- [docs/BIFROST_PARITY.md](docs/BIFROST_PARITY.md): which Bifrost features are covered and what is next
 
 ## Development
 

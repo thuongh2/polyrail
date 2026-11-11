@@ -8,7 +8,8 @@ ENV GOPROXY=https://proxy.golang.org,direct GOFLAGS=-mod=mod CGO_ENABLED=0 GOTOO
 COPY go.mod go.sum ./
 RUN apk add --no-cache git && go mod download
 COPY . .
-RUN go build -trimpath -ldflags="-s -w" -o /out/gateway ./cmd/gateway
+ARG VERSION=docker
+RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/gateway ./cmd/gateway
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/gateway /gateway

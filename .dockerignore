@@ -1,4 +1,16 @@
+# Only what the Go build needs goes into the image build context.
+.git/
+.github/
+.claude/
 bin/
 data/
-.git/
+.run/
+web/node_modules/
+# local secrets and runtime files (MASTER_KEY lives in .env.local)
+.env*
+.demo-key
+*.log
+dump.rdb
 *.test
+docs/
+deploy/

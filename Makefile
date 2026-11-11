@@ -6,7 +6,7 @@ export GOTOOLCHAIN ?= local
 export CGO_ENABLED ?= 0
 
 .PHONY: build dist test check run ui
-# ui rebuilds the embedded web UI (needs Node 20+); the built files are committed, so Go builds without Node.
+# ui rebuilds the embedded web UI (needs Node 22, the version CI checks the committed build with); the built files are committed, so Go builds without Node.
 ui:
 	cd web && npm ci && npm run build
 

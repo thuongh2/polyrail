@@ -148,6 +148,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerProxyPools(mux)
 	a.registerKeys(mux)
 	a.registerAlerts(mux)
+	a.registerPresets(mux)
 
 	// Unknown API paths answer JSON 404 instead of falling through to the UI's index.html.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, http.StatusNotFound, "not found") })
@@ -1204,8 +1205,13 @@ func (a *API) usageReport(w http.ResponseWriter, r *http.Request) {
 		days = 30
 	}
 	org := r.PathValue("org")
+	group := r.URL.Query().Get("group")
+	if group != "" && (group != "end_user" || org == "_") {
+		writeErr(w, http.StatusBadRequest, "group must be end_user (organization usage only)")
+		return
+	}
 	daily := []usageRow{}
-	byModel, byKey := map[string]store.Agg{}, map[string]store.Agg{}
+	byModel, byKey, byUser := map[string]store.Agg{}, map[string]store.Agg{}, map[string]store.Agg{}
 	var total store.Agg
 	now := time.Now()
 	for d := days - 1; d >= 0; d-- {
@@ -1237,8 +1243,26 @@ func (a *API) usageReport(w http.ResponseWriter, r *http.Request) {
 		}
 		total.Add(dayTotal)
 		daily = append(daily, row(day, dayTotal))
+		if group == "end_user" {
+			up := usage.EndUserPrefix(org, day)
+			m, err := a.S.KV.ScanAgg(r.Context(), up)
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			for k, v := range m {
+				cur := byUser[strings.TrimPrefix(k, up)]
+				cur.Add(v)
+				byUser[strings.TrimPrefix(k, up)] = cur
+			}
+		}
 	}
-	writeJSON(w, 200, map[string]any{"total": row("total", total), "daily": daily, "models": rows(byModel), "keys": rows(byKey)})
+	out := map[string]any{"total": row("total", total), "daily": daily, "models": rows(byModel), "keys": rows(byKey)}
+	if group == "end_user" {
+		eu := rows(byUser)
+		out["end_users"] = eu[:min(len(eu), 1000)] // shortcut: top 1000 by cost; page when someone needs the tail
+	}
+	writeJSON(w, 200, out)
 }
 
 func (a *API) listLogs(w http.ResponseWriter, r *http.Request) {

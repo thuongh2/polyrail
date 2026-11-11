@@ -53,7 +53,9 @@ model price), `cache-affinity` (rendezvous hash of the request's `prompt_cache_k
 prompt prefix: chat messages before the first user message plus `tools`, or Responses `instructions`
 plus `tools`; weighted when there is neither). Latency, error rate and in-flight counts are per node,
 in memory; in-flight is counted for `/v1/chat/completions` and `/v1/responses`. Chat completions
-(stream and non-stream) answer with `X-GW-Route: <strategy>; <provider name>/<upstream model>`.
+(stream and non-stream) and non-stream completions and responses answer with
+`X-GW-Route: <strategy>; <provider name>/<upstream model>`, naming the model that served (see
+[Request routing](#request-routing)). Requests can override this per call: see below.
 
 ### Idempotency keys
 
@@ -76,6 +78,77 @@ request (the same number recorded in usage; 0 for response-cache and semantic-ca
 semantic cache's embedding call is logged and billed as its own request and not included). Token counts are in the body's `usage`. Streams do not
 get the header: it is sent before the usage is known.
 
+### Request routing
+
+OpenRouter-compatible request fields on `/v1/chat/completions`, `/v1/responses` and
+`/v1/completions` (same field names as OpenRouter). The gateway reads them and removes `models`,
+`provider`, `preset` and `usage` before the upstream call; `user` is forwarded as usual.
+
+- `models: ["vendor/a", "vendor/b"]` (at most 5): fallback models tried after `model`, in order.
+  Each must be visible to the org, allowed by the key and of the endpoint's kind; a model that is
+  not is skipped (the first model's error is returned when none is usable). The targets of all
+  models form one failover chain: `model`'s targets by its strategy, then the next model's. Billing,
+  the response `model`, usage rollups and `X-GW-Route` use the model that served. `model` may be
+  omitted when `models` is set (the first entry is used).
+- `provider` object, validated (unknown fields or bad values → 400 `invalid_routing`):
+  - `order: [name or type]`: these providers first, in this order (case-insensitive provider name
+    or type); `only`, `ignore`: keep only / drop these.
+  - `allow_fallbacks` (default `true`): `false` keeps only the first eligible target of each model
+    (`models` fallbacks still apply).
+  - `sort`: `"price"` (target `input + output` price, defaulting to the model's), `"throughput"`
+    (highest observed output tokens/s, then lowest latency when throughput is unknown),
+    `"latency"` (lowest average latency + error rate × 1000 ms), or `{by, partition}` where
+    `partition: "none"` sorts all models' targets together (default `"model"`: within each model).
+    Measured targets come before unmeasured ones. Stats are this node's in-memory EWMAs; throughput
+    is whole-request output tokens / duration (streams include time to first token).
+  - `max_price: {prompt, completion, request, image}` in USD (per 1M tokens, per request, per
+    image): targets above any cap are excluded (target price override, else the model's).
+  - `preferred_min_throughput`, `preferred_max_latency` (tokens/s; seconds): targets measured below /
+    above move behind the others. Each takes a number or a percentile object
+    `{p50, p75, p90, p99}` of which only `p50` is used (one EWMA per target, no histogram).
+  - `zdr: true`: only providers declared `privacy.zdr`. `data_collection: "deny"`: drop providers
+    declared `trains_on_data` or with `retention_days > 0` (unless `zdr`). These can only narrow
+    what an org policy allows.
+  - `require_parameters: true`: best effort; skips a model whose declared `modalities` lack a
+    requested output `modalities` entry or `image` for image inputs. Tools, `response_format` and
+    the like are not checked (there is no per-model support metadata). Models without
+    `modalities` pass.
+  - `quantizations`: accepted and ignored (targets carry no quantization metadata).
+  - Filters always apply; `order` then `sort` replace the model strategy's order; targets with an
+    open circuit stay last. No target left → 503 `no_provider`.
+- Shortcuts: a model id ending in `:nitro` sorts that model's targets by throughput, `:floor` by
+  price (`provider.sort` wins when both are given). The suffix is removed before lookup.
+- Presets: `"model": "@preset/<slug>"` (or `"preset": "<slug>"` with your own `model`) loads an
+  org preset (admin API below): its `model`, `models`, `provider` and `params`. Request fields win:
+  `models` and `provider` replace the preset's, each `params` entry applies only when the request
+  does not set that field. `params.system` is prepended as a system message (chat) or to
+  `instructions` (Responses); completions ignore it; `max_tokens` becomes `max_output_tokens` on
+  Responses. Unknown slug (or another org's) → 404 `preset_not_found`.
+- `usage: {"include": true}`: the response `usage` (non-stream body, the stream chunk that carries
+  usage, Responses `response.usage`) gains `cost` (USD), `cost_micros` (the amount billed, as
+  `X-GW-Cost-Micros`) and `prompt_tokens_details.cached_tokens` /
+  `input_tokens_details.cached_tokens` when the provider reported cached tokens. Reasoning tokens
+  are in `completion_tokens_details.reasoning_tokens` as the provider reports them. Without
+  `include` the body is unchanged.
+- `user`: recorded on the request log as `end_user` (first 128 bytes; tenant data, never on public
+  pages), rolled up per day for `GET /api/orgs/{org}/usage?group=end_user`, and used as the
+  sticky-routing key of `cache-affinity` models when the request has no `prompt_cache_key` or
+  prompt prefix.
+
+```
+POST /v1/chat/completions
+{"model": "openai/gpt-4o:floor",
+ "models": ["anthropic/claude-sonnet"],
+ "provider": {"zdr": true, "ignore": ["azure"], "max_price": {"prompt": 3}},
+ "usage": {"include": true}, "user": "customer-42",
+ "messages": [{"role": "user", "content": "hi"}]}
+
+200 X-GW-Route: priority; openai-eu/gpt-4o
+{"model": "openai/gpt-4o", …,
+ "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11,
+           "cost": 0.000031, "cost_micros": 31}}
+```
+
 Anthropic SDK: `Anthropic(base_url="https://gw.example.com/anthropic", api_key="sk-gw-…")`.
 Google GenAI SDK: `genai.Client(api_key="sk-gw-…", http_options={"base_url": "https://gw.example.com/genai"})`,
 then `client.models.generate_content(model="vendor/name", contents="hi")`.
@@ -93,7 +166,9 @@ x-api-key: sk-gw-…
 Errors: `{"error": {"message", "type", "code"}}`. Codes include `invalid_api_key` (401),
 `expired_api_key` (401), `model_not_found` (404), `model_not_allowed` (403), `wrong_model_kind` (400),
 `guardrail_blocked` (400), `prompt_injection` (400), `insufficient_credits` (402), `key_budget_exceeded` (402),
-`rpm_exceeded` / `tpm_exceeded` (429), `body_too_large` (413), `provider_error` (upstream status or 502).
+`rpm_exceeded` / `tpm_exceeded` (429), `body_too_large` (413), `invalid_routing` (400),
+`preset_not_found` (404), `unsupported_parameters` (400), `no_provider` (503), `provider_error`
+(upstream status or 502).
 On `/anthropic/v1/*` errors use the Anthropic shape with the same status:
 `{"type":"error","error":{"type","message"}}`, type by status: 400 `invalid_request_error`,
 401 `authentication_error`, 402 `billing_error`, 403 `permission_error`, 404 `not_found_error`,
@@ -263,7 +338,10 @@ create too), `expires_in_days`, `revoked`. On PATCH only admins may change limit
 | POST | `/api/orgs/{org}/providers/{id}/discover`, `/import` | admin (org-owned providers only) |
 | GET | `/api/orgs/{org}/models` | viewer |
 | POST/PUT/DELETE | `/api/orgs/{org}/models[/{vendor/name}]` | admin |
-| GET | `/api/orgs/{org}/usage?days=30` | viewer |
+| GET | `/api/orgs/{org}/usage?days=30[&group=end_user]` | viewer |
+| GET | `/api/orgs/{org}/presets`, `/presets/{slug}` | viewer (list is a bare JSON array) |
+| POST | `/api/orgs/{org}/presets` | admin (201; 409 when the slug exists) |
+| PUT/DELETE | `/api/orgs/{org}/presets/{slug}` | admin (PUT replaces; 404 when missing) |
 | GET | `/api/orgs/{org}/logs?limit=100` | viewer |
 | GET | `/api/orgs/{org}/audit` | admin |
 | GET/POST | `/api/orgs/{org}/webhooks` | admin (signing secret returned once on create) |
@@ -288,6 +366,21 @@ create too), `expires_in_days`, `revoked`. On PATCH only admins may change limit
 Org PATCH body: `name`, `guardrails`, `max_tokens_cap`, `prepaid`, `mcp_servers`, and
 `semantic_cache: {model, threshold, ttl_seconds}`: `model` must be an embedding model the org can use,
 `threshold` 0.5–0.999 (default 0.92), `ttl_seconds` 1–86400 (default 3600). `{"model": ""}` turns it off.
+
+Usage report: `{"total", "daily", "models", "keys"}` rows of `{key, requests, errors, in_tokens,
+out_tokens, cost_usd, avg_latency_ms, cache_hits}`; with `group=end_user` also `"end_users"`, one row
+per request `user` (top 1000 by cost over the period; rollups follow the log retention). Other
+`group` values, or `group` on `/api/admin/usage`, → 400.
+
+Preset body (POST; PUT takes the slug from the path): `slug` (`^[a-z0-9][a-z0-9-]{0,62}$`), `model`
+and/or `models` (at most 5, no presets), `provider` (the request `provider` object, validated the
+same way), `params` (`temperature`, `top_p`, `frequency_penalty`, `presence_penalty`: numbers;
+`max_tokens`, `seed`: integers ≥ 0; `stop`: string or up to 4 strings; `system`: string ≤ 32 KB).
+At most 200 presets per org. Returned as `{id, org_id, slug, model, models, provider, params,
+created_at}`. Audited as `preset.create`, `preset.update`, `preset.delete`.
+
+Provider bodies take `privacy: {zdr, trains_on_data, retention_days, region}`, the operator's
+declaration used by request `provider.zdr` / `provider.data_collection`.
 
 KB bodies (POST/PATCH; snake_case as returned): `name`, `description`, `embedding_model` (an
 embedding model visible to the org), `dimensions` (0 = native), `chunk_chars` (200–8000, default

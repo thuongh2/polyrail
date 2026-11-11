@@ -234,9 +234,20 @@ type Provider struct {
 	NoProxy bool           `json:"no_proxy,omitempty"` // connect directly even when a global proxy is set
 	// ProxyPool names an operator proxy pool (ProxyPool.ID) to rotate through instead of one
 	// proxy; platform providers only, never together with Proxy.
-	ProxyPool string    `json:"proxy_pool,omitempty"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
+	ProxyPool string `json:"proxy_pool,omitempty"`
+	// Privacy is the operator's declaration of the provider's data handling; request
+	// `provider.zdr` / `provider.data_collection` filter targets by it.
+	Privacy   ProviderPrivacy `json:"privacy"`
+	Enabled   bool            `json:"enabled"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+// ProviderPrivacy declares how a provider handles prompts (shared with the policy engine).
+type ProviderPrivacy struct {
+	ZDR           bool   `json:"zdr,omitempty"`            // zero data retention
+	TrainsOnData  bool   `json:"trains_on_data,omitempty"` // may train on prompts
+	RetentionDays int    `json:"retention_days,omitempty"` // prompt retention; 0 = none or unknown
+	Region        string `json:"region,omitempty"`         // data region, e.g. "us", "eu"
 }
 
 // ProviderProxy is an outbound proxy. Password follows the Value/Sealed pattern: plaintext only on
@@ -264,9 +275,12 @@ type Target struct {
 	Model      string  `json:"model"` // upstream model name
 	Weight     float64 `json:"weight"`
 	// InputPrice/OutputPrice (micro-USD per 1M tokens) override the model price for the cost
-	// routing strategy only; billing always uses the model price.
+	// routing strategy and request price sorting/caps only; billing always uses the model price.
 	InputPrice  int64 `json:"input_price_micros,omitempty"`
 	OutputPrice int64 `json:"output_price_micros,omitempty"`
+	// Via is set by the gateway, never stored: the fallback model of a request's `models` list
+	// this target belongs to (nil = the requested model).
+	Via *Model `json:"-"`
 }
 
 type Model struct {
@@ -319,6 +333,7 @@ type RequestLog struct {
 	Cached    bool      `json:"cached,omitempty"`
 	Stream    bool      `json:"stream,omitempty"`
 	KBChunks  int       `json:"kb_chunks,omitempty"` // knowledge-base excerpts injected (docs/KB.md §4)
+	EndUser   string    `json:"end_user,omitempty"`  // the request's `user` (tenant data, max 128 chars)
 	At        time.Time `json:"at"`
 }
 
@@ -502,7 +517,7 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id)) {
+	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id), presetKey(id, "")) {
 		if err := s.DeletePrefix(ctx, p); err != nil {
 			return err
 		}
@@ -1097,10 +1112,16 @@ func (s *Store) ListLogs(ctx context.Context, orgID string, days, limit int) ([]
 	return out, nil
 }
 
-// PruneLogs deletes request logs older than keepDays. Usage rollups (agg/) are kept.
+// PruneLogs deletes request logs and per-end-user rollups (enduser/, tenant data) older than
+// keepDays. Usage rollups (agg/) are kept.
 func (s *Store) PruneLogs(ctx context.Context, keepDays int) error {
 	cutoff := Day(time.Now().AddDate(0, 0, -keepDays))
-	return s.KV.DeleteRange(ctx, "log/", "log/"+cutoff)
+	for _, p := range []string{"log/", "enduser/"} {
+		if err := s.KV.DeleteRange(ctx, p, p+cutoff); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PruneHealth deletes hourly provider health and per-key counters (keystat/) older than keepDays.

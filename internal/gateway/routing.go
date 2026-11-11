@@ -74,6 +74,7 @@ type targetStats struct {
 	inflight  int64
 	latencyMs float64 // 0 = unknown
 	errRate   float64
+	tps       float64 // output tokens per second, 0 = unknown (observeTPS)
 }
 
 // router orders a model's targets by its strategy, from the breaker and per-target stats.
@@ -325,8 +326,8 @@ func (g *Gateway) settleErr(bctx *schemas.BifrostContext, snap *Snapshot, m stor
 		}
 		g.rt.br.result(targetID(t), false)
 		g.rt.observe(t, false, 0)
-		if m.OrgID == "" {
-			g.Usage.RecordHealth(m.ID, t.ProviderID, false, 0, 0, start)
+		if o := ownerOf(m, t); o.OrgID == "" {
+			g.Usage.RecordHealth(o.ID, t.ProviderID, false, 0, 0, start)
 		}
 	}
 	if len(ts) > 0 && statusOf(be.StatusCode) == http.StatusTooManyRequests && be.ExtraFields.RetryAfter > 0 {

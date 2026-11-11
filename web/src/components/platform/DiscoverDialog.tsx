@@ -141,7 +141,7 @@ export function DiscoverDialog({ base, provider, onClose }: { base: string; prov
             {shown.length === 0 ? (
               <p className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">No models match.</p>
             ) : (
-              <ul className="max-h-[50dvh] divide-y overflow-y-auto rounded-md border">
+              <ul className="max-h-[50dvh] divide-y overflow-y-auto scrollbar-thin rounded-md border">
                 {shown.map((m) => {
                   const r = picked[m.upstream];
                   const err = errors[m.upstream];

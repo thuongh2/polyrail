@@ -29,7 +29,9 @@
   --warning: oklch(0.75 0.15 75);
   --danger: oklch(0.53 0.2 27);
   --nodata: oklch(0.9 0 0);
-  --sidebar: oklch(0.985 0 0);
+  /* Console frame: the muted surface behind the top bar, sidebar and the raised content panel. */
+  --frame: oklch(0.967 0 0);
+  --frame-active: oklch(0.915 0 0);
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
@@ -58,7 +60,8 @@
   --warning: oklch(0.8 0.14 80);
   --danger: oklch(0.68 0.19 25);
   --nodata: oklch(0.3 0 0);
-  --sidebar: oklch(0.18 0 0);
+  --frame: oklch(0.115 0 0);
+  --frame-active: oklch(0.235 0 0);
 }
 
 @theme inline {
@@ -91,7 +94,22 @@
   --color-warning: var(--warning);
   --color-danger: var(--danger);
   --color-nodata: var(--nodata);
-  --color-sidebar: var(--sidebar);
+  --color-frame: var(--frame);
+  --color-frame-active: var(--frame-active);
+}
+
+/* Scrolls by wheel, touch and keyboard but draws no scrollbar (console frame, panel, chat). */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Thin, quiet scrollbar for places where seeing the overflow matters (wide tables, dialogs). */
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 @layer base {

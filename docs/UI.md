@@ -29,6 +29,24 @@ charts are small SVG components. No new runtime dependency without a reason in d
   One-color logos render as a CSS mask on `bg-current` so they follow the theme; colored ones as `<img>`;
   types without a logo get a monogram. Decorative (`aria-hidden`) when the name is written next to them.
 
+## Console layout
+
+`components/layout/ConsoleLayout.tsx`, modeled on GitLab's current frame. The browser page never scrolls:
+the frame is `h-dvh overflow-hidden` on the muted `--frame` surface (token on `:root` and `.dark`).
+
+- Top bar (no border, on the frame): wordmark, org switcher, then Models, theme toggle, account, sign out.
+- Sidebar (md and up, on the frame, no border): nav groups from the `groups` config with plain small
+  muted headings; active item is a `--frame-active` pill, bold, with a thin `bg-signal` left mark. The nav
+  scrolls internally (`no-scrollbar`); Account, Docs and "Collapse sidebar" are pinned below it.
+  Collapsed = icons only (`aria-label` + `title` on each link), stored in `localStorage["console.sidebar"]`.
+- Content is a raised panel (`bg-background`, `rounded-xl`, border, small shadow, inset from the frame).
+  It is the only scroll container (`<main tabIndex=0>`, `no-scrollbar`, keyboard/wheel/touch scroll
+  still work) and resets to the top on navigation. Pages must not rely on window scroll. Inside: a
+  breadcrumb derived from the nav config ("Organization / API keys"), then the page, max width 1200px.
+- Below md the sidebar is the Sheet drawer and the panel is full width without the rounded inset.
+- Scrollbars: `no-scrollbar` (hidden, still scrollable) and `scrollbar-thin` (thin, border-colored) are
+  utilities in index.css. Wide tables (`TableFrame`) and dialogs use `scrollbar-thin`.
+
 ## Routes
 
 Public: `/`, `/models`, `/models/<vendor>/<name>`, `/status`, `/docs`, `/login`, `/signup`.

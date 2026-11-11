@@ -343,7 +343,7 @@ function TestDialog({ pool, onClose }: { pool: ProxyPool; onClose: () => void })
   };
   return (
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto scrollbar-thin sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Test {pool.name}</DialogTitle>
           <DialogDescription>Opens a tunnel to the target through each member and closes it. Nothing is sent through the tunnel.</DialogDescription>

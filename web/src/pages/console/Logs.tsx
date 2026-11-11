@@ -132,7 +132,7 @@ export default function Logs() {
       </DataState>
 
       <Sheet open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-md">
+        <SheetContent className="no-scrollbar w-full overflow-y-auto sm:max-w-md">
           {open && (
             <>
               <SheetHeader>

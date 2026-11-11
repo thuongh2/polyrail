@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link, useLocation } from "wouter";
 import { ListPlus, Pencil, Plus, Trash2 } from "lucide-react";
 import type { Scope } from "@/App";
 import { DataState, EmptyState, PageHeader } from "@/components/states";
@@ -24,6 +25,10 @@ export function providersPath(scope: Scope, orgId?: string) {
   return orgId ? orgBase(orgId) + "/providers" : null;
 }
 
+/** Console path (relative to /app) of a provider's detail page. */
+export const providerHref = (scope: Scope, id: string) =>
+  `${scope === "platform" ? "/platform" : ""}/providers/${encodeURIComponent(id)}`;
+
 export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
   const { org, can, user } = useSession();
   const base = providersPath(scope, org?.id);
@@ -32,6 +37,7 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
   const [editing, setEditing] = useState<Provider | "new" | null>(null);
   const [deleting, setDeleting] = useState<Provider | null>(null);
   const [discovering, setDiscovering] = useState<Provider | null>(null);
+  const [, navigate] = useLocation();
 
   const title = scope === "platform" ? "Public providers" : "Providers";
   const description =
@@ -81,11 +87,21 @@ export default function ProvidersAdmin({ scope = "org" }: { scope?: Scope }) {
               </TableHeader>
               <TableBody>
                 {[...ps].sort((a, b) => a.name.localeCompare(b.name)).map((p) => (
-                  <TableRow key={p.id}>
+                  <TableRow
+                    key={p.id}
+                    className="cursor-pointer"
+                    // The name link is the keyboard path; a click anywhere else on the row (not a button) opens it too.
+                    onClick={(e) => !(e.target as HTMLElement).closest("button, a") && navigate(providerHref(scope, p.id))}
+                  >
                     <TableCell className="font-medium">
                       <span className="flex items-center gap-2">
                         <ProviderLogo type={p.type} />
-                        {p.name}
+                        <Link
+                          href={providerHref(scope, p.id)}
+                          className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                        >
+                          {p.name}
+                        </Link>
                         {p.proxy?.url && (
                           <Badge variant="outline" title={`Upstream calls go through ${p.proxy.url}`}>
                             via proxy
@@ -166,7 +182,7 @@ const needsURL = (t: string) => ["ollama", "sgl", "vllm", "databricks"].includes
 /** Types whose credentials live in per-key config; the dialog edits their first key. */
 const CLOUD = ["azure", "bedrock", "bedrock_mantle", "sagemaker", "vertex", "cloudflare"] as const;
 type Cloud = (typeof CLOUD)[number];
-const isCloud = (t: string): t is Cloud => (CLOUD as readonly string[]).includes(t);
+export const isCloud = (t: string): t is Cloud => (CLOUD as readonly string[]).includes(t);
 /** AWS types share the key's "bedrock" config block; only bedrock takes an ARN. */
 const isAWS = (t: string) => t === "bedrock" || t === "bedrock_mantle" || t === "sagemaker";
 
@@ -251,7 +267,7 @@ function cloudKey(type: Cloud, f: CloudForm, prev?: ProviderKey): ProviderKey {
   return k;
 }
 
-function ProviderDialog({
+export function ProviderDialog({
   scope, base, provider, onClose, onSaved,
 }: { scope: Scope; base: string; provider?: Provider; onClose: () => void; onSaved: () => void }) {
   const { config } = useSession();

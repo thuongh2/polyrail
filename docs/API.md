@@ -471,6 +471,108 @@ answers 404; `/api/admin/…`, `/api/auth/…`, `GET /api/orgs`, operator routes
 Audit entries name the actor `token:<name>`. Keys created by a token have `created_by: "token:<id>"`.
 Mutations audited as `mgmt_token.create`, `mgmt_token.update`, `mgmt_token.delete`.
 
+### Enterprise identity: domains, SAML SSO, SCIM (D29)
+
+All settings below are **owner** only (operators act as owners; management tokens, capped at admin,
+get 403). Every mutation is audited. Secrets never come back: the SP private key is stored sealed
+and the SCIM token as SHA-256 only.
+
+**Domains.** `GET /api/orgs/{org}/domains` → `[{id, org_id, name, token, verified, verified_at?,
+created_at, record: {type: "TXT", name: "_polyrail-verify.<name>", value: "polyrail-verification=<token>"}}]`.
+`POST …/domains {name}` → 201 (same shape; at most 50 per org; the name is lower-cased, IPs and
+wildcards refused). Publish the `record`, then `POST …/domains/{id}/verify` → 200 verified, 422 when
+the TXT record is not visible yet, 409 when another org already holds a verified claim on the name
+(one org per domain; pending claims by several orgs are allowed). `DELETE …/domains/{id}` → 204
+releases the claim. Audited `domain.create`, `domain.verify`, `domain.delete`.
+
+**SSO settings.** `GET /api/orgs/{org}/sso` →
+```json
+{"saml": {"enabled": false, "idp_metadata_url": "", "idp_metadata_xml": "", "idp_entity_id": "",
+          "metadata_fetched_at": null, "default_role": "member", "attribute_email": "", "attribute_name": "",
+          "attribute_groups": "", "allow_idp_initiated": false, "enforce": false, "sp_certificate": "-----BEGIN CERTIFICATE-----…"},
+ "scim": {"enabled": false, "default_role": "member", "token_prefix": "pr-scim-abcd", "token_created_at": "…"},
+ "group_mappings": [{"group": "Polyrail Admins", "role": "admin", "workspace_id": ""}],
+ "sp": {"entity_id": "<PUBLIC_URL>/api/sso/saml/{org}/metadata", "metadata_url": "…/metadata",
+        "acs_url": "…/acs", "login_url": "…/login", "certificate": "-----BEGIN CERTIFICATE-----…"},
+ "scim_base_url": "<PUBLIC_URL>/scim/v2/{org}", "updated_at": "…"}
+```
+The first GET creates the org's SP signing key (RSA-2048, self-signed 10-year certificate), so the
+SP metadata exists before the IdP is configured. The PUT routes below answer the same shape.
+
+- `PUT …/sso/saml {enabled, idp_metadata_url?, idp_metadata_xml?, default_role?, attribute_email?,
+  attribute_name?, attribute_groups?, allow_idp_initiated?, enforce?}` replaces the SAML settings.
+  Give metadata as a URL (fetched once at save through the SSRF guard: public `https` only, no
+  redirects, 1 MiB, 10 s; save again to re-fetch after an IdP certificate rotation) or as XML; when
+  both are omitted the stored metadata is kept. The metadata must have an HTTP-Redirect
+  SingleSignOnService and a signing certificate. `default_role` is viewer, member (default) or admin.
+  `enforce` needs `enabled` and at least one verified domain. Attribute names default to common
+  Okta / Entra ID / Google names (`email`, `mail`, the Entra `…/claims/emailaddress` URI, the `mail`
+  OID; `name`, `displayName`, Entra `…/claims/displayname`; `groups`, Entra `…/claims/groups`); the
+  NameID is the email fallback. Audited `sso.saml.update`.
+- `PUT …/sso/group-mappings [{group, role, workspace_id?}]` (≤ 200, group names unique
+  case-insensitively, role viewer/member/admin). `workspace_id` is stored for workspaces (W3) and not
+  used yet. Audited `sso.group_mappings.update`.
+- `POST …/sso/scim/token` → 201 `{token: "pr-scim-…", scim_base_url}`, shown once; it enables SCIM
+  and replaces the previous token at once. Audited `sso.scim.token`.
+- `PUT …/sso/scim {enabled, default_role?}` turns SCIM on/off (on needs a token). Audited `sso.scim.update`.
+
+**SAML sign-in** (public, no session): `GET /api/sso/saml/{org}/metadata` (SP metadata XML, 404 until
+an owner opened the SSO settings), `GET /api/sso/saml/{org}/login` (SP-initiated: 302 to the IdP with
+a signed AuthnRequest id in the `gw_saml` cookie, 10 min), `POST /api/sso/saml/{org}/acs`
+(HTTP-POST binding only). The response must be signed by the IdP's metadata certificate (SHA-1
+signatures refused), for this SP's audience and ACS URL, unexpired, and — unless
+`allow_idp_initiated` — answer the request id in this browser's cookie. Each assertion id is
+accepted once (replay cache in the store, shared by all nodes). Then: the email must be on a
+domain **this org** verified (403 otherwise); platform operators are refused (403: they use their
+password); users deprovisioned by this org's SCIM are refused (403). Unknown emails get an account
+(just in time); non-members join with the highest mapped group role or `default_role`; an existing
+non-owner member's role follows a matching group mapping. Success sets the session cookie and
+redirects to `/app/`; failures answer 401/403 JSON without IdP details (those go to the log).
+Audited `sso.saml.login`.
+
+**Enforced SSO.** When an org has SAML on with `enforce`, `POST /api/auth/login` and
+`POST /api/auth/signup` for an email on one of its verified domains answer 403
+`{"error": {"message": "your organization requires single sign-on: use SSO", "code": "sso_required",
+"login_url": "/api/sso/saml/{org}/login"}}`, whatever the password. Break-glass: a platform operator
+with the right password still signs in (logged as a warning). Sessions issued before enforcement
+stay valid until they expire or the user signs out. Platform OIDC (`OIDC_*`) is operator-configured
+and stays available.
+
+**Discovery for the login page.** `GET /api/auth/sso?email=` (public, 60/min per IP) →
+`{method: "saml"|"oidc"|"password", login_url, password_allowed}`: `saml` when the email's domain
+is verified by an org with SAML on (`password_allowed` false when enforced), `oidc` when platform
+OIDC is configured and accepts the domain, else `password`. `GET /api/auth/config` carries
+`"sso_discovery": "/api/auth/sso"`.
+
+### SCIM 2.0
+
+Base URL `<PUBLIC_URL>/scim/v2/{org}`, header `Authorization: Bearer pr-scim-…` (401 SCIM error for
+a missing, wrong or other org's token, or SCIM off; 1200 requests/min per org; 1 MiB bodies).
+Served by `github.com/elimity-com/scim` (RFC 7643/7644 validation, filters, paging):
+`/ServiceProviderConfig`, `/Schemas`, `/ResourceTypes`, `/Users`, `/Groups` (GET list with
+`filter`, `startIndex`, `count` ≤ 100; POST; GET/PUT/PATCH/DELETE by id). The enterprise User
+extension is accepted and not stored.
+
+- **Users.** The SCIM id is the Polyrail user id. The account email is the primary (else first)
+  `emails` value, else an email-shaped `userName`, and must be on a domain this org verified (400
+  otherwise). An existing account with that email is linked; otherwise one is created. Active users
+  are org members (role: highest mapped SCIM group, else `scim.default_role`). PATCH handles
+  `active`, `userName`, `externalId`, `displayName`, `name.*` (with or without a path, Okta and Entra
+  styles); a different email answers 400 (`mutability`: emails are fixed — deprovision and create
+  again); other attributes are accepted and ignored.
+- **Deprovision** (`active: false` or `DELETE`): removes the org membership and revokes the API keys
+  and management tokens the user created in this org (`scim.user.deprovision`, with counts). The
+  user's account and other orgs are untouched. Re-activation restores the membership, never the
+  revoked credentials. A deprovisioned user cannot come back through SAML just-in-time sign-in.
+  `DELETE` also hides the user from SCIM reads and drops it from groups. The last owner cannot be
+  deprovisioned (400).
+- **Groups** (`displayName` unique per org, members = SCIM user ids of the org; unknown ids are
+  dropped). Membership changes (POST, PUT, PATCH `members` add/replace/remove including
+  `members[value eq "id"]`, DELETE) recompute the roles of affected active users when group mappings
+  exist; owners keep their role.
+- Audited `scim.user.create|replace|patch|delete|deprovision`, `scim.member.role`,
+  `scim.group.create|replace|patch|delete` with actor `scim`.
+
 ### Exports
 
 | Method | Path | Role |

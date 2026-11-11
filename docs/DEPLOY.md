@@ -65,6 +65,42 @@ The nodes are stateless; put any HTTP load balancer in front. Use the same `MAST
 - Keep `ALLOW_SIGNUP=false` unless you run a public service; sign-up does not verify email.
 - Rotate `ADMIN_PASSWORD` after first start by changing it in the console (Account).
 
+## Enterprise SSO and SCIM per organization (Okta, Entra ID)
+
+Each org configures its own IdP in the console (owner role); the operator only needs `PUBLIC_URL`
+set to the external https URL, because the SAML entity id, ACS URL and SCIM base URL are built from
+it. API details: docs/API.md "Enterprise identity".
+
+1. **Verify the email domain.** Org settings → Domains → add `example.com`, publish the TXT record
+   `_polyrail-verify.example.com` = `polyrail-verification=<token>` at the DNS host, then Verify.
+   SAML and SCIM only accept emails on verified domains of the org.
+2. **Get the SP details.** Open the SSO settings (this creates the org's SAML signing key) and copy
+   the ACS URL `<PUBLIC_URL>/api/sso/saml/<org>/acs` and entity id / metadata URL
+   `<PUBLIC_URL>/api/sso/saml/<org>/metadata`.
+3. **Okta:** Applications → Create App Integration → SAML 2.0. Single sign-on URL = ACS URL,
+   Audience URI (SP Entity ID) = entity id, Name ID format EmailAddress, Application username Email.
+   Attribute statements: `email` = `user.email`, `name` = `user.displayName`; group attribute
+   statement `groups` (filter e.g. "Starts with Polyrail"). Copy the app's "Metadata URL" into the
+   SSO settings and enable SAML.
+   **Entra ID:** Enterprise applications → New → Create your own → Non-gallery; Single sign-on →
+   SAML: Identifier (Entity ID) = entity id, Reply URL (ACS) = ACS URL. The default claims
+   (`…/claims/emailaddress`, `…/claims/displayname`) are read without mapping; add a group claim if
+   you map groups (Entra sends group object ids unless "Cloud-only group display names" or sAMAccountName is
+   chosen, so map those values). Paste the "App Federation Metadata Url" into the SSO settings.
+4. **Map groups to roles** (optional): Polyrail group name → viewer, member or admin. Without a
+   mapping, new users get the SAML / SCIM default role.
+5. **SCIM** (optional): create a SCIM token in the SSO settings (shown once).
+   Okta: app → General → enable SCIM provisioning → Provisioning → SCIM connector base URL
+   `<PUBLIC_URL>/scim/v2/<org>`, unique identifier field `userName`, actions Push New Users, Push
+   Profile Updates, Push Groups; authentication HTTP Header (Bearer) = the token. Enable "Create
+   Users", "Update User Attributes", "Deactivate Users".
+   Entra: the app → Provisioning → Automatic; Tenant URL `<PUBLIC_URL>/scim/v2/<org>`, Secret Token =
+   the token; Test Connection, then start provisioning. Deprovisioned users lose the org membership
+   and their keys and management tokens in the org are revoked.
+6. **Enforce SSO** once a test sign-in works: password sign-in is then refused for the verified
+   domains, except for platform operators (break-glass). Keep one operator account with a strong
+   password outside the IdP.
+
 ## Running behind a corporate proxy
 
 When upstream APIs are reachable only through an egress proxy, set it once for every provider:

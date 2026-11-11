@@ -129,10 +129,18 @@ func main() {
 			seq++
 			sse(w, t, v)
 		}
+		item := map[string]any{"id": "msg_1", "type": "message", "role": "assistant", "status": "in_progress", "content": []any{}}
+		part := map[string]any{"type": "output_text", "text": "", "annotations": []any{}}
 		ev("response.created", map[string]any{"response": resp("in_progress", []any{})})
+		ev("response.output_item.added", map[string]any{"output_index": 0, "item": item})
+		ev("response.content_part.added", map[string]any{"item_id": "msg_1", "output_index": 0, "content_index": 0, "part": part})
 		for _, word := range strings.SplitAfter(text, " ") {
 			ev("response.output_text.delta", map[string]any{"item_id": "msg_1", "output_index": 0, "content_index": 0, "delta": word})
 		}
+		ev("response.output_text.done", map[string]any{"item_id": "msg_1", "output_index": 0, "content_index": 0, "text": text})
+		ev("response.content_part.done", map[string]any{"item_id": "msg_1", "output_index": 0, "content_index": 0,
+			"part": map[string]any{"type": "output_text", "text": text, "annotations": []any{}}})
+		ev("response.output_item.done", map[string]any{"output_index": 0, "item": msg[0]})
 		ev("response.completed", map[string]any{"response": resp("completed", msg)})
 	})
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

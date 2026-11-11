@@ -3,6 +3,7 @@
 // It answers chat and text completions (streaming or not), the Responses API, embeddings, text to
 // speech (a short WAV tone), transcriptions (a fixed sentence), images (1x1 PNGs), rerank, token
 // counting (OpenAI and Anthropic paths) and OCR (Mistral path) without calling any real model.
+// Files, batches and videos (OpenAI async paths) are served by package asyncmock.
 package main
 
 import (
@@ -16,6 +17,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/agent-gateway/agent-gateway/tools/mockprovider/asyncmock"
 )
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -230,6 +233,7 @@ func main() {
 			"usage":   map[string]int{"prompt_tokens": in, "completion_tokens": out, "total_tokens": in + out}})
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	})
+	asyncmock.Register(http.DefaultServeMux) // files, batches, videos
 	if err := http.ListenAndServe("127.0.0.1:9901", nil); err != nil {
 		log.Fatalf("mockprovider: %v (is another mock already running on 9901?)", err)
 	}

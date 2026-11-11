@@ -28,10 +28,10 @@
 | GET | `/genai/v1beta/models[/{model}]` | Chat and embedding models visible to the key in the Gemini format: `{"models":[{"name":"models/vendor/name","baseModelId","displayName","inputTokenLimit","outputTokenLimit","supportedGenerationMethods"}]}` (one page). `/genai/v1/...` serves the same. |
 | * | `/openai/v1/...` | Alias of `/v1/...` for every endpoint above (OpenAI SDK `base_url` ending in `/openai/v1`). |
 
-Model kinds: `chat`, `embedding`, `speech`, `transcription`, `image`, `rerank`, `ocr`; each endpoint
+Model kinds: `chat`, `embedding`, `speech`, `transcription`, `image`, `rerank`, `ocr`, `video`; each endpoint
 accepts one kind (else 400 `wrong_model_kind`). Model prices (micro-USD): `input_price_micros` /
 `output_price_micros` per 1M tokens, `audio_minute_price_micros`, `image_price_micros` per generated
-image, and `request_price_micros`, added to every successful, non-cached request of any kind
+image, `video_second_price_micros` per second of generated video, and `request_price_micros`, added to every successful, non-cached request of any kind
 (token counting excepted).
 
 Anthropic SDK: `Anthropic(base_url="https://gw.example.com/anthropic", api_key="sk-gw-…")`.
@@ -60,6 +60,37 @@ On `/genai/*` errors use Google's shape with the same status: `{"error":{"code",
 status 400 `INVALID_ARGUMENT`, 401 `UNAUTHENTICATED`, 402 `FAILED_PRECONDITION`, 403 `PERMISSION_DENIED`,
 404 `NOT_FOUND`, 429 `RESOURCE_EXHAUSTED`, 502/503 `UNAVAILABLE`, other `INTERNAL`; stream errors are a
 `data:` frame of the same shape.
+
+## Async: files, batches, videos (API key)
+
+Upstream file, batch and video ids are global per provider account, so the gateway never shows or
+accepts them: every object gets a gateway id (`file-gw-…`, `batch-gw-…`, `video-gw-…`) stored under
+the caller's org, and an id of another org answers 404 `not_found`. Each object stays on the provider
+and provider key that created it. Create calls check budget, credits and RPM and write a request log.
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/v1/files` | Multipart `file`, `purpose` (`batch`, `user_data`, `assistants`, `vision`, `fine-tune`, `evals`) and the model the file is for: form field or header `x-gateway-model` (catalog id). Uploaded to that model's primary healthy target. Max `MAX_BODY_MB` (413 `body_too_large`). A `batch` file is checked line by line: `url` must be a batch endpoint of the model's kind and `body.model` the catalog id, which is rewritten to the upstream model name (else 400 `bad_batch_file`). |
+| GET | `/v1/files` | The org's files, newest first; `limit` (1–100, default 20), `after` (a file id). Batch output/error files appear once their batch is retrieved. |
+| GET | `/v1/files/{id}` | File object (`status` from the provider). |
+| GET | `/v1/files/{id}/content` | File bytes (batch results are JSONL). |
+| DELETE | `/v1/files/{id}` | Deletes upstream and the mapping. |
+| POST | `/v1/batches` | `{input_file_id, endpoint, completion_window, metadata, model?}`. `endpoint`: `/v1/chat/completions`, `/v1/completions`, `/v1/responses` (chat models) or `/v1/embeddings` (embedding models); `model`, if sent, must be the file's model. Runs where the file is. |
+| GET | `/v1/batches`, `/v1/batches/{id}` | Batch objects with gateway file ids. Unbilled batches are refreshed from the provider. |
+| POST | `/v1/batches/{id}/cancel` | Cancels upstream. |
+| POST | `/v1/videos` | Video-kind models. JSON or multipart `{model, prompt, seconds, size, input_reference}`; runs on the primary target only (no failover: the job lives at one provider). Prompt guardrails apply. |
+| GET | `/v1/videos/{id}` | Video object (`id`, `status`, `seconds`, `size`, `progress`…). |
+| GET | `/v1/videos/{id}/content` | Video bytes; `?variant=` passed through. 409 `video_not_ready` before completion. |
+| DELETE | `/v1/videos/{id}` | Deletes upstream and the mapping. |
+
+Billing, exactly once per object (an atomic `billed` flag on the stored object): a batch is billed when
+first seen finished (`completed`, `expired`, `cancelled`, `failed`) on retrieve or list: the usage of
+every successful result line (`prompt_tokens`/`input_tokens`, `completion_tokens`/`output_tokens`) is
+summed and priced at the model's token prices as they were when the batch was created. Full price:
+no batch discount is applied. Until the charge is stored, `output_file_id` and `error_file_id` are
+withheld. A video is billed when first seen `completed` (create, retrieve or content download):
+`seconds × video_second_price_micros` (model field, micro-USD per second). Charges go to the API key
+that created the object. Budgets are checked when a job is created, not against its final cost.
 
 ## Public
 

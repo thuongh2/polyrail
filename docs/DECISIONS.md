@@ -455,3 +455,10 @@ renders), a `urlTransform` that keeps http(s)/mailto links and https images only
 get a language label and copy button. If wrong: swap the renderer behind `MarkdownView`
 (`web/src/pages/console/playground/chat/Markdown.tsx`).
 
+
+**D34 Policy budgets count own-provider (BYOK) spend by default.** Owner report: a key budget never
+blocked. Cause: the budget ignored spend on the org's own providers (`include_byok` defaulted to
+false, OpenRouter's default), and on a self-hosted gateway most traffic goes through them. Now an
+omitted `include_byok` means true (API and UI); an explicit `false` still excludes BYOK spend and
+the Policies list flags it. Existing policies keep their stored value. Spend that went to BYOK models
+before a budget included them was never counted for that budget, so it starts counting from the change.

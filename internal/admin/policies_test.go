@@ -131,3 +131,19 @@ func TestProviderPrivacy(t *testing.T) {
 		t.Fatalf("public model privacy: %d %s", r.code, r.body)
 	}
 }
+
+// A budget counts spend on the org's own providers unless the request says otherwise: on a
+// self-hosted gateway most traffic goes through them, and a budget that ignores it never blocks.
+func TestPolicyBudgetIncludesOwnProvidersByDefault(t *testing.T) {
+	f := setup(t, Config{})
+	base := "/api/orgs/" + f.orgA.ID + "/policies"
+	var on, off store.Policy
+	f.do(t, "owner", "POST", base, `{"name":"d","budget":{"limit_usd":1,"interval":"daily"}}`).json(t, &on)
+	f.do(t, "owner", "POST", base, `{"name":"x","budget":{"limit_usd":1,"interval":"daily","include_byok":false}}`).json(t, &off)
+	if on.Budget == nil || !on.Budget.IncludeBYOK {
+		t.Fatalf("omitted include_byok must default to true: %+v", on.Budget)
+	}
+	if off.Budget == nil || off.Budget.IncludeBYOK {
+		t.Fatalf("explicit include_byok:false must stick: %+v", off.Budget)
+	}
+}

@@ -37,7 +37,7 @@ type policyInput struct {
 		LimitUSD    *float64 `json:"limit_usd"`
 		LimitMicros *int64   `json:"limit_micros"`
 		Interval    string   `json:"interval"`
-		IncludeBYOK bool     `json:"include_byok"`
+		IncludeBYOK *bool    `json:"include_byok"` // omitted = true: spend on the org's own providers counts
 	} `json:"budget"`
 	AllowedModels      []string             `json:"allowed_models"`
 	AllowedProviders   []string             `json:"allowed_providers"`
@@ -98,7 +98,7 @@ func (a *API) putPolicy(w http.ResponseWriter, r *http.Request) {
 			fail(w, fmt.Errorf("%w: budget needs one of limit_usd or limit_micros", store.ErrInvalid))
 			return
 		}
-		p.Budget = &store.PolicyBudget{Interval: b.Interval, IncludeBYOK: b.IncludeBYOK}
+		p.Budget = &store.PolicyBudget{Interval: b.Interval, IncludeBYOK: b.IncludeBYOK == nil || *b.IncludeBYOK}
 		if b.LimitUSD != nil {
 			p.Budget.LimitMicros = usdToMicros(*b.LimitUSD)
 		} else {

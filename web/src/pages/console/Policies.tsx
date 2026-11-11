@@ -117,7 +117,9 @@ export default function Policies() {
                         {p.budget ? (
                           <>
                             {budgetText(p.budget.limit_micros, p.budget.interval)}
-                            {p.budget.include_byok && <span className="block text-xs text-muted-foreground">Includes own providers</span>}
+                            {!p.budget.include_byok && (
+                              <span className="block text-xs text-amber-600 dark:text-amber-400">Own providers not counted</span>
+                            )}
                           </>
                         ) : (
                           <span className="text-muted-foreground">None</span>
@@ -204,7 +206,7 @@ function PolicyDialog({ base, policy, onClose, onSaved }: { base: string; policy
   const [hasBudget, setHasBudget] = useState(!!policy?.budget);
   const [limit, setLimit] = useState(policy?.budget ? String(policy.budget.limit_micros / 1e6) : "");
   const [interval, setBudgetInterval] = useState<BudgetInterval>(policy?.budget?.interval ?? "monthly");
-  const [byok, setByok] = useState(policy?.budget?.include_byok ?? false);
+  const [byok, setByok] = useState(policy?.budget?.include_byok ?? true);
   const [allowedModels, setAllowedModels] = useState(policy?.allowed_models ?? []);
   const [allowedProviders, setAllowedProviders] = useState(policy?.allowed_providers ?? []);
   const [filters, setFilters] = useState<FilterRow[]>((policy?.filters ?? []).map((f, k) => ({ ...f, k })));
@@ -320,11 +322,16 @@ function PolicyDialog({ base, policy, onClose, onSaved }: { base: string; policy
                 )}
               </Field>
               <div className="flex items-center gap-3 sm:pt-7">
-                <Switch id="pol-byok" checked={byok} onCheckedChange={setByok} />
+                <Switch id="pol-byok" checked={byok} onCheckedChange={setByok} aria-describedby="pol-byok-help" />
                 <label htmlFor="pol-byok" className="text-sm">
                   Count own providers
                 </label>
               </div>
+              <p id="pol-byok-help" className="text-xs text-muted-foreground sm:col-span-3">
+                Spend is the model's price for each request. With "Count own providers" off, requests to models
+                on this organization's own providers (Organization → Providers) are not counted, and models
+                priced at $0 never count.
+              </p>
             </div>
           )}
         </div>

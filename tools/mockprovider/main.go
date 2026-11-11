@@ -1,7 +1,8 @@
 // Command mockprovider is a fixed-answer OpenAI-compatible endpoint for demos and load tests.
 // It listens on 127.0.0.1:9901; register it as a provider of type openai with that base URL.
 // It answers chat and text completions (streaming or not), the Responses API, embeddings, text to
-// speech (a short WAV tone) and transcriptions (a fixed sentence) without calling any real model.
+// speech (a short WAV tone), transcriptions (a fixed sentence), images (1x1 PNGs), rerank, token
+// counting (OpenAI and Anthropic paths) and OCR (Mistral path) without calling any real model.
 package main
 
 import (
@@ -9,9 +10,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -142,6 +145,57 @@ func main() {
 			"part": map[string]any{"type": "output_text", "text": text, "annotations": []any{}}})
 		ev("response.output_item.done", map[string]any{"output_index": 0, "item": msg[0]})
 		ev("response.completed", map[string]any{"response": resp("completed", msg)})
+	})
+	// a 1x1 PNG for every requested image (n, default 1)
+	images := func(w http.ResponseWriter, n int) {
+		const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+		data := []any{}
+		for i := 0; i < max(1, min(n, 10)); i++ {
+			data = append(data, map[string]any{"b64_json": png})
+		}
+		writeJSON(w, map[string]any{"created": 1, "data": data, "usage": map[string]int{"input_tokens": 8, "output_tokens": 0, "total_tokens": 8}})
+	}
+	http.HandleFunc("/v1/images/generations", func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ N int }
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		images(w, req.N)
+	})
+	for _, path := range []string{"/v1/images/edits", "/v1/images/variations"} {
+		http.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			if err := r.ParseMultipartForm(32 << 20); err != nil {
+				http.Error(w, `{"error":{"message":"expected multipart form"}}`, http.StatusBadRequest)
+				return
+			}
+			n, _ := strconv.Atoi(r.FormValue("n"))
+			images(w, n)
+		})
+	}
+	http.HandleFunc("/v1/rerank", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Query     string `json:"query"`
+			Documents []any  `json:"documents"`
+		}
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req)
+		results := []any{}
+		for i := range req.Documents { // shorter documents rank higher; deterministic for demos
+			results = append(results, map[string]any{"index": i, "relevance_score": 1 / float64(2+len(fmt.Sprint(req.Documents[i])))})
+		}
+		tokens := len(req.Query) / 4 * max(1, len(req.Documents))
+		writeJSON(w, map[string]any{"id": "rerank-1", "results": results, "usage": map[string]int{"prompt_tokens": tokens, "total_tokens": tokens}})
+	})
+	countTokens := func(w http.ResponseWriter, r *http.Request) int {
+		b, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+		return len(b)/4 + 1
+	}
+	http.HandleFunc("/v1/responses/input_tokens", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"object": "response.input_tokens", "input_tokens": countTokens(w, r)})
+	})
+	http.HandleFunc("/v1/messages/count_tokens", func(w http.ResponseWriter, r *http.Request) { // Anthropic-type providers
+		writeJSON(w, map[string]any{"input_tokens": countTokens(w, r)})
+	})
+	http.HandleFunc("/v1/ocr", func(w http.ResponseWriter, r *http.Request) { // Mistral-type providers
+		writeJSON(w, map[string]any{"model": "mock", "pages": []any{map[string]any{"index": 0, "markdown": "# Mock OCR\n\nThis is the mock text of page 1."}},
+			"usage_info": map[string]int{"pages_processed": 1, "doc_size_bytes": 0}})
 	})
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		var req chatReq

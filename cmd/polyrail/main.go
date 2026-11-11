@@ -216,6 +216,7 @@ func run() error {
 		AllowPrivateURLs: allowPrivate,
 		AllowTenantProxy: tenantProxy,
 		LogRetentionDays: envInt("LOG_RETENTION_DAYS", 14),
+		PublicURL:        publicURL,
 	}
 	if iss := os.Getenv("OIDC_ISSUER"); iss != "" {
 		var domains []string

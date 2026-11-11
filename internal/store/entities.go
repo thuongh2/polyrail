@@ -535,6 +535,9 @@ func (s *Store) DeleteOrg(ctx context.Context, id string) error {
 	if err := s.deleteOrgTokens(ctx, id); err != nil {
 		return err
 	}
+	if err := s.deleteOrgIdentity(ctx, id); err != nil {
+		return err
+	}
 	for _, p := range append(kbOrgPrefixes(id), alertPrefix(id), traceExportPrefix(id), "policy/"+id+"/", presetKey(id, ""), contentPrefix(id), contentIndex+id) {
 		if err := s.DeletePrefix(ctx, p); err != nil {
 			return err

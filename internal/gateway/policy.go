@@ -23,7 +23,7 @@ type EffectivePolicy struct {
 	Policies           []PolicyRef       `json:"policies"`
 	AllowedModels      [][]string        `json:"allowed_models,omitempty"`    // a model must match a glob of every list
 	AllowedProviders   [][]string        `json:"allowed_providers,omitempty"` // a provider must match an entry of every list
-	AllowedRegions     [][]string        `json:"allowed_regions,omitempty"`   // stored for data regions (W2), not enforced
+	AllowedRegions     [][]string        `json:"allowed_regions,omitempty"`   // a provider's region must be in every list
 	RequireZDR         bool              `json:"require_zdr"`
 	DenyDataCollection bool              `json:"deny_data_collection"`
 	Filters            []EffectiveFilter `json:"filters,omitempty"`
@@ -103,7 +103,7 @@ func compilePolicy(k store.APIKey, pols []store.Policy) (*EffectivePolicy, error
 		if len(p.AllowedRegions) > 0 {
 			ep.AllowedRegions = append(ep.AllowedRegions, p.AllowedRegions)
 		}
-		if len(p.AllowedProviders) > 0 || p.RequireZDR || p.DenyDataCollection {
+		if len(p.AllowedProviders) > 0 || len(p.AllowedRegions) > 0 || p.RequireZDR || p.DenyDataCollection {
 			ep.providersBy = append(ep.providersBy, p.Name)
 		}
 		ep.RequireZDR = ep.RequireZDR || p.RequireZDR
@@ -151,7 +151,8 @@ func (p *EffectivePolicy) modelDenier(id string) string {
 // AllowTarget reports whether requests under this policy may be sent to prov: it is in every
 // provider allowlist (by type, name or id, case-insensitive) and declares zero data retention
 // (require_zdr) and no training on data (deny_data_collection) when those are set. Undeclared
-// privacy fails both. Request-level provider filters compose with this one (both must pass).
+// privacy fails both. Its data region (store.Provider.Region; undeclared = global) must be in
+// every allowed_regions list (entries normalized when the policy is saved). Request-level provider filters compose with this one (both must pass).
 func (p *EffectivePolicy) AllowTarget(prov store.Provider) bool {
 	if p == nil {
 		return true
@@ -161,6 +162,14 @@ func (p *EffectivePolicy) AllowTarget(prov store.Provider) bool {
 			return strings.EqualFold(e, prov.Type) || strings.EqualFold(e, prov.Name) || e == prov.ID
 		}) {
 			return false
+		}
+	}
+	if len(p.AllowedRegions) > 0 {
+		r := prov.Region()
+		for _, list := range p.AllowedRegions {
+			if !slices.ContainsFunc(list, func(e string) bool { return store.NormalizeRegion(e) == r }) {
+				return false
+			}
 		}
 	}
 	pv := prov.Privacy
@@ -294,15 +303,27 @@ func (g *Gateway) recordPolicySpend(p *principal, m store.Model, cost int64) {
 	g.Usage.AddSpend(cost, keys...)
 }
 
-// policyTargets keeps the targets p's policy allows; an error when it removes them all.
+// policyTargets keeps the targets p's policy and the deployment's REGION_LOCK allow; an error
+// when they remove them all.
 func (g *Gateway) policyTargets(p *principal, snap *Snapshot, m store.Model, ts []store.Target) ([]store.Target, *apiError) {
-	if p.pol == nil || len(ts) == 0 {
+	lock := g.cfg.RegionLock
+	if (p.pol == nil && lock == "") || len(ts) == 0 {
 		return ts, nil
 	}
-	ts = slices.DeleteFunc(ts, func(t store.Target) bool { return !p.pol.AllowTarget(snap.Providers[t.ProviderID]) })
+	ts = slices.DeleteFunc(ts, func(t store.Target) bool {
+		prov := snap.Providers[t.ProviderID]
+		return (lock != "" && prov.Region() != lock) || !p.pol.AllowTarget(prov)
+	})
 	if len(ts) == 0 {
-		return nil, policyErr(403, "policy_no_eligible_provider", strings.Join(p.pol.providersBy, ", "),
-			"no provider of model %q meets the key's policy (allowed providers, zero data retention, data collection)", m.ID)
+		var by []string
+		if lock != "" {
+			by = append(by, "REGION_LOCK")
+		}
+		if p.pol != nil {
+			by = append(by, p.pol.providersBy...)
+		}
+		return nil, policyErr(403, "policy_no_eligible_provider", strings.Join(by, ", "),
+			"no provider of model %q meets the key's policy or the deployment's region lock (allowed providers, data regions, zero data retention, data collection)", m.ID)
 	}
 	return ts, nil
 }

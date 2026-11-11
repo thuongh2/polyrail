@@ -58,3 +58,18 @@ func TestPolicyCRUDValidationAndOrgDelete(t *testing.T) {
 		t.Fatalf("policies survive org delete: %+v", ps)
 	}
 }
+
+func TestNormalizeRegion(t *testing.T) {
+	for in, want := range map[string]string{
+		"": "global", " Global ": "global", "eu": "europe", "EU-West-1": "europe", "europe-west4": "europe",
+		"us": "us", "us-east-1": "us", "USA": "us", "apac": "apac", "ap-southeast-1": "ap-southeast-1",
+	} {
+		if got := NormalizeRegion(in); got != want {
+			t.Errorf("NormalizeRegion(%q) = %q, want %q", in, got, want)
+		}
+	}
+	p := &Policy{Name: "r", AllowedRegions: []string{"EU", "us-east-1", "eu"}}
+	if err := p.validate(); err != nil || strings.Join(p.AllowedRegions, ",") != "europe,us" {
+		t.Fatalf("allowed_regions normalized and deduplicated: %v %v", p.AllowedRegions, err)
+	}
+}

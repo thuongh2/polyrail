@@ -31,6 +31,8 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `PROVIDER_BUFFER` | `256` | Queued requests per provider before callers wait. |
 | `WEBHOOK_QUEUE` | `1000` | Webhook events buffered before new events are dropped (`gateway_webhook_deliveries_total{result="dropped"}`). |
 | `ALERT_QUEUE` | `1000` | Alert channel events buffered before new events are dropped (`gateway_alert_sends_total{result="dropped"}`); 2 sender goroutines. |
+| `TRACE_QUEUE` | `10000` | Trace export spans buffered across all exports (one org's exports may hold a tenth, at least 1000) before new spans are dropped (`gateway_trace_spans_total{result="dropped"}`); 2 sender goroutines (docs/API.md "Trace exports"). |
+| `REGION_LOCK` | – | Route every request only to providers whose `privacy.region` is this data region (`europe`, `us`, or another region name; `eu` → `europe`). Providers without a region count as `global` and are skipped. No eligible provider → 403 `policy_no_eligible_provider` with `policy: "REGION_LOCK"`. For a regional deployment (docs/DEPLOY.md). `global` is refused at startup. |
 | `KB_WORKERS` | `1` | Knowledge-base ingestion goroutines per node (chunk + embed queued documents). |
 | `KB_INDEX_MB` | `256` | Memory for in-memory KB search indexes per node (LRU across KBs; ~1.6 KB per 512-dim chunk). |
 | `KB_MAX_ORG_CHUNKS` | `300000` | Chunks one org may store across its knowledge bases. |

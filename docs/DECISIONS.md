@@ -326,3 +326,34 @@ capture is a per-request copy of the principal (`withContent`) plus one call in 
 `/v1/chat/completions` only (streams store the assembled delta text). If wrong: other endpoints
 add the same `withContent` line; a per-member visibility exception would be a policy field (agent A's
 policy engine).
+
+**D30 Data regions and trace export (W2-F).** OpenRouter "data regions" and "Broadcast" parity.
+Rulings: (1) Regions are the provider's declared `privacy.region`, normalized to `global | europe |
+us | <other>` (`store.NormalizeRegion`: eu, eu-*, europe-* → europe; us, usa, us-* → us; empty →
+global) on save and again at compare time (older rows). Policy `allowed_regions` lists intersect
+like the other allowlists; `global` passes only when listed. Regional *endpoints* are a deployment:
+`REGION_LOCK=<region>` applies the same filter to every request of that node (run
+`eu.example.com` with `REGION_LOCK=europe`); no request-level region field, as OpenRouter uses
+hostnames. The 403 stays `policy_no_eligible_provider` with `policy: "REGION_LOCK"`.
+(2) Trace export is hand-rolled OTLP/HTTP **JSON**, not the OpenTelemetry Go SDK. Measured
+(go1.27.3, `-ldflags=-s -w`): a minimal program with `otlptracehttp` + `sdk/trace` v1.40.0 is
+14.26 MB and links 180 non-stdlib packages (gRPC, grpc-gateway, genproto, protobuf, logr, backoff)
+needing ~10 new `replace` lines for the GitHub mirrors; the same program with `net/http` +
+`encoding/json` is 6.70 MB — about +7.5 MB on a 49.2 MB binary. The SDK also models one process-wide
+TracerProvider per exporter, while we need per-tenant endpoints, headers, sampling, key filters, a
+shared bounded buffer with per-org shares, auto-disable and an SSRF-pinned client — all of which we
+would write around it anyway. OTLP/HTTP JSON is a stable public protocol and the encoder is ~150
+lines (`internal/broadcast/span.go`, golden-tested). If wrong: protobuf encoding (smaller payloads)
+can be added with the already-linked `google.golang.org/protobuf` and the OTLP proto package.
+(3) Langfuse goes through its OTLP endpoint (`/api/public/otel/v1/traces`, Basic auth of the key
+pair), not its ingestion API: one encoder, and Langfuse maps `gen_ai.*` attributes itself. S3/NDJSON
+is not built (OTLP covers the backends asked for). (4) Spans are best effort: in-memory per-export
+buffers, batches of ≤ 100 or every 2 s, one batch in flight per export, 3 retries on network/429/5xx,
+auto-disable after 10 failed batches (webhook M11 pattern), bounded by `TRACE_QUEUE` with a tenth per
+org. Sampling hashes the request id, so exports with the same rate keep the same requests. The trace
+id is derived from the request log id and the span id is that id, linking spans to request logs.
+(5) Exports are KV records without a config version bump; each node reloads them every 10 s (and at
+once after an admin write on that node), and the request path asks an atomic set whether the org or
+platform has any export before building a span. If wrong: a node may send for up to 10 s after an
+export is deleted elsewhere.
+

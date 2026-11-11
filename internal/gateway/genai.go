@@ -186,7 +186,9 @@ func (g *Gateway) genaiCountTokens(w http.ResponseWriter, r *http.Request, p *pr
 		return
 	}
 	prov := snap.Providers[snap.byBifrost[resp.ExtraFields.RoutingInfo.Provider]].Name
-	g.record(p, m, store.RequestLog{Status: 200, Provider: prov, Upstream: resp.ExtraFields.RoutingInfo.Model}, start)
+	free := m
+	free.InputPrice, free.OutputPrice, free.RequestPrice = 0, 0, 0 // counting is not billed
+	g.record(p, free, store.RequestLog{Status: 200, Provider: prov, Upstream: resp.ExtraFields.RoutingInfo.Model}, start)
 	writeJSONHidden(w, prov, gemini.ToGeminiCountTokensResponse(resp))
 }
 

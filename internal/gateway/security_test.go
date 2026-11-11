@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http/httptest"
 	"strings"
@@ -118,5 +119,78 @@ func TestHideExtraCoversCustomMarshalers(t *testing.T) {
 		if err != nil || strings.Contains(string(out), "extra_fields") || strings.Contains(string(out), "p-secret") {
 			t.Fatalf("%T leaks extra_fields: %s %v", v, out, err)
 		}
+	}
+}
+
+// Tenant providers whose adapters follow URLs from upstream replies (Replicate polling, Hugging
+// Face speech audio, Gemini video downloads) must not sit behind a tenant-chosen host, and
+// Bifrost's dialer may reach private networks only for operator providers.
+func TestTenantProvidersThatFollowUpstreamURLs(t *testing.T) {
+	pub := "https://8.8.8.8" // a literal public address: no DNS needed
+	cases := []struct {
+		p           store.Provider
+		sync, async bool
+	}{
+		{store.Provider{OrgID: "o", Type: "openai", BaseURL: pub}, true, true},
+		{store.Provider{OrgID: "o", Type: "replicate", BaseURL: pub}, false, false},
+		{store.Provider{OrgID: "o", Type: "huggingface", BaseURL: pub}, false, false},
+		{store.Provider{OrgID: "o", Type: "replicate"}, true, true},
+		{store.Provider{OrgID: "o", Type: "gemini", BaseURL: pub}, true, false},
+		{store.Provider{OrgID: "o", Type: "openai", BaseURL: "http://127.0.0.1:8123"}, false, false},
+		{store.Provider{Type: "replicate", BaseURL: "http://127.0.0.1:9"}, true, true}, // operator
+	}
+	for _, c := range cases {
+		if got := tenantReachable(c.p, false, false); got != c.sync {
+			t.Errorf("%s %q sync: got %v", c.p.Type, c.p.BaseURL, got)
+		}
+		if got := tenantReachable(c.p, false, true); got != c.async {
+			t.Errorf("%s %q async: got %v", c.p.Type, c.p.BaseURL, got)
+		}
+	}
+	if !tenantReachable(cases[1].p, true, true) {
+		t.Error("AllowPrivateURLs lifts the restriction")
+	}
+
+	op := store.Provider{ID: "op", Type: "ollama", BaseURL: "http://10.0.0.5:11434", Enabled: true}
+	ten := store.Provider{ID: "ten", OrgID: "o", Type: "openai", BaseURL: pub, Enabled: true}
+	snap := &Snapshot{Providers: map[string]store.Provider{op.ID: op, ten.ID: ten},
+		byBifrost: map[schemas.ModelProvider]string{BifrostKey(op): op.ID, BifrostKey(ten): ten.ID}}
+	a := &account{snap: func() *Snapshot { return snap }}
+	for _, c := range []struct {
+		p    store.Provider
+		want bool
+	}{{op, true}, {ten, false}} {
+		p, want := c.p, c.want
+		cfg, err := a.GetConfigForProvider(BifrostKey(p))
+		if err != nil || cfg.NetworkConfig.AllowPrivateNetwork != want {
+			t.Errorf("%s: AllowPrivateNetwork = %v, want %v (%v)", p.ID, cfg != nil && cfg.NetworkConfig.AllowPrivateNetwork, want, err)
+		}
+	}
+}
+
+// Batch requests get what a synchronous call gets: guardrails on their text (not on image data)
+// and the org's output token cap.
+func TestBatchFileGuardrailsAndTokenCap(t *testing.T) {
+	m := store.Model{ID: "test/chat", Kind: "chat"}
+	org := store.Org{ID: "batch-guard", MaxTokensCap: 50, Guardrails: store.Guardrails{BlockedPatterns: []string{`(?i)forbidden`}, MaskPII: true}}
+	line := func(content string, extra string) string {
+		return `{"custom_id":"a","method":"POST","url":"/v1/chat/completions","body":{"model":"test/chat"` + extra + `,"messages":[{"role":"user","content":` + content + `}]}}` + "\n"
+	}
+	if _, err := rewriteBatchFile([]byte(line(`"ok"`, "")+line(`[{"type":"text","text":"this is FORBIDDEN"}]`, "")), m, "up", org); !errors.Is(err, errGuardrail) {
+		t.Fatalf("blocked pattern in a content part must be refused, got %v", err)
+	}
+	img := `[{"type":"text","text":"mail a@b.co"},{"type":"image_url","image_url":{"url":"data:image/png;base64,+1234567890123"}}]`
+	out, err := rewriteBatchFile([]byte(line(img, `,"max_tokens":4000,"temperature":0.25`)+line(`"hi"`, "")), m, "up", org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	for _, want := range []string{`"model":"up"`, `[email]`, `+1234567890123`, `"max_tokens":50`, `"max_completion_tokens":50`, `"temperature":0.25`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rewritten batch lacks %s: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "a@b.co") || strings.Contains(got, "4000") {
+		t.Errorf("PII or uncapped tokens left in batch: %s", got)
 	}
 }

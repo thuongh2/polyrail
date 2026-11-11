@@ -105,7 +105,7 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
         <Wordmark />
         {orgs.length > 0 && (
           <Select value={org?.id} onValueChange={setOrg}>
-            <SelectTrigger size="sm" className="ml-2 w-48" aria-label="Organization">
+            <SelectTrigger size="sm" className="ml-1 w-32 sm:ml-2 sm:w-48" aria-label="Organization">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -118,11 +118,11 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
           </Select>
         )}
         <div className="ml-auto flex items-center gap-1">
-          <Button variant="ghost" size="sm" asChild>
+          <Button variant="ghost" size="sm" className="hidden sm:inline-flex" asChild>
             <Link href="/models">Models</Link>
           </Button>
           <ThemeToggle />
-          <Button variant="ghost" size="sm" asChild>
+          <Button variant="ghost" size="sm" className="hidden md:inline-flex" asChild>
             <Link href="/app/account">{user.email}</Link>
           </Button>
           <Button

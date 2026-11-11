@@ -76,6 +76,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/oidc/login", a.oidcLogin)
 	mux.HandleFunc("GET /api/auth/oidc/callback", a.oidcCallback)
 	mux.HandleFunc("GET /api/auth/me", a.authed(a.me))
+	mux.HandleFunc("GET /api/auth/session", a.session)
 	mux.HandleFunc("POST /api/auth/password", a.authed(a.changePassword))
 	mux.HandleFunc("GET /api/public/models", a.publicModels)
 	mux.HandleFunc("GET /api/public/models/{id...}", a.publicModel)
@@ -292,6 +293,21 @@ func (a *API) authConfig(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(org)
 	writeJSON(w, 200, map[string]any{"signup": a.cfg.AllowSignup, "sso": a.oidc != nil,
 		"provider_types": map[string][]string{"platform": platform, "org": org}})
+}
+
+// session is /me without the 401: signed-out visitors get {"user": null}, so public pages can
+// ask "who is this?" without an error in the browser console.
+func (a *API) session(w http.ResponseWriter, r *http.Request) {
+	u, err := a.currentUser(r)
+	if err != nil {
+		if errors.Is(err, errUnauthorized) {
+			writeJSON(w, 200, map[string]any{"user": nil, "orgs": []any{}})
+			return
+		}
+		fail(w, err)
+		return
+	}
+	a.me(w, r.WithContext(context.WithValue(r.Context(), userCtx{}, u)))
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request) {

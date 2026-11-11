@@ -26,7 +26,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const me = await authApi.me();
+      const me = await authApi.session();
       setUser(me.user);
       setOrgs(me.orgs);
     } catch (e) {

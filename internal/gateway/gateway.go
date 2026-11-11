@@ -503,6 +503,9 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx context.Context, p *principa
 			l.Status, l.Error = ae.status, ae.msg
 			data, _ = json.Marshal(map[string]any{"error": map[string]any{"message": ae.msg, "type": ae.typ, "code": ae.code}})
 		} else if c := chunk.BifrostChatResponse; c != nil {
+			if served == "" { // headers are still unsent before the first chunk
+				w.Header().Set("x-gateway-provider", snap.Providers[snap.byBifrost[c.ExtraFields.Provider]].Name)
+			}
 			served = c.ExtraFields.Provider
 			if c.Usage != nil {
 				l.InTokens, l.OutTokens = c.Usage.PromptTokens, c.Usage.CompletionTokens

@@ -275,7 +275,8 @@ config and no `base_url`; `elevenlabs` takes `value` and an optional `base_url`.
 
 `*` = secret. `deployments` maps model name → deployment / inference profile; when set, only those
 models are served by that key. `GET /api/auth/config` lists the types per scope in
-`provider_types.platform` / `provider_types.org`.
+`provider_types.platform` / `provider_types.org`, and in `provider_types.org_fixed_url` the org types
+that run on the vendor's fixed API URL (no `base_url`).
 
 Key-only types (`value` + optional `base_url` override): `openai`, `anthropic`, `gemini`, `cohere`,
 `mistral`, `groq`, `cerebras`, `perplexity`, `openrouter`, `nebius`, `parasail`, `elevenlabs`,
@@ -283,7 +284,12 @@ Key-only types (`value` + optional `base_url` override): `openai`, `anthropic`, 
 `typesafe`, `opencode-go`, `opencode-zen`, `runway`, `runware`. `ollama`, `sgl`, `vllm` require
 `base_url` (the server; key optional) and `databricks` requires `base_url` = the workspace URL plus a
 token in `value`. Org providers may use the types Bifrost can run many times: `openai`, `anthropic`,
-`gemini`, `cohere`, `bedrock`, `huggingface`, `replicate`, `typesafe`. Not offered: `github-copilot`
+`gemini`, `cohere`, `bedrock`, `huggingface`, `replicate`, `typesafe`; and the OpenAI-compatible
+vendors `groq`, `deepseek`, `xai`, `mistral`, `openrouter`, `fireworks`, `cerebras`, `perplexity`,
+`nebius`, `parasail`, `minimax`, `sarvam`, `wafer`, `opencode-go`, `opencode-zen`, which an org
+provider runs through Bifrost's OpenAI engine at the vendor's fixed API URL (`base_url` is refused,
+400; platform providers of these types keep Bifrost's native adapter and may override `base_url`).
+Fireworks has no model list endpoint, so discovery fails for it: add its models by hand. Not offered: `github-copilot`
 (it signs in with a personal GitHub Copilot subscription through an OAuth device flow; using a
 consumer subscription as a shared API backend is outside GitHub's terms).
 

@@ -195,3 +195,15 @@ through `net/http`, which replaces CR/LF in header values.
 | L18 | low | The semantic cache budget is separate from the response cache (total memory up to 2 × `RESPONSE_CACHE_MB`), and eviction only removes the adding org's entries, so one org can occupy the whole budget and other orgs' entries are skipped. | Open. Per-org byte share; count both caches against one budget. |
 | L19 | low | Router stats (`targetStats`) and breaker maps are never pruned when targets change; an org admin churning model targets grows them slowly (one entry per used target). | Accepted (bounded by admin writes plus requests); prune on snapshot reload. |
 | L20 | low | Upstream 401/403 now count as target faults on shared public targets; a tenant that can provoke a 403 with request content (for example a foreign file URI) can open a public target's breaker for 30 s for all orgs. Open targets are still tried last, so this reorders rather than denies. | Accepted. |
+
+## OpenAI-compatible org provider types (2026-11-11, developer notes for review)
+
+Org providers of `groq`, `deepseek`, `xai`, `mistral`, `openrouter`, `fireworks`, `cerebras`,
+`perplexity`, `nebius`, `parasail`, `minimax`, `sarvam`, `wafer`, `opencode-go`, `opencode-zen` run on
+Bifrost's openai base at a URL fixed in code (`gateway.OpenAICompatible`), so they add no SSRF
+surface: `base_url` is refused at save for org providers of these types (even with
+`ALLOW_PRIVATE_PROVIDER_URLS`), and the stored `base_url` is never used for them. The request-time
+guard (`tenantReachable`) sees an empty `base_url` and passes, as for other hosted APIs; tenant
+providers still get `AllowPrivateNetwork=false`. The openai base does not follow URLs from upstream
+replies for chat, embeddings or model lists, so H5 does not apply. Tenant keys are sent only to the
+vendor host. [TestOrgOpenAICompatibleConfig, TestOrgOpenAICompatibleChat, TestOrgOpenAICompatibleProviders]

@@ -295,17 +295,21 @@ func usdToMicros(usd float64) int64 { return int64(math.Round(usd * 1e6)) }
 // ---- auth info ----
 
 func (a *API) authConfig(w http.ResponseWriter, r *http.Request) {
-	var platform, org []string
+	var platform, org, fixed []string
 	for t := range supportedTypes {
 		platform = append(platform, t)
-		if gateway.MultiInstance(t) {
+		if gateway.OrgType(t) {
 			org = append(org, t)
+		}
+		if gateway.OpenAICompatible[t] != "" {
+			fixed = append(fixed, t)
 		}
 	}
 	sort.Strings(platform)
 	sort.Strings(org)
+	sort.Strings(fixed)
 	writeJSON(w, 200, map[string]any{"signup": a.cfg.AllowSignup, "sso": a.oidc != nil,
-		"provider_types": map[string][]string{"platform": platform, "org": org}})
+		"provider_types": map[string][]string{"platform": platform, "org": org, "org_fixed_url": fixed}})
 }
 
 // session is /me without the 401: signed-out visitors get {"user": null}, so public pages can
@@ -832,6 +836,10 @@ func checkKeyConfig(p, old *store.Provider, tenant bool, allowPrivate bool) erro
 	if needsBaseURL[p.Type] && p.BaseURL == "" {
 		return fmt.Errorf("%w: %s needs base_url (its server or workspace URL)", store.ErrInvalid, p.Type)
 	}
+	if tenant && p.BaseURL != "" && gateway.OpenAICompatible[p.Type] != "" {
+		// org providers of these types run on the vendor's fixed API URL (gateway.OpenAICompatible)
+		return fmt.Errorf("%w: org %s providers use the vendor's API; leave base_url empty", store.ErrInvalid, p.Type)
+	}
 	if tenant && !allowPrivate && p.BaseURL != "" && gateway.FollowsUpstreamURLs(p.Type) {
 		// the adapter follows URLs from upstream responses: only the vendor's host is trusted
 		return fmt.Errorf("%w: org %s providers use the vendor's API; leave base_url empty", store.ErrInvalid, p.Type)
@@ -950,8 +958,8 @@ func (a *API) putProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.OrgID, p.ID = owner(r), r.PathValue("id")
-	if !supportedTypes[p.Type] || (p.OrgID != "" && !gateway.MultiInstance(p.Type)) {
-		// tenants get the multi-instance types only, so they never take a platform provider's slot
+	if !supportedTypes[p.Type] || (p.OrgID != "" && !gateway.OrgType(p.Type)) {
+		// tenant providers run as Bifrost custom providers ("p-<id>"), so they never take a platform provider's slot
 		fail(w, fmt.Errorf("%w: unsupported provider type %q here (OpenAI-compatible APIs use type openai + base_url)", store.ErrInvalid, p.Type))
 		return
 	}

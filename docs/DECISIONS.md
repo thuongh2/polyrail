@@ -163,3 +163,20 @@ Visibility: `Snapshot.Live` = enabled and at least one target provider loaded (e
 and `Visible()` use it, so lists, public pages and routing agree, and a model with no live provider
 is `model_not_found`. The platform admin list still shows everything. Regenerate with
 `python3 scripts/gencatalog.py <models.dev checkout> <commit> > internal/catalog/catalog.json`.
+
+**D20 OpenAI-compatible vendors as org provider types.** Org admins used to get only Bifrost's multi-instance base types, because a
+native provider (groq, mistral, ...) has one Bifrost slot per type that a tenant must not take. The
+key-only vendors whose API is OpenAI-compatible (`gateway.OpenAICompatible`: groq, deepseek, xai,
+mistral, openrouter, fireworks, cerebras, perplexity, nebius, parasail, minimax, sarvam, wafer,
+opencode-go, opencode-zen) are now org types too: an org provider of such a type is registered as a
+custom provider `p-<id>` on Bifrost's openai base (`CustomProviderConfig{BaseProviderType: openai}`)
+with `NetworkConfig.BaseURL` fixed to the URL Bifrost's native adapter defaults to (without `/v1`,
+which the openai base appends). DeepSeek and Perplexity serve chat at `/chat/completions` (and
+DeepSeek models at `/models`), so they carry `RequestPathOverrides` copied from the native adapters.
+Org admins cannot set `base_url` for these types (400), so there is no tenant-chosen host. The
+provider keeps its own `type` for logos and labels. Platform providers of these types are unchanged
+(native adapter, optional `base_url`). Trade-off: org providers lose native extras (e.g. Groq audio,
+Fireworks' config-based model list, Perplexity search fields beyond the OpenAI shape); chat,
+embeddings where offered and model discovery go through the generic OpenAI engine. Left out:
+byteplus (`/api/v3` paths, regional host, no model list), runware and runway (task APIs),
+elevenlabs (not OpenAI-compatible). `gateway.OrgType(t)` = multi-instance or in the table.

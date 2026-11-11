@@ -245,6 +245,8 @@ function ProviderDialog({
 }: { scope: Scope; base: string; provider?: Provider; onClose: () => void; onSaved: () => void }) {
   const { config } = useSession();
   const types = config?.provider_types[scope === "platform" ? "platform" : "org"] ?? ["openai"];
+  // Org providers of these types run on the vendor's fixed API URL; the server refuses a base URL.
+  const fixedURL = (t: string) => scope !== "platform" && !!config?.provider_types.org_fixed_url?.includes(t);
   const [open, setOpen] = useState(true);
   const [name, setName] = useState(provider?.name ?? "");
   const [type, setType] = useState(provider?.type ?? types[0] ?? "openai");
@@ -263,7 +265,7 @@ function ProviderDialog({
     const body = {
       name: name.trim(),
       type,
-      base_url: isCloud(type) ? "" : baseURL.trim(),
+      base_url: isCloud(type) || fixedURL(type) ? "" : baseURL.trim(),
       timeout_seconds: timeout ? Number(timeout) : 0,
       enabled,
       // Cloud types: the form edits the first key; other stored keys are kept as they are.
@@ -312,7 +314,9 @@ function ProviderDialog({
             </SelectContent>
           </Select>
         </div>
-        {!isCloud(type) && (
+        {fixedURL(type) ? (
+          <p className="self-end pb-2 text-sm text-muted-foreground">Uses the {providerLabel(type)} API.</p>
+        ) : !isCloud(type) && (
           <Field
             label="Base URL"
             hint={

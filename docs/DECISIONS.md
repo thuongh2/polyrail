@@ -180,3 +180,16 @@ Fireworks' config-based model list, Perplexity search fields beyond the OpenAI s
 embeddings where offered and model discovery go through the generic OpenAI engine. Left out:
 byteplus (`/api/v3` paths, regional host, no model list), runware and runway (task APIs),
 elevenlabs (not OpenAI-compatible). `gateway.OrgType(t)` = multi-instance or in the table.
+
+**D21 Knowledge bases: gateway-native RAG on the KV seam.** Owner request: orgs ground chat on their
+own documents with any embedding provider. Bifrost core v1.15.2 has no vector store (only the OpenAI
+`file_search` tool shape for passthrough), so KBs are gateway-native (design: docs/KB.md). KB, doc and
+queue records plus AES-GCM-sealed text and int8-quantized vectors live in `store.KV` (`kb/`, `kbdoc/`,
+`kbsrc/`, `kbchunk/`, `kbq/`) without bumping `meta/version`. Ingestion is a KV-leased queue drained by
+`KB_WORKERS` per node; embeddings go through the normal Bifrost resolve/record path and are billed to
+the org. Retrieval is a per-node in-memory index per KB (LRU byte budget `KB_INDEX_MB`), brute-force
+int32 dot product + BM25 fused with RRF k=60. Grounding inserts a system message of delimited,
+untrusted excerpts with `[n]` citations after the last user turn, for keys with `kb_ids` or requests
+with `X-GW-KB`; fails open; cache keys include `kb@rev`. OpenAI-compatible `/v1/vector_stores` subset
+with direct upload. `kb.VectorStore` is the seam for pgvector/Qdrant. If wrong: ~1M resident chunks
+per node needs ~1 GB index or the external seam; only `internal/kb` changes.

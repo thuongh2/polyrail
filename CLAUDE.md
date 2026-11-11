@@ -75,6 +75,8 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
 - Tenant-controlled URLs: validate at save time AND at request time; never echo upstream bodies to tenants.
 - Docs must describe what the code does; the slop reviewer checks this.
 - No docker daemon in the sandbox: Dockerfile/compose are written but not built here.
+- UI agents working in parallel must not run `vite build` (shared dist) — verify with tsc + dev server.
+- UI changes: rebuild with `make ui` and commit `internal/web/dist`; follow docs/UI.md.
 
 ## Environment notes (sandbox)
 
@@ -85,6 +87,7 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
 
 ## Status
 
-v1 functional: gateway, admin API, console, catalog, Pebble + Postgres stores, Redis limiter,
+v1 functional: gateway, admin API, OpenRouter-style UI (shadcn; catalog, model pages with provider
+health, status page, docs, console, platform admin), Pebble + Postgres stores, Redis limiter,
 ClickHouse sink, SSO, MCP, metrics. Security review fixed (docs/SECURITY.md), slop review fixed.
 Live board and evidence: `docs/PROGRESS.md`. Next candidates: docs/PROGRESS.md "Next".

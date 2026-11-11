@@ -1,9 +1,10 @@
+import { pathID } from "@/lib/api";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { compact, perMillion, type ModelInfo } from "@/lib/api";
 import { CopyButton } from "./CodeTabs";
 
-export const modelHref = (id: string) => `/models/${id}`;
+export const modelHref = (id: string) => `/models/${pathID(id)}`;
 
 /** One catalog entry: name, copyable id, description, then context and prices aligned in columns on wide screens. */
 export function ModelRow({ m, compactRow = false }: { m: ModelInfo; compactRow?: boolean }) {

@@ -45,6 +45,14 @@ curl http://localhost:8080/v1/chat/completions \
 Any OpenAI SDK works by setting its base URL to `http://localhost:8080/v1`.
 The public model catalog with prices is at `http://localhost:8080/`.
 
+## Screens
+
+Public: a model catalog with filters, a page per model with pricing, each provider's live health
+(status, 24 h uptime, latency, throughput, 72-hour uptime bars) and API samples, a provider status
+page and API docs. Console: activity charts, request logs, a streaming chat playground, API keys,
+credits, members, guardrails and audit log; operators also manage providers, models and routing,
+organizations, users and MCP servers. Built with shadcn/ui, light and dark.
+
 ## Features
 
 | Area | What you get |

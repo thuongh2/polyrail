@@ -22,7 +22,7 @@ const day = (t?: string) => (t ? new Date(t).toLocaleDateString(undefined, { yea
 
 function keyStatus(k: APIKey) {
   if (k.revoked) return { label: "Revoked", cls: "text-muted-foreground" };
-  if (k.expires_at && new Date(k.expires_at) < new Date()) return { label: "Expired", cls: "text-warning" };
+  if (k.expires_at && new Date(k.expires_at) < new Date()) return { label: "Expired", cls: "border-warning/60 text-foreground" };
   return { label: "Active", cls: "text-success" };
 }
 

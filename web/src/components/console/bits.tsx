@@ -4,7 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/components/toast";
-import { cn } from "@/lib/utils";
+import { cn, writeClipboard } from "@/lib/utils";
+import { usd } from "@/lib/api";
 
 /** One figure and its label, in tabular numerals. Used in a row by <StatStrip>. */
 export function Stat({ label, value, hint }: { label: string; value: ReactNode; hint?: ReactNode }) {
@@ -38,7 +39,7 @@ export function StatusBadge({ status }: { status: number }) {
   return (
     <Badge
       variant="outline"
-      className={cn("tabular-nums", ok ? "text-success" : warn ? "text-warning" : "text-danger")}
+      className={cn("tabular-nums", ok ? "text-success" : warn ? "border-warning/60 text-foreground" : "text-danger")}
     >
       {status} {ok ? "OK" : warn ? (status === 429 ? "Limited" : "Payment") : "Error"}
     </Badge>
@@ -85,7 +86,7 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
       size="sm"
       onClick={async () => {
         try {
-          await navigator.clipboard.writeText(text);
+          await writeClipboard(text);
           setDone(true);
           setTimeout(() => setDone(false), 1500);
         } catch {
@@ -103,6 +104,9 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
 export function TableFrame({ children }: { children: ReactNode }) {
   return <div className="overflow-hidden rounded-lg border [&_[data-slot=table-container]]:overflow-x-auto">{children}</div>;
 }
+
+/** Float USD (usage reports) through the same formatter as micro-USD. */
+export const money = (v: number) => usd(Math.round(v * 1e6));
 
 export const ms = (v: number) => (v >= 1000 ? (v / 1000).toFixed(2) + " s" : Math.round(v) + " ms");
 

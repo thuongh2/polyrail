@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { Scope } from "@/App";
 import { BarChart } from "@/components/console/BarChart";
-import { Section, Stat, StatStrip, TableFrame, dayDate, ms, usdTick } from "@/components/console/bits";
+import { Section, Stat, StatStrip, TableFrame, dayDate, money, ms, usdTick } from "@/components/console/bits";
 import { DataState, EmptyState, ErrorState, LoadingRows, PageHeader } from "@/components/states";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -14,7 +14,6 @@ import { Link } from "wouter";
 const PERIODS = ["7", "30", "90"];
 type Metric = "spend" | "requests" | "tokens";
 
-const money = (v: number) => usd(Math.round(v * 1e6));
 const errRate = (r: UsageRow) => (r.requests ? r.errors / r.requests : null);
 
 export default function Activity({ scope = "org" }: { scope?: Scope }) {

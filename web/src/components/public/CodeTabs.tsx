@@ -3,21 +3,7 @@ import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/toast";
-import { cn } from "@/lib/utils";
-
-async function writeClipboard(text: string) {
-  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
-  // shortcut: execCommand fallback for non-secure origins (plain http on a LAN IP); drop when HTTPS is a given.
-  const t = document.createElement("textarea");
-  t.value = text;
-  t.style.position = "fixed";
-  t.style.opacity = "0";
-  document.body.appendChild(t);
-  t.select();
-  const ok = document.execCommand("copy");
-  t.remove();
-  if (!ok) throw new Error("copy failed");
-}
+import { cn, writeClipboard } from "@/lib/utils";
 
 /** Icon button that copies `text` and confirms briefly. */
 export function CopyButton({ text, label = "Copy", className }: { text: string; label?: string; className?: string }) {
@@ -72,7 +58,7 @@ export function CodeTabs({ samples, className }: { samples: Sample[]; className?
         ))}
       </TabsList>
       {samples.map((s) => (
-        <TabsContent key={s.label} value={s.label} className="min-w-0">
+        <TabsContent key={s.label} value={s.label} className="min-w-0 rounded-lg focus-visible:ring-[3px] focus-visible:ring-ring/50">
           <CodeBlock code={s.code} />
         </TabsContent>
       ))}

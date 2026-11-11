@@ -12,7 +12,6 @@ import { UptimeBar, UptimeLegend } from "@/components/public/UptimeBar";
 import { ApiError, compact, fmt, pct, perMillion, publicApi, type ModelDetail as Detail } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 
-const ms = latency;
 const tps = (v: number | null) => (v == null ? "–" : `${compact(Math.round(v))} tok/s`);
 
 export default function ModelDetail({ id }: { id: string }) {
@@ -89,13 +88,13 @@ export default function ModelDetail({ id }: { id: string }) {
             API
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="overview" className="pt-6">
+        <TabsContent value="overview" className="pt-6 focus-visible:ring-[3px] focus-visible:ring-ring/50">
           <Overview d={d} />
         </TabsContent>
-        <TabsContent value="providers" className="pt-6">
+        <TabsContent value="providers" className="pt-6 focus-visible:ring-[3px] focus-visible:ring-ring/50">
           <Providers d={d} />
         </TabsContent>
-        <TabsContent value="api" className="pt-6">
+        <TabsContent value="api" className="pt-6 focus-visible:ring-[3px] focus-visible:ring-ring/50">
           <ApiTab d={d} />
         </TabsContent>
       </Tabs>
@@ -129,7 +128,7 @@ function Overview({ d }: { d: Detail }) {
           <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-4">
             <Stat label="Requests" value={fmt(s.requests)} />
             <Stat label="Uptime" value={pct(s.uptime)} />
-            <Stat label="Avg latency" value={ms(s)} />
+            <Stat label="Avg latency" value={latency(s)} />
             <Stat label="Throughput" value={tps(s.throughput_tps)} />
           </dl>
           <p className="mt-2 text-xs text-muted-foreground">Across all providers serving this model, counted per provider attempt.</p>
@@ -217,7 +216,7 @@ function Providers({ d }: { d: Detail }) {
                     <code className="font-mono text-xs">{p.upstream_model}</code>
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{pct(p.stats_24h.uptime)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{ms(p.stats_24h)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{latency(p.stats_24h)}</TableCell>
                   <TableCell className="text-right tabular-nums">{tps(p.stats_24h.throughput_tps)}</TableCell>
                   <TableCell className="text-right tabular-nums">{total ? `${Math.round((p.weight / total) * 100)}%` : "–"}</TableCell>
                 </TableRow>

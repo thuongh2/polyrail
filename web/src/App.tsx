@@ -4,7 +4,6 @@ import { SessionProvider } from "@/lib/session";
 import { Toaster } from "@/components/toast";
 import { LoadingRows } from "@/components/states";
 import { PublicLayout } from "@/components/layout/PublicLayout";
-import { TooltipProvider } from "@/components/ui/tooltip";
 
 // Public pages load eagerly-ish (small); the console is split so catalog visitors never download it.
 const Home = lazy(() => import("@/pages/public/Home"));
@@ -46,7 +45,6 @@ function Fallback() {
 export function App() {
   return (
     <SessionProvider>
-      <TooltipProvider delayDuration={200}>
         <Suspense fallback={<Fallback />}>
           <Switch>
             <Route path="/login">{() => <Login mode="login" />}</Route>
@@ -96,7 +94,6 @@ export function App() {
           </Switch>
         </Suspense>
         <Toaster />
-      </TooltipProvider>
     </SessionProvider>
   );
 }

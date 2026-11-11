@@ -332,7 +332,7 @@ func (g *Gateway) Completions(w http.ResponseWriter, r *http.Request) {
 		l.InTokens, l.OutTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	}
 	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
-	g.record(p, m, l, start)
+	setCost(w, g.record(p, m, l, start))
 	resp.Model = m.ID
 	writeJSONHidden(w, l.Provider, resp)
 }
@@ -400,7 +400,7 @@ func (g *Gateway) Responses(w http.ResponseWriter, r *http.Request) {
 		l.InTokens, l.OutTokens = resp.Usage.InputTokens, resp.Usage.OutputTokens
 	}
 	l.Provider = g.settle(snap, m, ts, resp.ExtraFields.RoutingInfo.Provider, false, start, l.OutTokens)
-	g.record(p, m, l, start)
+	setCost(w, g.record(p, m, l, start))
 	resp.Model = m.ID
 	writeJSONHidden(w, l.Provider, resp)
 }

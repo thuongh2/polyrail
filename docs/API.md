@@ -7,6 +7,7 @@
 | POST | `/v1/chat/completions` | OpenAI request body. `model` is a catalog id (`vendor/name`). `stream: true` returns SSE ending with `data: [DONE]`; the last chunk carries `usage`. Response adds `provider`. |
 | POST | `/v1/embeddings` | OpenAI request body. |
 | GET | `/v1/models` | Models visible to the key, with `pricing.input`/`pricing.output` (USD per 1M tokens), `pricing.image` (USD per image) and `pricing.request` (USD per request) when set, and `context_length`. |
+| POST | `/v1/models/query` | Model discovery: the same visible models as `GET /v1/models`, filtered by an optional JSON body `{q, kind, modalities, min_context, min_output, max_input_price, max_output_price, owned_by, exclude, sort, limit}`. `q` is a case-insensitive substring of id, name or description; `modalities` must all be present; `min_output` compares `max_output_tokens`; prices are numbers in USD per 1M tokens; `owned_by` is the id's vendor prefix; `exclude` is a list of ids; `sort` is `id` (default), `price` (input + output, cheapest first) or `context` (largest first); `limit` defaults to 50, capped at 100. Unknown fields, a bad `sort` or `limit` < 1 → 400. Same `{"object":"list","data":[...]}` response. |
 | POST | `/v1/completions` | Legacy text completions (chat-kind models), `stream` supported. |
 | POST | `/v1/responses` | OpenAI Responses API (chat-kind models). Streams named SSE events ending with `response.completed`. |
 | POST | `/v1/audio/speech` | Text to speech (speech models): `{model, input, voice, response_format, speed}` → audio bytes. Priced per input token, or per 1M characters when the provider reports no tokens. |
@@ -48,6 +49,26 @@ prompt prefix: chat messages before the first user message plus `tools`, or Resp
 plus `tools`; weighted when there is neither). Latency, error rate and in-flight counts are per node,
 in memory; in-flight is counted for `/v1/chat/completions` and `/v1/responses`. Chat completions
 (stream and non-stream) answer with `X-GW-Route: <strategy>; <provider name>/<upstream model>`.
+
+### Idempotency keys
+
+`POST /v1/chat/completions`, `/v1/embeddings`, `/v1/responses` and `/v1/images/generations` accept
+`Idempotency-Key: <up to 255 chars>` (longer → 400 `invalid_idempotency_key`). The key is scoped to
+the API key, method and path. A 2xx response is kept for 24 h; sending the same key and body again
+returns the stored status, body, `Content-Type` and `x-gateway-provider` with
+`Idempotent-Replayed: true`, without calling a provider or billing again (and without
+`X-GW-Cost-Micros`). The same key with a different body → 422 `idempotency_key_reuse`; while the
+first request is still running → 409 `idempotency_key_in_progress`. Error responses are not kept, so
+a retry runs again. Requests with `stream: true` ignore the header. Keys are stored in memory per
+node (bounded at 100k entries / 256 MB), so behind a load balancer a retry that lands on another node
+runs again.
+
+### Cost header
+
+Successful non-stream responses of chat completions, completions, responses, embeddings and image
+generations carry `X-GW-Cost-Micros: <int>`, the micro-USD billed for that request (the same number
+recorded in usage; 0 for response-cache hits). Token counts are in the body's `usage`. Streams do not
+get the header: it is sent before the usage is known.
 
 Anthropic SDK: `Anthropic(base_url="https://gw.example.com/anthropic", api_key="sk-gw-…")`.
 Google GenAI SDK: `genai.Client(api_key="sk-gw-…", http_options={"base_url": "https://gw.example.com/genai"})`,

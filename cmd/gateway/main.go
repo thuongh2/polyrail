@@ -166,9 +166,10 @@ func run() error {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/chat/completions", g.ChatCompletions)
-	mux.HandleFunc("POST /v1/embeddings", g.Embeddings)
+	mux.HandleFunc("POST /v1/chat/completions", g.Idempotent(g.ChatCompletions))
+	mux.HandleFunc("POST /v1/embeddings", g.Idempotent(g.Embeddings))
 	mux.HandleFunc("GET /v1/models", g.Models)
+	mux.HandleFunc("POST /v1/models/query", g.ModelsQuery)
 	// async APIs: files, batches, videos (gateway ids, tenant-scoped; see internal/gateway/async.go)
 	mux.HandleFunc("POST /v1/files", g.UploadFile)
 	mux.HandleFunc("GET /v1/files", g.ListFiles)
@@ -184,10 +185,10 @@ func run() error {
 	mux.HandleFunc("GET /v1/videos/{id}/content", g.VideoContent)
 	mux.HandleFunc("DELETE /v1/videos/{id}", g.DeleteVideo)
 	mux.HandleFunc("POST /v1/completions", g.Completions)
-	mux.HandleFunc("POST /v1/responses", g.Responses)
+	mux.HandleFunc("POST /v1/responses", g.Idempotent(g.Responses))
 	mux.HandleFunc("POST /v1/audio/speech", g.Speech)
 	mux.HandleFunc("POST /v1/audio/transcriptions", g.Transcriptions)
-	mux.HandleFunc("POST /v1/images/generations", g.ImageGenerations)
+	mux.HandleFunc("POST /v1/images/generations", g.Idempotent(g.ImageGenerations))
 	mux.HandleFunc("POST /v1/images/edits", g.ImageEdits)
 	mux.HandleFunc("POST /v1/images/variations", g.ImageVariations)
 	mux.HandleFunc("POST /v1/rerank", g.Rerank)
@@ -276,8 +277,8 @@ func withCORS(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if p := r.URL.Path; strings.HasPrefix(p, "/v1/") || strings.HasPrefix(p, "/openai/v1/") || strings.HasPrefix(p, "/anthropic/v1/") || strings.HasPrefix(p, "/genai/") {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, anthropic-version, anthropic-beta, x-goog-api-key, x-goog-api-client, x-gateway-cache, x-gateway-mcp-clients")
-			w.Header().Set("Access-Control-Expose-Headers", "x-gateway-provider, x-gateway-request-id, x-gateway-cache-hit")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, anthropic-version, anthropic-beta, x-goog-api-key, x-goog-api-client, x-gateway-cache, x-gateway-mcp-clients, Idempotency-Key")
+			w.Header().Set("Access-Control-Expose-Headers", "x-gateway-provider, x-gateway-request-id, x-gateway-cache-hit, X-GW-Cost-Micros, Idempotent-Replayed")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return

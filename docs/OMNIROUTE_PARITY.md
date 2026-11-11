@@ -36,9 +36,9 @@ Status: **have** = already in agent-gateway, **wave 1** = in progress / shipped 
 |---|---|---|
 | exact response cache | have | |
 | semantic cache | wave 1 | org's embedding model, in-memory cosine, temperature 0 only |
-| idempotency keys | wave 1 | `Idempotency-Key`, per API key, non-stream |
-| cost response headers | wave 1 | `X-GW-Cost-Micros` |
-| model discovery `POST /v1/models/query` | wave 1 | |
+| idempotency keys | have | `Idempotency-Key`, per API key, non-stream |
+| cost response headers | have | `X-GW-Cost-Micros` |
+| model discovery `POST /v1/models/query` | have | |
 | guardrails: PII, regex, max chars | have | |
 | guardrails: credential masker, prompt-injection detector | have | `mask_secrets`; `prompt_injection` warn / block, `X-GW-Guardrail` (D15) |
 | token compression (lossless: whitespace, duplicate system prompts) | have | `compression: lossless`, `X-GW-Compressed-Chars` (D15) |

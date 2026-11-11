@@ -101,3 +101,14 @@ neither. Secret patterns are fixed well-known prefixes; generic `password=` assi
 at 16 KB per request, no content logging. Compression is whitespace only (lossy "Caveman"/LLMLingua
 stay out, see OMNIROUTE_PARITY). The cache key stays the raw body: deterministic, and compression
 runs before the lookup so an identical body always compresses identically.
+
+**D16 Idempotency keys in node memory; cost as a response header.** `Idempotency-Key` (OmniRoute
+parity) wraps the non-stream JSON POST handlers (`Gateway.Idempotent`, applied at route
+registration): scope = API key id + method + path + key, body compared by SHA-256, only 2xx stored
+(24 h, bounded `ttlCache`), replays are not billed, 422 on body mismatch, 409 while in flight.
+Streams ignore it (a replay cannot reproduce timing, and the response is not buffered). Storage is
+per node; a multi-node deployment needs Redis to make retries exact across nodes (shortcut noted in
+code). `X-GW-Cost-Micros` is the value `record()` billed, set before the body is written; streams
+cannot carry it because headers go out before usage arrives (a trailer would be invisible to most
+SDKs). Model discovery `POST /v1/models/query` reuses `Snapshot.Visible` and the key's model list,
+so it can never show more than `GET /v1/models`; prices in the query are USD per 1M as numbers.

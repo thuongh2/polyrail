@@ -1,7 +1,8 @@
 // Typed client for the gateway's HTTP API. Shapes mirror the Go handlers (docs/API.md).
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** code and the rest of the error object, such as login_url on sso_required. */
+  constructor(public status: number, message: string, public code?: string, public detail?: Record<string, unknown>) {
     super(message);
   }
 }
@@ -14,7 +15,7 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
   });
   if (res.status === 204) return null as T;
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data?.error?.message || res.statusText);
+  if (!res.ok) throw new ApiError(res.status, data?.error?.message || res.statusText, data?.error?.code, data?.error);
   return data as T;
 }
 
@@ -110,11 +111,15 @@ export const authApi = {
   me: () => get<{ user: User; orgs: OrgRef[] }>("/api/auth/me"),
   /** Like me() but 200 with user null when signed out. */
   session: () => get<{ user: User | null; orgs: OrgRef[] }>("/api/auth/session"),
+  /** How an email signs in (docs/API.md "Discovery for the login page"). */
+  sso: (email: string) => get<SSODiscovery>(`/api/auth/sso?email=${encodeURIComponent(email)}`),
   login: (email: string, password: string) => api("POST", "/api/auth/login", { email, password }),
   signup: (email: string, password: string, name: string) => api("POST", "/api/auth/signup", { email, password, name }),
   logout: () => api("POST", "/api/auth/logout"),
   password: (current: string, next: string) => api("POST", "/api/auth/password", { current, new: next }),
 };
+
+export type SSODiscovery = { method: "saml" | "oidc" | "password"; login_url: string; password_allowed: boolean };
 
 // ---- console ----
 
@@ -532,7 +537,7 @@ export function kbApi(org: string) {
       fd.append("file", file);
       const res = await fetch(`${kb(id)}/docs`, { method: "POST", headers: { "X-GW-CSRF": "1" }, body: fd });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new ApiError(res.status, data?.error?.message || res.statusText);
+      if (!res.ok) throw new ApiError(res.status, data?.error?.message || res.statusText, data?.error?.code, data?.error);
       return data as KBDoc;
     },
     removeDoc: (id: string, doc: string) => api("DELETE", `${kb(id)}/docs/${encodeURIComponent(doc)}`),
@@ -620,6 +625,110 @@ export function alertsApi(scopeBase: string) {
     update: (id: string, body: AlertInput) => api<AlertChannel>("PATCH", a(id), body),
     remove: (id: string) => api("DELETE", a(id)),
     test: (id: string) => api<AlertTest>("POST", `${a(id)}/test`),
+  };
+}
+
+// ---- enterprise identity (docs/API.md "Enterprise identity", owner only) ----
+
+export type Domain = {
+  id: string;
+  org_id: string;
+  name: string;
+  token: string;
+  verified: boolean;
+  verified_at?: string;
+  created_at: string;
+  record: { type: "TXT"; name: string; value: string };
+};
+export type GroupMapping = { group: string; role: Role | ""; workspace_id?: string };
+export type SSOSettings = {
+  saml: {
+    enabled: boolean;
+    idp_metadata_url?: string;
+    idp_metadata_xml?: string;
+    idp_entity_id?: string;
+    metadata_fetched_at?: string | null;
+    default_role: Role;
+    attribute_email?: string;
+    attribute_name?: string;
+    attribute_groups?: string;
+    allow_idp_initiated: boolean;
+    enforce: boolean;
+    sp_certificate?: string;
+  };
+  scim: { enabled: boolean; default_role: Role; token_prefix?: string; token_created_at?: string };
+  group_mappings: GroupMapping[] | null;
+  sp: { entity_id: string; metadata_url: string; acs_url: string; login_url: string; certificate: string };
+  scim_base_url: string;
+  updated_at: string;
+};
+export type SAMLInput = {
+  enabled: boolean;
+  idp_metadata_url?: string;
+  idp_metadata_xml?: string;
+  default_role?: Role;
+  attribute_email?: string;
+  attribute_name?: string;
+  attribute_groups?: string;
+  allow_idp_initiated?: boolean;
+  enforce?: boolean;
+};
+
+export function identityApi(org: string) {
+  const b = orgBase(org);
+  const d = (id: string) => `${b}/domains/${encodeURIComponent(id)}`;
+  return {
+    domains: () => get<Domain[]>(`${b}/domains`),
+    addDomain: (name: string) => api<Domain>("POST", `${b}/domains`, { name }),
+    verifyDomain: (id: string) => api<Domain>("POST", `${d(id)}/verify`),
+    removeDomain: (id: string) => api("DELETE", d(id)),
+    sso: () => get<SSOSettings>(`${b}/sso`),
+    putSAML: (body: SAMLInput) => api<SSOSettings>("PUT", `${b}/sso/saml`, body),
+    putSCIM: (body: { enabled: boolean; default_role?: Role }) => api<SSOSettings>("PUT", `${b}/sso/scim`, body),
+    rotateSCIMToken: () => api<{ token: string; scim_base_url: string }>("POST", `${b}/sso/scim/token`),
+    putGroupMappings: (m: GroupMapping[]) => api<SSOSettings>("PUT", `${b}/sso/group-mappings`, m),
+  };
+}
+
+// ---- trace exports (docs/API.md "Trace exports") ----
+
+export type TraceExportType = "otlp" | "langfuse";
+export type TraceExport = {
+  id: string;
+  org_id?: string;
+  name: string;
+  type: TraceExportType;
+  endpoint: string;
+  header_names: string[] | null;
+  sample_rate: number;
+  key_ids?: string[];
+  include_content: boolean;
+  enabled: boolean;
+  failures: number;
+  created_at: string;
+};
+export type TraceExportInput = {
+  name?: string;
+  type?: TraceExportType;
+  endpoint?: string;
+  headers?: Record<string, string>;
+  langfuse?: { public_key: string; secret_key: string };
+  sample_rate?: number;
+  key_ids?: string[];
+  include_content?: boolean;
+  enabled?: boolean;
+};
+
+/** Trace exports of a scope: PLATFORM or orgBase(org). */
+export function traceExportsApi(scopeBase: string) {
+  const b = `${scopeBase}/trace-exports`;
+  const t = (id: string) => `${b}/${encodeURIComponent(id)}`;
+  return {
+    list: () => get<unknown>(b).then(listOr<TraceExport>("Trace exports are")),
+    create: (body: TraceExportInput) => api<TraceExport>("POST", b, body),
+    update: (id: string, body: TraceExportInput) => api<TraceExport>("PATCH", t(id), body),
+    remove: (id: string) => api("DELETE", t(id)),
+    test: (id: string) => api<{ ok: boolean; status?: number; error?: string }>("POST", `${t(id)}/test`),
   };
 }
 

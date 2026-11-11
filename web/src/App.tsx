@@ -36,6 +36,8 @@ const Orgs = lazy(() => import("@/pages/platform/Orgs"));
 const Users = lazy(() => import("@/pages/platform/Users"));
 const MCP = lazy(() => import("@/pages/platform/MCP"));
 const Proxies = lazy(() => import("@/pages/platform/Proxies"));
+const SSO = lazy(() => import("@/pages/console/SSO"));
+const Observability = lazy(() => import("@/pages/console/Observability"));
 
 /** scope: "org" pages act on the current org; "platform" pages on public resources (operators). */
 export type Scope = "org" | "platform";
@@ -81,6 +83,8 @@ export function App() {
                       <Route path="/presets" component={page(Presets)} />
                       <Route path="/kbs" component={page(KnowledgeBases)} />
                       <Route path="/kbs/:id">{(p) => <KnowledgeBase id={decodeURIComponent(p.id)} />}</Route>
+                      <Route path="/sso" component={page(SSO)} />
+                      <Route path="/observability" component={page(Observability, "org")} />
                       <Route path="/audit" component={page(Audit, "org")} />
                       <Route path="/account" component={page(Account)} />
                       <Route path="/platform/activity" component={page(Activity, "platform")} />
@@ -92,6 +96,7 @@ export function App() {
                       <Route path="/platform/users" component={page(Users)} />
                       <Route path="/platform/mcp" component={page(MCP)} />
                       <Route path="/platform/proxies" component={page(Proxies)} />
+                      <Route path="/platform/observability" component={page(Observability, "platform")} />
                       <Route path="/platform/audit" component={page(Audit, "platform")} />
                       <Route>{() => <NotFound />}</Route>
                     </Switch>

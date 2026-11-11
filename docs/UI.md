@@ -50,7 +50,10 @@ the frame is `h-dvh overflow-hidden` on the muted `--frame` surface (token on `:
 ## Routes
 
 Public: `/`, `/models`, `/models/<vendor>/<name>`, `/status`, `/docs`, `/login`, `/signup`.
-Console: `/app/activity|logs|playground|keys|credits|models|presets|kbs|providers|members|policies|settings|webhooks|alerts|audit|account`
+Sign-in is email first: `GET /api/auth/sso?email=` decides between "Continue with SSO" and the password field;
+an `sso_required` login error switches to the SSO button.
+Console: `/app/activity|logs|playground|keys|credits|models|presets|kbs|providers|members|policies|settings|webhooks|alerts|observability|sso|audit|account`
+(`/app/sso` Security & SSO is owners only; `/app/observability` trace exports, admins)
 (`/app/keys?tab=tokens` is the management tokens tab, admins only),
 `/app/kbs/<id>`, `/app/providers/<id>` (provider detail: keys, docs/KEYS.md),
-operators: `/app/platform/activity|orgs|providers|proxies|models|users|mcp|alerts|audit`, `/app/platform/providers/<id>`.
+operators: `/app/platform/activity|orgs|providers|proxies|models|users|mcp|alerts|observability|audit`, `/app/platform/providers/<id>`.

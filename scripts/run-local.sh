@@ -28,8 +28,20 @@ if [ ! -x "$GW" ]; then
     echo "missing $GW and no Go toolchain to build it" >&2; exit 1
   fi
 fi
-# macOS marks downloaded files as quarantined; the binaries are unsigned.
-[ "$(uname -s)" = Darwin ] && xattr -d com.apple.quarantine "$GW" "$MOCK" 2>/dev/null || true
+if [ "$(uname -s)" = Darwin ]; then
+  # macOS kills ("Killed: 9") a signed binary whose bytes were replaced in place, e.g. by an
+  # update that overwrote bin/. Run fresh copies (new files, so no stale signature cache),
+  # drop the download quarantine flag and re-sign them ad hoc.
+  mkdir -p .run
+  for b in "$GW" "$MOCK"; do
+    rm -f ".run/$(basename "$b")"
+    cp "$b" ".run/$(basename "$b")"
+    xattr -d com.apple.quarantine ".run/$(basename "$b")" 2>/dev/null || true
+    command -v codesign >/dev/null && codesign --force --sign - ".run/$(basename "$b")" 2>/dev/null || true
+  done
+  GW=".run/$(basename "$GW")"
+  MOCK=".run/$(basename "$MOCK")"
+fi
 
 if [ ! -f .env.local ]; then
   rnd() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }

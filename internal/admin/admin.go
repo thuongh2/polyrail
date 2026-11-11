@@ -956,9 +956,10 @@ func (a *API) deleteProvider(w http.ResponseWriter, r *http.Request) {
 
 type modelView struct {
 	gateway.ModelInfo
-	Targets []store.Target `json:"targets,omitempty"`
-	Enabled bool           `json:"enabled"`
-	Owner   string         `json:"owner"` // "platform" or "org"
+	Targets  []store.Target `json:"targets,omitempty"`
+	Strategy string         `json:"strategy,omitempty"` // with targets: the editor needs it to keep the strategy
+	Enabled  bool           `json:"enabled"`
+	Owner    string         `json:"owner"` // "platform" or "org"
 }
 
 func (a *API) listModels(w http.ResponseWriter, r *http.Request) {
@@ -990,7 +991,7 @@ func (a *API) listModels(w http.ResponseWriter, r *http.Request) {
 			v.Owner = "org"
 		}
 		if m.OrgID == owner(r) { // targets only for models the caller manages
-			v.Targets = m.Targets
+			v.Targets, v.Strategy = m.Targets, m.Strategy
 		}
 		out = append(out, v)
 	}

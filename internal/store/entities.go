@@ -213,7 +213,7 @@ type Model struct {
 	OrgID         string   `json:"org_id,omitempty"`
 	Name          string   `json:"name"`
 	Description   string   `json:"description,omitempty"`
-	Kind          string   `json:"kind"` // chat | embedding | speech (text to speech) | transcription (speech to text)
+	Kind          string   `json:"kind"` // one of ModelKinds
 	ContextLength int      `json:"context_length,omitempty"`
 	MaxOutput     int      `json:"max_output_tokens,omitempty"`
 	Modalities    []string `json:"modalities,omitempty"`
@@ -222,6 +222,8 @@ type Model struct {
 	// AudioMinutePrice is micro-USD per minute of input audio, for transcription models whose
 	// provider reports duration instead of tokens.
 	AudioMinutePrice int64     `json:"audio_minute_price_micros,omitempty"`
+	ImagePrice       int64     `json:"image_price_micros,omitempty"`   // micro-USD per generated image
+	RequestPrice     int64     `json:"request_price_micros,omitempty"` // micro-USD per successful request, any kind
 	Targets          []Target  `json:"targets"`
 	Enabled          bool      `json:"enabled"`
 	CreatedAt        time.Time `json:"created_at"`
@@ -707,6 +709,9 @@ func modelKey(orgID, id string) string {
 	return "model/" + orgID + "/" + id
 }
 
+// ModelKinds are the model kinds; each API endpoint serves one kind (count tokens: chat).
+var ModelKinds = []string{"chat", "embedding", "speech", "transcription", "image", "rerank", "ocr"}
+
 func (s *Store) PutModel(ctx context.Context, m *Model) error {
 	if m.ID == "" || len(m.Targets) == 0 {
 		return fmt.Errorf("%w: model id and at least one target required", ErrInvalid)
@@ -714,10 +719,10 @@ func (s *Store) PutModel(ctx context.Context, m *Model) error {
 	if m.Kind == "" {
 		m.Kind = "chat"
 	}
-	if !slices.Contains([]string{"chat", "embedding", "speech", "transcription"}, m.Kind) {
-		return fmt.Errorf("%w: kind must be chat, embedding, speech or transcription", ErrInvalid)
+	if !slices.Contains(ModelKinds, m.Kind) {
+		return fmt.Errorf("%w: kind must be one of %s", ErrInvalid, strings.Join(ModelKinds, ", "))
 	}
-	if m.InputPrice < 0 || m.OutputPrice < 0 || m.AudioMinutePrice < 0 {
+	if m.InputPrice < 0 || m.OutputPrice < 0 || m.AudioMinutePrice < 0 || m.ImagePrice < 0 || m.RequestPrice < 0 {
 		return fmt.Errorf("%w: prices must be >= 0", ErrInvalid)
 	}
 	return s.update(ctx, func(tx Tx) error {

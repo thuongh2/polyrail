@@ -351,6 +351,9 @@ func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start 
 	if !l.Cached && l.Cost == 0 { // callers may price by something other than tokens (audio minutes)
 		l.Cost = cost(m, l.InTokens, l.OutTokens)
 	}
+	if !l.Cached && l.Status == 200 {
+		l.Cost += m.RequestPrice
+	}
 	if p.Key.TPM > 0 && l.InTokens+l.OutTokens > 0 {
 		_, _ = g.Lim.Incr(context.Background(), "t:"+p.Key.ID, int64(l.InTokens+l.OutTokens))
 	}
@@ -636,6 +639,8 @@ type ModelInfo struct {
 		Input       string `json:"input"`                  // USD per 1M tokens (speech: per 1M characters without token usage)
 		Output      string `json:"output"`                 // USD per 1M tokens
 		AudioMinute string `json:"audio_minute,omitempty"` // USD per minute of audio (transcription)
+		Image       string `json:"image,omitempty"`        // USD per generated image
+		Request     string `json:"request,omitempty"`      // USD per request
 	} `json:"pricing"`
 	Private   bool     `json:"private,omitempty"`
 	Providers []string `json:"providers,omitempty"` // public models only: names of serving providers
@@ -649,6 +654,12 @@ func Info(m store.Model) ModelInfo {
 	mi.Pricing.Output = usd(m.OutputPrice)
 	if m.AudioMinutePrice > 0 {
 		mi.Pricing.AudioMinute = usd(m.AudioMinutePrice)
+	}
+	if m.ImagePrice > 0 {
+		mi.Pricing.Image = usd(m.ImagePrice)
+	}
+	if m.RequestPrice > 0 {
+		mi.Pricing.Request = usd(m.RequestPrice)
 	}
 	return mi
 }

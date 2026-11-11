@@ -6,15 +6,28 @@
 |---|---|---|
 | POST | `/v1/chat/completions` | OpenAI request body. `model` is a catalog id (`vendor/name`). `stream: true` returns SSE ending with `data: [DONE]`; the last chunk carries `usage`. Response adds `provider`. |
 | POST | `/v1/embeddings` | OpenAI request body. |
-| GET | `/v1/models` | Models visible to the key, with `pricing.input`/`pricing.output` (USD per 1M tokens) and `context_length`. |
+| GET | `/v1/models` | Models visible to the key, with `pricing.input`/`pricing.output` (USD per 1M tokens), `pricing.image` (USD per image) and `pricing.request` (USD per request) when set, and `context_length`. |
 | POST | `/v1/completions` | Legacy text completions (chat-kind models), `stream` supported. |
 | POST | `/v1/responses` | OpenAI Responses API (chat-kind models). Streams named SSE events ending with `response.completed`. |
 | POST | `/v1/audio/speech` | Text to speech (speech models): `{model, input, voice, response_format, speed}` → audio bytes. Priced per input token, or per 1M characters when the provider reports no tokens. |
 | POST | `/v1/audio/transcriptions` | Speech to text (transcription models): multipart `file`, `model`, `language`, `prompt`, `response_format` (json or text). Priced by `audio_minute_price_micros` when set, else by tokens. |
+| POST | `/v1/images/generations` | Image models: `{model, prompt, n, size, quality, response_format, background, output_format, negative_prompt, seed, user}` → `{"created","data":[{"b64_json"\|"url","revised_prompt"}],"usage"}` as the provider returns it. Guardrails apply to `prompt`. Priced `image_price_micros` × `len(data)` plus tokens when reported. `stream` is rejected (400). |
+| POST | `/v1/images/edits` | Image models, multipart: `model`, `prompt`, `image` (or repeated `image[]`), optional `mask`, `n`, `size`, `quality`, `response_format`, `background`, `input_fidelity`, `output_format`, `user`. Same response and pricing as generations. |
+| POST | `/v1/images/variations` | Image models, multipart: `model`, `image`, optional `n`, `size`, `response_format`, `user`. Same response and pricing. |
+| POST | `/v1/rerank` | Rerank models, Cohere/Jina body `{model, query, documents: [string \| {text}], top_n, return_documents, max_tokens_per_doc}` → `{"id","model","results":[{"index","relevance_score","document"?}],"usage"?}` sorted by score. Guardrails apply to query and documents. Priced `request_price_micros` per request plus tokens when reported. |
+| POST | `/v1/ocr` | OCR models (Bifrost serves OCR through Mistral-type providers): `{model, document: {type: "document_url", document_url} \| {type: "image_url", image_url}, pages, include_image_base64, table_format, document_annotation_prompt, …}` → `{"model","pages":[{"index","markdown","images","dimensions"}],"usage_info"}`. Priced `request_price_micros` per request. |
+| POST | `/v1/responses/input_tokens` | Count input tokens for a chat-kind model with a Responses body → `{"object":"response.input_tokens","input_tokens"}`. Admitted and rate limited (RPM) like other calls, guardrails apply, logged at cost 0. |
 | POST | `/v1/mcp/tool/execute` | Body: one `tool_calls[]` item returned by the model (tool names are `<server>-<tool>`; a bare tool name is accepted too). Returns the tool message to append. The tool's server must be granted to the org and allowed by the key's `mcp_servers` (else 403 `mcp_tool_not_allowed`). |
 | POST | `/anthropic/v1/messages` | Anthropic Messages API for any chat-kind model (`model` is a catalog id; `model`, `max_tokens`, `messages` required). Converted with Bifrost core to the Responses pipeline, so routing, limits, guardrails, pricing and logs are the same as `/v1/responses`. `stream: true` returns Anthropic SSE (`event: message_start` … `event: message_stop`, no `[DONE]`). `anthropic-version` / `anthropic-beta` headers are accepted and ignored. |
+| POST | `/anthropic/v1/messages/count_tokens` | Anthropic count tokens (`model`, `messages`, optional `system`/`tools`; no `max_tokens`) → `{"input_tokens"}`. Same rules as `/v1/responses/input_tokens`. |
 | GET | `/anthropic/v1/models` | Chat models visible to the key: `{"data": [{"id","type":"model","display_name","created_at"}], "first_id","last_id","has_more": false}`. |
 | * | `/openai/v1/...` | Alias of `/v1/...` for every endpoint above (OpenAI SDK `base_url` ending in `/openai/v1`). |
+
+Model kinds: `chat`, `embedding`, `speech`, `transcription`, `image`, `rerank`, `ocr`; each endpoint
+accepts one kind (else 400 `wrong_model_kind`). Model prices (micro-USD): `input_price_micros` /
+`output_price_micros` per 1M tokens, `audio_minute_price_micros`, `image_price_micros` per generated
+image, and `request_price_micros`, added to every successful, non-cached request of any kind
+(token counting excepted).
 
 Anthropic SDK: `Anthropic(base_url="https://gw.example.com/anthropic", api_key="sk-gw-…")`.
 

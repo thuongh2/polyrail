@@ -65,6 +65,13 @@ type chatReq struct {
 }
 
 func main() {
+	http.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) { // lets "Discover models" work in the demo
+		var data []any
+		for _, id := range []string{"mock-chat", "mock-embed", "mock-tts", "mock-whisper", "mock-image", "mock-rerank"} {
+			data = append(data, map[string]any{"id": id, "object": "model", "created": 1, "owned_by": "mock"})
+		}
+		writeJSON(w, map[string]any{"object": "list", "data": data})
+	})
 	http.HandleFunc("/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"object":"list","model":"mock","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3]}],"usage":{"prompt_tokens":3,"total_tokens":3}}`))

@@ -437,8 +437,12 @@ func runFlow(t *testing.T, extraEnv []string) {
 		Provider string `json:"provider"`
 		Status   int    `json:"status"`
 	}
-	c.must(200, "GET", "/api/orgs/"+org+"/logs", "", &logRows)
-	if len(logRows) < 3 || logRows[0].Model == "" {
+	// counters are flushed before log rows in the same batch, so wait for the rows too
+	eventually(t, 6*time.Second, "request logs", func() bool {
+		c.must(200, "GET", "/api/orgs/"+org+"/logs", "", &logRows)
+		return len(logRows) >= 3
+	})
+	if logRows[0].Model == "" {
 		t.Fatalf("request logs: %+v", logRows)
 	}
 

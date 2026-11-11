@@ -7,6 +7,7 @@ import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -37,12 +38,13 @@ export default function Settings() {
 
   return (
     <>
-      <PageHeader title="Settings" description={admin ? "Organization name, output limits, guardrails and semantic cache." : "Only admins can change these settings."} />
+      <PageHeader title="Settings" description={admin ? "Organization name, output limits, guardrails, semantic cache and content logging." : "Only admins can change these settings."} />
       <DataState state={info} rows={5}>
         {(o) => (
           <>
             <SettingsForm org={o} base={base} readOnly={!admin} onSaved={info.reload} />
             <SemanticCacheForm org={o} base={base} readOnly={!admin} onSaved={info.reload} />
+            <ContentLoggingForm org={o} base={base} readOnly={!admin} onSaved={info.reload} />
             {can("owner") && <DangerZone org={o} base={base} />}
           </>
         )}
@@ -289,6 +291,82 @@ function SemanticCacheForm({ org, base, readOnly, onSaved }: { org: Org; base: s
         <div className="mt-4 flex gap-2">
           <Button type="submit" disabled={busy || !dirty}>
             {busy ? "Saving…" : "Save semantic cache"}
+          </Button>
+          {dirty && (
+            <Button type="button" variant="ghost" onClick={() => setV(init())}>
+              Discard
+            </Button>
+          )}
+        </div>
+      )}
+    </form>
+  );
+}
+
+/** Content logging: stores chat request and response bodies for a retention period (1–90 days). */
+function ContentLoggingForm({ org, base, readOnly, onSaved }: { org: Org; base: string; readOnly: boolean; onSaved: () => void }) {
+  const cl = org.content_logging;
+  const init = () => ({ on: !!cl?.enabled, days: String(cl?.retention_days ?? 30) });
+  const [v, setV] = useState(init);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setV(init()), [org]);
+  const dirty = JSON.stringify(v) !== JSON.stringify(init());
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    const days = Number(v.days);
+    if (!(Number.isInteger(days) && days >= 1 && days <= 90)) return setErr("Retention must be a whole number of days from 1 to 90.");
+    setBusy(true);
+    setErr("");
+    try {
+      await api("PATCH", base, { content_logging: { enabled: v.on, retention_days: days } });
+      toast(v.on ? "Content logging saved" : "Content logging turned off");
+      onSaved();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="mt-8 max-w-2xl">
+      <fieldset disabled={readOnly} className="min-w-0">
+        <Section title="Content logging" description="Keeps the body of each chat completion request and its response, so admins can open them from Logs.">
+          <div className="grid gap-4">
+            <div className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 p-3 text-sm">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+              <p>
+                Prompts and responses can contain personal or confidential data. Bodies are encrypted at rest, cut at 64 KB, deleted after the
+                retention period, and every read is recorded in the audit log. Tell your users before you turn this on.
+              </p>
+            </div>
+            <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+              <div>
+                <label htmlFor="cl-on" className="text-sm font-medium">
+                  Store request and response bodies
+                </label>
+                <p className="text-xs text-muted-foreground">Chat completions only; other endpoints store nothing. Off by default.</p>
+              </div>
+              <Switch id="cl-on" checked={v.on} onCheckedChange={(c) => setV({ ...v, on: c })} />
+            </div>
+            <Field id="cl-days" label="Retention (days)" help="1 to 90. Older bodies are deleted every 6 hours.">
+              <Input id="cl-days" type="number" min={1} max={90} step={1} inputMode="numeric" className="max-w-48" disabled={!v.on} value={v.days} onChange={(e) => setV({ ...v, days: e.target.value })} aria-describedby="cl-days-help" />
+            </Field>
+          </div>
+        </Section>
+      </fieldset>
+      {err && (
+        <p role="alert" className="mt-4 text-sm text-destructive">
+          {err}
+        </p>
+      )}
+      {!readOnly && (
+        <div className="mt-4 flex gap-2">
+          <Button type="submit" disabled={busy || !dirty}>
+            {busy ? "Saving…" : "Save content logging"}
           </Button>
           {dirty && (
             <Button type="button" variant="ghost" onClick={() => setV(init())}>

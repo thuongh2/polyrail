@@ -201,7 +201,7 @@ func (a *API) exportLogs(w http.ResponseWriter, r *http.Request) {
 	cw := csvHeaders(w, fmt.Sprintf("logs-%s-%s.csv", store.Day(from), store.Day(to)))
 	rc := http.NewResponseController(w)
 	if err := writeRow(cw, "id", "at", "key_id", "model", "provider", "upstream_model", "status", "error", "in_tokens",
-		"out_tokens", "cost_usd", "latency_ms", "cached", "stream", "kb_chunks"); err != nil {
+		"out_tokens", "cost_usd", "latency_ms", "cached", "stream", "kb_chunks", "end_user"); err != nil {
 		return
 	}
 	n := 0
@@ -210,7 +210,7 @@ func (a *API) exportLogs(w http.ResponseWriter, r *http.Request) {
 		if err := writeRow(cw, l.ID, l.At.UTC().Format(time.RFC3339Nano), l.KeyID, l.Model, l.Provider, l.Upstream,
 			strconv.Itoa(l.Status), l.Error, strconv.Itoa(l.InTokens), strconv.Itoa(l.OutTokens),
 			strconv.FormatFloat(float64(l.Cost)/1e6, 'f', 6, 64), strconv.FormatInt(l.LatencyMs, 10),
-			strconv.FormatBool(l.Cached), strconv.FormatBool(l.Stream), strconv.Itoa(l.KBChunks)); err != nil {
+			strconv.FormatBool(l.Cached), strconv.FormatBool(l.Stream), strconv.Itoa(l.KBChunks), l.EndUser); err != nil {
 			return false, err
 		}
 		if n%1000 == 0 {

@@ -9,6 +9,7 @@ const sections = [
   ["sdks", "SDK drop-ins"],
   ["chat", "Chat completions"],
   ["stream", "Streaming"],
+  ["routing", "Request routing"],
   ["completions", "Text completions"],
   ["responses", "Responses API"],
   ["embeddings", "Embeddings"],
@@ -24,6 +25,9 @@ const sections = [
   ["mcp", "MCP tools"],
   ["kb", "Knowledge bases"],
   ["keys", "Provider keys and alerts"],
+  ["policies", "Policies"],
+  ["mgmt", "Management tokens"],
+  ["exports", "Exports"],
   ["headers", "Gateway headers"],
   ["errors", "Errors"],
 ] as const;
@@ -46,6 +50,13 @@ const errors: [string, string, string][] = [
   ["bad_batch_file", "400", "A batch file line has a url the model's kind can't serve, or a body.model that is not the file's catalog id."],
   ["video_not_ready", "409", "The video job has not completed yet; poll GET /v1/videos/{id}."],
   ["not_found", "404", "No file, batch or video with this gateway id in your org."],
+  ["invalid_routing", "400", "The models list or provider object is invalid, such as an unknown field or a sort value."],
+  ["preset_not_found", "404", "No preset with this slug in your org."],
+  ["no_provider", "503", "Provider filters left no target for the model."],
+  ["policy_model_not_allowed", "403", "A guardrail policy does not allow this model (error.policy names it)."],
+  ["policy_budget_exceeded", "403", "A policy budget for this key or its creator is used up until it resets."],
+  ["policy_no_eligible_provider", "403", "A policy's provider or privacy rules leave no provider for the model."],
+  ["policy_filter_blocked", "403", "A policy filter with action block matched the request text."],
   ["body_too_large", "413", "The request body is over the server limit (8 MB by default)."],
   ["provider_error", "upstream or 502", "Every provider for the model failed."],
 ];
@@ -116,6 +127,45 @@ export default function Docs() {
   -H "Content-Type: application/json" \\
   -d '{"model": "vendor/model", "stream": true,
        "messages": [{"role": "user", "content": "Hello"}]}'`}
+            />
+          </Section>
+
+          <Section id="routing" title="Request routing">
+            <p>
+              Chat completions, Responses and text completions accept OpenRouter's routing fields. The gateway reads them and removes{" "}
+              <C>models</C>, <C>provider</C>, <C>preset</C> and <C>usage</C> before calling the provider.
+            </p>
+            <HeaderTable
+              rows={[
+                ["models: [\"vendor/a\", \"vendor/b\"]", "Fallback models tried after model, in order (at most 5). Models your key cannot use are skipped. Billing and the response model are the model that served."],
+                ["provider.order, only, ignore", "Provider names or types (case-insensitive): try these first in this order, keep only these, or drop these."],
+                ["provider.sort", "\"price\", \"throughput\" or \"latency\", or {by, partition: \"none\"} to sort across all models' providers instead of within each model."],
+                ["provider.max_price", "{prompt, completion} in USD per 1M tokens, {request}, {image}: providers above any cap are skipped."],
+                ["provider.allow_fallbacks: false", "Only the first eligible provider of each model is tried (models fallbacks still apply)."],
+                ["provider.zdr: true", "Only providers that declare zero data retention."],
+                ["provider.data_collection: \"deny\"", "Skip providers that declare they train on prompts or retain them."],
+                ["provider.preferred_min_throughput, preferred_max_latency", "Tokens per second and seconds: providers measured below or above move behind the others."],
+                ["model suffix :nitro / :floor", "Sort that model's providers by throughput / by price."],
+                ["\"model\": \"@preset/<slug>\"", "Use an org preset (Organization → Presets): its model, fallbacks, provider preferences and parameters. Fields in the request win."],
+                ["usage: {\"include\": true}", "The response usage gains cost (USD), cost_micros and cached token counts when the provider reports them."],
+                ["user", "Recorded on the request log as the end user and grouped under Activity → End users."],
+              ]}
+            />
+            <p>
+              Unknown fields or bad values in <C>provider</C> answer 400 <C>invalid_routing</C>; when the filters leave no provider, 503{" "}
+              <C>no_provider</C>. Routing preferences can only narrow what your organization's policies allow.
+            </p>
+            <CodeBlock
+              code={`curl ${base}/chat/completions \\
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \\
+  -d '{
+    "model": "openai/gpt-4o:floor",
+    "models": ["anthropic/claude-sonnet"],
+    "provider": {"zdr": true, "ignore": ["azure"], "max_price": {"prompt": 3}},
+    "usage": {"include": true},
+    "user": "customer-42",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'`}
             />
           </Section>
 
@@ -380,6 +430,55 @@ curl ${base}/chat/completions \
               hosts; services on a custom host (SMTP, self-hosted ntfy, Gotify, generic webhooks) are for operators unless
               private URLs are allowed.
             </p>
+          </Section>
+
+          <Section id="policies" title="Policies">
+            <p>
+              Admins manage guardrail policies under Organization → Policies. A policy applies to a key when it is the organization default
+              (unless the key or its creator is opted out), when the key's creator is one of its members, or when the key is listed. Every
+              policy that applies is enforced:
+            </p>
+            <HeaderTable
+              rows={[
+                ["Budget", "A spend limit per day, week (from Monday), month or lifetime, UTC. Through the org default or members it counts the creator's spend across all their keys; through keys, the key's own spend. Over the limit: 403 policy_budget_exceeded."],
+                ["Allowed models", "Model ids or globs where * matches anything, including /. Several policies intersect. Other models: 403 policy_model_not_allowed; /v1/models lists only allowed ones."],
+                ["Allowed providers", "Provider types or names. Targets of other providers are skipped; none left: 403 policy_no_eligible_provider."],
+                ["Filters", "RE2 patterns on the request text: redact replaces matches with [REDACTED:name], block refuses with 403 policy_filter_blocked."],
+                ["Privacy", "Require zero data retention, or deny providers that train on prompts. Providers declare this in their settings; undeclared providers fail both."],
+              ]}
+            />
+            <p>
+              The API keys page shows each key's effective policy with budget spend and reset time; members see it for the keys they created.
+              Errors carry the policy's name in <C>error.policy</C>.
+            </p>
+          </Section>
+
+          <Section id="mgmt" title="Management tokens">
+            <p>
+              Org admins create management tokens under API keys → Management tokens, for scripts and CI that call the admin API. Send the
+              token as a bearer token to any <C>/api/orgs/{"{org}"}/…</C> route of its own organization; no cookie or CSRF header is needed.
+              A token acts with its role (admin, member or viewer), never above its creator's current role, and cannot call <C>/v1</C>,
+              platform routes or the token routes themselves.
+            </p>
+            <CodeBlock
+              code={`curl ${location.origin}/api/orgs/$ORG/usage?days=7 \\
+  -H "Authorization: Bearer pr-mgmt-…"`}
+            />
+          </Section>
+
+          <Section id="exports" title="Exports">
+            <p>
+              Usage and request logs download as CSV from Activity → Export CSV, or with a management token. <C>from</C> and <C>to</C> are dates
+              (UTC, both included) at most 366 days apart; usage defaults to the last 30 days, logs to the last 7.
+            </p>
+            <HeaderTable
+              rows={[
+                ["GET /api/orgs/{org}/usage/export.csv?group=model|key|creator|day", "Daily usage rows: requests, errors, tokens, cost_usd, latency and cache hits per group."],
+                ["GET /api/orgs/{org}/logs/export.csv", "One row per request, newest first, at most 100,000."],
+                ["GET /api/admin/usage/export.csv?group=model|day", "Operators: platform usage rollups."],
+              ]}
+            />
+            <p>Cells that a spreadsheet would run as a formula get a leading apostrophe.</p>
           </Section>
 
           <Section id="headers" title="Gateway headers">

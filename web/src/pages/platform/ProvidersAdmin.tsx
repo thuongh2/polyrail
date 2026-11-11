@@ -297,6 +297,13 @@ export function ProviderDialog({
   const [pool, setPool] = useState(provider?.proxy_pool ?? "");
   const pools = useAsync(() => (scope === "platform" ? get<ProxyPool[]>(PLATFORM + "/proxy-pools") : Promise.resolve([] as ProxyPool[])), [scope]);
   const single = ownProxy && !pool;
+  // Privacy declaration: absent (undeclared) fails policies that require ZDR or no training.
+  const pv = provider?.privacy;
+  const [declare, setDeclare] = useState(!!pv);
+  const [zdr, setZdr] = useState(pv?.zdr ?? false);
+  const [trains, setTrains] = useState(pv?.trains_on_data ?? false);
+  const [retention, setRetention] = useState(pv?.retention_days ? String(pv.retention_days) : "");
+  const [region, setRegion] = useState(pv?.region ?? "");
   // A stored password is kept while the proxy URL and username stay the same.
   const keepsProxyPass = !!provider?.proxy?.username && provider.proxy.url === proxyURL.trim() && provider.proxy.username === proxyUser.trim();
 
@@ -318,6 +325,9 @@ export function ProviderDialog({
           : undefined,
       no_proxy: noProxy,
       proxy_pool: pool || undefined,
+      privacy: declare
+        ? { zdr, trains_on_data: trains, retention_days: zdr || !retention ? undefined : Number(retention), region: region || undefined }
+        : undefined,
       enabled,
       // Cloud types: the form edits the first key; other stored keys are kept as they are.
       // Otherwise new values replace every stored key; none entered keeps the stored ones (by id).
@@ -421,6 +431,58 @@ export function ProviderDialog({
           <Label htmlFor="provider-enabled">Enabled</Label>
         </div>
       </div>
+      <details className="rounded-md border px-3 py-2" open={!!pv}>
+        <summary className="cursor-pointer rounded-sm text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+          Privacy
+        </summary>
+        <div className="mt-3 grid gap-4 pb-1">
+          <p className="text-xs text-muted-foreground">
+            What this provider's terms say about prompt data. Policies and routing preferences that require zero data retention or no training
+            skip providers that have not declared it. Shown on public model pages for public providers.
+          </p>
+          <div className="flex items-center gap-3">
+            <Switch id="provider-privacy" checked={declare} onCheckedChange={setDeclare} />
+            <Label htmlFor="provider-privacy">Declare data handling</Label>
+          </div>
+          {declare && (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="flex items-center gap-3">
+                  <Switch id="provider-zdr" checked={zdr} onCheckedChange={(c) => (setZdr(c), c && setRetention(""))} />
+                  <Label htmlFor="provider-zdr">Zero data retention</Label>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Switch id="provider-trains" checked={trains} onCheckedChange={setTrains} />
+                  <Label htmlFor="provider-trains">Trains on prompts</Label>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Retention (days)" hint={zdr ? "Not kept: zero data retention." : "How long prompts are kept. Empty: not stated."}>
+                  {(id, hint) => (
+                    <Input id={id} aria-describedby={hint} type="number" min={0} max={36500} step={1} inputMode="numeric" disabled={zdr} value={retention} onChange={(e) => setRetention(e.target.value)} />
+                  )}
+                </Field>
+                <Field label="Region" hint="Where prompts are processed.">
+                  {(id, hint) => (
+                    <Select value={region || "none"} onValueChange={(v) => setRegion(v === "none" ? "" : v)}>
+                      <SelectTrigger id={id} aria-describedby={hint} className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Not stated</SelectItem>
+                        <SelectItem value="global">Global</SelectItem>
+                        <SelectItem value="europe">Europe</SelectItem>
+                        <SelectItem value="us">United States</SelectItem>
+                        {region && !["global", "europe", "us"].includes(region) && <SelectItem value={region}>{region}</SelectItem>}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </Field>
+              </div>
+            </>
+          )}
+        </div>
+      </details>
       <details className="rounded-md border px-3 py-2" open={!!provider?.proxy?.url || !!provider?.no_proxy || !!provider?.proxy_pool}>
         <summary className="cursor-pointer rounded-sm text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
           Proxy

@@ -1,8 +1,13 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { Download } from "lucide-react";
 import type { Scope } from "@/App";
 import { BarChart } from "@/components/console/BarChart";
 import { Section, Stat, StatStrip, TableFrame, dayDate, money, ms, usdTick } from "@/components/console/bits";
 import { DataState, EmptyState, ErrorState, LoadingRows, PageHeader } from "@/components/states";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -27,6 +32,13 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
   const usage = useAsync(() => get<UsageReport>(`${base}/usage?days=${period}`), [base, period]);
   const orgInfo = useAsync(() => (platform || !base ? Promise.resolve(null) : get<Org>(base)), [base, platform]);
   const keys = useAsync(() => (platform || !base ? Promise.resolve([] as APIKey[]) : get<APIKey[]>(`${base}/keys`)), [base, platform]);
+  const [by, setBy] = useQueryParam("by", "model");
+  const breakdown = platform ? "model" : by;
+  const endUsers = useAsync(
+    () => (breakdown === "end_user" && base ? get<UsageReport>(`${base}/usage?days=${period}&group=end_user`).then((r) => r.end_users ?? []) : Promise.resolve(null)),
+    [base, period, breakdown],
+  );
+  const [exporting, setExporting] = useState(false);
 
   if (!platform && !org) return <EmptyState title="You are not in an organization yet">Ask an admin to add you, then sign in again.</EmptyState>;
 
@@ -38,6 +50,11 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
         title={platform ? "Platform activity" : "Activity"}
         description={platform ? "Traffic across every organization, by public model." : "Requests, spend and tokens for this organization."}
         actions={
+          <>
+          <Button variant="outline" size="sm" onClick={() => setExporting(true)}>
+            <Download aria-hidden />
+            Export CSV
+          </Button>
           <Select value={period} onValueChange={setDays}>
             <SelectTrigger size="sm" className="w-36" aria-label="Period">
               <SelectValue />
@@ -50,8 +67,10 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
               ))}
             </SelectContent>
           </Select>
+          </>
         }
       />
+      <ExportDialog open={exporting} onOpenChange={setExporting} base={base} platform={platform} />
 
       <DataState state={usage} rows={3}>
         {(u) => (
@@ -98,13 +117,22 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
               </div>
             </Section>
 
-            <Section title="By model">
-              <UsageTable rows={u.models} first="Model" empty="No model usage in this period." />
-            </Section>
-
-            {!platform && (
-              <Section title="By API key">
-                {keys.error ? (
+            <Section
+              title="Breakdown"
+              actions={
+                !platform && (
+                  <Tabs value={breakdown} onValueChange={setBy}>
+                    <TabsList aria-label="Group usage by">
+                      <TabsTrigger value="model">Models</TabsTrigger>
+                      <TabsTrigger value="key">API keys</TabsTrigger>
+                      <TabsTrigger value="end_user">End users</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                )
+              }
+            >
+              {breakdown === "key" ? (
+                keys.error ? (
                   <ErrorState error={keys.error} onRetry={keys.reload} />
                 ) : keys.loading && !keys.data ? (
                   <LoadingRows rows={2} />
@@ -115,9 +143,20 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
                     empty="No key usage in this period."
                     name={(id) => keyName(id) ?? <span className="text-muted-foreground">Deleted key ({id.slice(0, 6)})</span>}
                   />
-                )}
-              </Section>
-            )}
+                )
+              ) : breakdown === "end_user" ? (
+                <>
+                  <p className="mb-2 text-sm text-muted-foreground">
+                    Requests grouped by the <code className="font-mono">user</code> field your application sends, top 1,000 by spend.
+                  </p>
+                  <DataState state={endUsers} rows={3}>
+                    {(rows) => <UsageTable rows={rows ?? []} first="End user" empty="No requests with a user field in this period." name={(id) => <span className="font-mono text-xs">{id}</span>} />}
+                  </DataState>
+                </>
+              ) : (
+                <UsageTable rows={u.models} first="Model" empty="No model usage in this period." />
+              )}
+            </Section>
           </>
         )}
       </DataState>
@@ -180,3 +219,94 @@ function UsageTable({ rows, first, empty, name }: { rows: UsageRow[]; first: str
   );
 }
 
+
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+const daysAgo = (n: number) => isoDay(new Date(Date.now() - n * 86400000));
+
+/** CSV downloads: plain same-origin links, so the session cookie authenticates them. */
+function ExportDialog({ open, onOpenChange, base, platform }: { open: boolean; onOpenChange: (o: boolean) => void; base: string; platform: boolean }) {
+  const [what, setWhat] = useState("usage");
+  const [group, setGroup] = useState("model");
+  const [from, setFrom] = useState(daysAgo(30));
+  const [to, setTo] = useState(isoDay(new Date()));
+  const logs = what === "logs" && !platform;
+  const bad = !from || !to || from > to;
+  const qs = new URLSearchParams({ from, to, ...(logs ? {} : { group }) });
+  const href = `${base}/${logs ? "logs" : "usage"}/export.csv?${qs}`;
+  const groups = platform ? ["model", "day"] : ["model", "key", "creator", "day"];
+  const groupLabel: Record<string, string> = { model: "Model", key: "API key", creator: "Key creator", day: "Day" };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Export CSV</DialogTitle>
+          <DialogDescription>
+            {logs ? "One row per request, newest first, at most 100,000 rows." : "Daily rows from the usage rollups."} Dates are UTC and include both ends.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          {!platform && (
+            <div className="grid gap-1.5">
+              <Label htmlFor="exp-what">Data</Label>
+              <Select value={what} onValueChange={(v) => (setWhat(v), setFrom(daysAgo(v === "logs" ? 7 : 30)))}>
+                <SelectTrigger id="exp-what" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="usage">Usage</SelectItem>
+                  <SelectItem value="logs">Request logs</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {!logs && (
+            <div className="grid gap-1.5">
+              <Label htmlFor="exp-group">Group by</Label>
+              <Select value={group} onValueChange={setGroup}>
+                <SelectTrigger id="exp-group" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {groups.map((g) => (
+                    <SelectItem key={g} value={g}>
+                      {groupLabel[g]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-1.5">
+              <Label htmlFor="exp-from">From</Label>
+              <Input id="exp-from" type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="exp-to">To</Label>
+              <Input id="exp-to" type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} />
+            </div>
+          </div>
+          {bad && <p role="alert" className="text-sm text-destructive">Choose a start date on or before the end date.</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Close
+          </Button>
+          {bad ? (
+            <Button disabled>
+              <Download aria-hidden />
+              Download
+            </Button>
+          ) : (
+            <Button asChild>
+              <a href={href} download>
+                <Download aria-hidden />
+                Download
+              </a>
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

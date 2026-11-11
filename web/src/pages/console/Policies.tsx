@@ -125,7 +125,10 @@ export default function Policies() {
                         <div className="flex flex-wrap gap-1">
                           {p.require_zdr && <Badge variant="outline">ZDR</Badge>}
                           {p.deny_data_collection && <Badge variant="outline">No training</Badge>}
-                          {!p.require_zdr && !p.deny_data_collection && <span className="text-muted-foreground">None</span>}
+                          {!!p.allowed_regions?.length && (
+                            <Badge variant="outline">Regions: {p.allowed_regions.map((r) => REGIONS.find((o) => o.value === r)?.label ?? r).join(", ")}</Badge>
+                          )}
+                          {!p.require_zdr && !p.deny_data_collection && !p.allowed_regions?.length && <span className="text-muted-foreground">None</span>}
                         </div>
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
@@ -383,7 +386,7 @@ function PolicyDialog({ base, policy, onClose, onSaved }: { base: string; policy
           <SwitchRow id="pol-dc" label="Deny data collection" help="Only providers that declare they do not train on prompts.">
             <Switch id="pol-dc" checked={noTraining} onCheckedChange={setNoTraining} />
           </SwitchRow>
-          <CheckList legend="Allowed regions" help="Saved with the policy for data regions; not enforced yet." options={REGIONS} value={regions} onChange={setRegions} />
+          <CheckList legend="Allowed regions" help="Only providers whose declared region is checked here. A provider without a declared region counts as Global. Several policies intersect." options={REGIONS} value={regions} onChange={setRegions} />
         </div>
       </Part>
     </FormDialog>

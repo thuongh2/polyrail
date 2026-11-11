@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Wordmark } from "@/components/layout/PublicLayout";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
-import { authApi } from "@/lib/api";
+import { ApiError, authApi, type SSODiscovery } from "@/lib/api";
 import { useSession } from "@/lib/session";
 
 /** Only same-origin paths, so ?next= can't send people to another site. */
@@ -26,7 +26,11 @@ export default function Login({ mode }: { mode: "login" | "signup" }) {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Sign-in is email first: the domain decides between SSO and a password (GET /api/auth/sso).
+  const [method, setMethod] = useState<SSODiscovery | null>(null);
   const signup = mode === "signup";
+  const sso = method && method.method !== "password" && method.login_url ? method : null;
+  const showPassword = signup || (!!method && method.password_allowed);
   const qs = location.search;
 
   useEffect(() => {
@@ -37,16 +41,31 @@ export default function Login({ mode }: { mode: "login" | "signup" }) {
     document.title = signup ? "Create account – Polyrail" : "Sign in – Polyrail";
   }, [signup]);
 
+  async function discover() {
+    try {
+      setMethod(await authApi.sso(email.trim()));
+    } catch {
+      setMethod({ method: "password", login_url: "", password_allowed: true }); // discovery is a convenience
+    }
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError("");
     setBusy(true);
     try {
+      if (!signup && !method) return await discover();
       if (signup) await authApi.signup(email.trim(), password, name.trim());
       else await authApi.login(email.trim(), password);
       await refresh();
       navigate(nextPath());
     } catch (err) {
+      if (err instanceof ApiError && err.code === "sso_required") {
+        const url = typeof err.detail?.login_url === "string" ? err.detail.login_url : "";
+        setMethod({ method: "saml", login_url: url, password_allowed: false });
+        setError("Your organization requires single sign-on. Continue with SSO.");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setBusy(false);
@@ -78,7 +97,7 @@ export default function Login({ mode }: { mode: "login" | "signup" }) {
             </p>
           ) : (
             <>
-              {config?.sso && (
+              {signup && config?.sso && (
                 <>
                   <Button asChild variant="outline" className="mt-6 w-full">
                     <a href="/api/auth/oidc/login">Continue with SSO</a>
@@ -90,7 +109,7 @@ export default function Login({ mode }: { mode: "login" | "signup" }) {
                   </div>
                 </>
               )}
-              <form onSubmit={submit} className={config?.sso ? "space-y-4" : "mt-6 space-y-4"}>
+              <form onSubmit={submit} className={signup && config?.sso ? "space-y-4" : "mt-6 space-y-4"}>
                 {signup && (
                   <div className="space-y-1.5">
                     <Label htmlFor="name">Name</Label>
@@ -106,11 +125,27 @@ export default function Login({ mode }: { mode: "login" | "signup" }) {
                     required
                     autoFocus
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (!signup && method) (setMethod(null), setPassword(""), setError(""));
+                    }}
                     aria-invalid={!!error || undefined}
                     aria-describedby={error ? "login-error" : undefined}
                   />
                 </div>
+                {sso && (
+                  <Button asChild className="w-full" variant={showPassword ? "outline" : "default"}>
+                    <a href={sso.login_url}>Continue with SSO</a>
+                  </Button>
+                )}
+                {sso && showPassword && (
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <span className="h-px flex-1 bg-border" />
+                    or with your password
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                )}
+                {showPassword && (
                 <div className="space-y-1.5">
                   <Label htmlFor="password">Password</Label>
                   <Input
@@ -118,6 +153,7 @@ export default function Login({ mode }: { mode: "login" | "signup" }) {
                     type="password"
                     autoComplete={signup ? "new-password" : "current-password"}
                     required
+                    autoFocus={!signup}
                     minLength={signup ? 10 : undefined}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -130,16 +166,28 @@ export default function Login({ mode }: { mode: "login" | "signup" }) {
                     </p>
                   )}
                 </div>
+                )}
                 {error && (
                   <p id="login-error" role="alert" className="flex items-start gap-2 text-sm text-destructive">
                     <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
                     {error}
                   </p>
                 )}
-                <Button type="submit" className="w-full" disabled={busy}>
-                  {busy && <Loader2 className="motion-safe:animate-spin" aria-hidden />}
-                  {signup ? "Create account" : "Sign in"}
-                </Button>
+                {(!sso || showPassword) && (
+                  <Button type="submit" className="w-full" disabled={busy}>
+                    {busy && <Loader2 className="motion-safe:animate-spin" aria-hidden />}
+                    {signup ? "Create account" : method ? "Sign in" : "Continue"}
+                  </Button>
+                )}
+                {!signup && method && (
+                  <button
+                    type="button"
+                    className="w-full rounded-sm text-center text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                    onClick={() => (setMethod(null), setPassword(""), setError(""))}
+                  >
+                    Use a different email
+                  </button>
+                )}
               </form>
             </>
           )}

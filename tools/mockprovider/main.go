@@ -6,6 +6,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -56,6 +57,6 @@ func main() {
 		fmt.Fprint(w, "data: [DONE]\n\n")
 	})
 	if err := http.ListenAndServe("127.0.0.1:9901", nil); err != nil {
-		panic(err)
+		log.Fatalf("mockprovider: %v (is another mock already running on 9901?)", err)
 	}
 }

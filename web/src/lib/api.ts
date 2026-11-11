@@ -178,6 +178,7 @@ export type ProviderKey = {
   azure?: AzureConfig;
   bedrock?: BedrockConfig;
   vertex?: VertexConfig;
+  cloudflare?: { account_id: string };
 };
 export type Provider = {
   id: string;

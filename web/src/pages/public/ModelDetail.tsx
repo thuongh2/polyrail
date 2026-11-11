@@ -11,6 +11,8 @@ import { StatusBadge, latency } from "@/components/public/StatusBadge";
 import { UptimeBar, UptimeLegend } from "@/components/public/UptimeBar";
 import { ApiError, compact, fmt, kindLabel, mainPrice, pct, perMillion, publicApi, unitUSD, type ModelDetail as Detail } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
+import { ProviderLogo } from "@/components/ProviderLogo";
+import { providerLabel } from "@/lib/providers";
 
 const tps = (v: number | null) => (v == null ? "–" : `${compact(Math.round(v))} tok/s`);
 
@@ -54,7 +56,10 @@ export default function ModelDetail({ id }: { id: string }) {
         Models
       </Link>
       <header className="mb-8">
-        <h1 className="text-3xl font-semibold tracking-tight [overflow-wrap:break-word]">{m.name}</h1>
+        <div className="flex items-center gap-3">
+          <ProviderLogo model={m.id} author={m.owned_by} size={24} />
+          <h1 className="min-w-0 text-3xl font-semibold tracking-tight [overflow-wrap:break-word]">{m.name}</h1>
+        </div>
         <div className="mt-1 flex items-center gap-1">
           <code className="truncate font-mono text-sm text-muted-foreground">{m.id}</code>
           <CopyButton text={m.id} label="Copy model id" />
@@ -251,8 +256,13 @@ function Providers({ d }: { d: Detail }) {
               {d.providers.map((p) => (
                 <TableRow key={p.name}>
                   <TableCell>
-                    <div className="font-medium">{p.name}</div>
-                    <div className="text-xs text-muted-foreground">{p.type}</div>
+                    <div className="flex items-center gap-2.5">
+                      <ProviderLogo type={p.type} size={24} />
+                      <div>
+                        <div className="font-medium">{p.name}</div>
+                        <div className="text-xs text-muted-foreground">{providerLabel(p.type)}</div>
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={p.status} />
@@ -284,7 +294,10 @@ function Providers({ d }: { d: Detail }) {
           {d.providers.map((p) => (
             <li key={p.name} className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-start sm:gap-6">
               <div className="flex items-center justify-between gap-2 sm:block">
-                <p className="truncate text-sm font-medium">{p.name}</p>
+                <p className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                  <ProviderLogo type={p.type} size={16} />
+                  <span className="truncate">{p.name}</span>
+                </p>
                 <p className="text-xs text-muted-foreground">{pct(p.stats_24h.uptime)} over 24h</p>
               </div>
               <UptimeBar hours={p.hourly} label={p.name} />

@@ -32,7 +32,9 @@ func Handler() http.Handler {
 				files.ServeHTTP(w, r)
 				return
 			}
-			if path.Ext(p) != "" { // a missing asset is a 404, not the app shell
+			// A missing static file is a 404, not the app shell. Only the static folders count:
+			// model pages like /models/meta/llama-3.3-70b have a "." in the path too.
+			if strings.HasPrefix(p, "assets/") || strings.HasPrefix(p, "logos/") || p == "favicon.ico" {
 				http.NotFound(w, r)
 				return
 			}

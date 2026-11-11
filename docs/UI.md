@@ -23,6 +23,11 @@ charts are small SVG components. No new runtime dependency without a reason in d
 - Filters, tabs and sort live in the URL (`useQueryParam`).
 - Accessible: labels on every input, `aria-label` on icon buttons, keyboard reachable, focus visible.
 - Light and dark mode both checked.
+- Provider and model-author logos: `<ProviderLogo type|model />` (components/ProviderLogo.tsx), labels and
+  the logo map in `lib/providers.ts`. SVGs are static files in `web/public/logos/` (served from dist, never
+  bundled), taken unchanged from `@lobehub/icons-static-svg` 1.102.0 (MIT, `web/public/logos/LICENSE`).
+  One-color logos render as a CSS mask on `bg-current` so they follow the theme; colored ones as `<img>`;
+  types without a logo get a monogram. Decorative (`aria-hidden`) when the name is written next to them.
 
 ## Routes
 

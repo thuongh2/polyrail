@@ -49,6 +49,11 @@ func (g *Gateway) guard(w http.ResponseWriter, p *principal, m store.Model, segs
 // guardIn applies the org's guardrails and sets the X-GW-Guardrail / X-GW-Compressed-Chars
 // headers; false means the error response was already written.
 func (g *Gateway) guardIn(w http.ResponseWriter, p *principal, m store.Model, in guardInput, start time.Time) bool {
+	if by := p.pol.filter(in.all); by != "" {
+		g.record(p, m, store.RequestLog{Status: 403, Error: "guardrail: policy filter"}, start)
+		writeError(w, policyErr(403, "policy_filter_blocked", by, "input matches a block filter of policy %q", by))
+		return false
+	}
 	v, err := applyGuardrails(p.Org, in)
 	if err != nil {
 		writeError(w, errf(500, "api_error", "guardrail_config", "%v", err))

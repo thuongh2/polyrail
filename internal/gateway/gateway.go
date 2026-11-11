@@ -84,12 +84,14 @@ type Gateway struct {
 	mcp   mcpState
 	idem  idemStore
 	pools *poolForwarder
+	now   func() time.Time // policy budget clock; nil = time.Now (tests set it)
 }
 
 type principal struct {
 	Key      store.APIKey
 	Org      store.Org
-	kbChunks int // knowledge-base excerpts injected into this request (request log)
+	pol      *EffectivePolicy // guardrail policies applying to Key (nil: none)
+	kbChunks int              // knowledge-base excerpts injected into this request (request log)
 }
 
 // HashKey is how API key secrets are stored and looked up.
@@ -191,12 +193,13 @@ type apiError struct {
 	typ    string
 	code   string
 	msg    string
+	policy string // the policy that refused the request (policy_* codes)
 }
 
 func (e *apiError) Error() string { return e.msg }
 
 func errf(status int, typ, code, format string, args ...any) *apiError {
-	return &apiError{status, typ, code, fmt.Sprintf(format, args...)}
+	return &apiError{status: status, typ: typ, code: code, msg: fmt.Sprintf(format, args...)}
 }
 
 func writeError(w http.ResponseWriter, e *apiError) {
@@ -214,7 +217,11 @@ func errorBody(w http.ResponseWriter, e *apiError) (string, any) {
 	if _, ok := w.(genaiWriter); ok {
 		return "", genaiError(e)
 	}
-	return "", map[string]any{"error": map[string]any{"message": e.msg, "type": e.typ, "code": e.code}}
+	body := map[string]any{"message": e.msg, "type": e.typ, "code": e.code}
+	if e.policy != "" {
+		body["policy"] = e.policy
+	}
+	return "", map[string]any{"error": body}
 }
 
 var reSecretish = regexp.MustCompile(`(sk|key|tok)[-_][A-Za-z0-9*_\-.]{6,}`)
@@ -237,7 +244,7 @@ func fromBifrost(be *schemas.BifrostError, private bool) *apiError {
 	if len(msg) > 500 {
 		msg = msg[:500]
 	}
-	return &apiError{status, "upstream_error", "provider_error", msg}
+	return &apiError{status: status, typ: "upstream_error", code: "provider_error", msg: msg}
 }
 
 // newBifrostCtx is the per-request Bifrost context; it ends with the client request.
@@ -282,7 +289,12 @@ func (g *Gateway) authenticate(ctx context.Context, r *http.Request) (*principal
 			if err != nil {
 				return nil, errf(401, "authentication_error", "invalid_api_key", "invalid API key")
 			}
-			p = &principal{Key: *k, Org: *o}
+			pol, err := g.loadPolicy(ctx, *k)
+			if err != nil {
+				logPolicyErr(*k, err)
+				return nil, errf(503, "api_error", "store_unavailable", "temporarily unavailable")
+			}
+			p = &principal{Key: *k, Org: *o, pol: pol}
 		}
 		g.auth.Set(hash, p, 0, 30*time.Second) // negative results are cached too
 	}
@@ -316,6 +328,9 @@ func (g *Gateway) admit(ctx context.Context, p *principal) *apiError {
 			return errf(402, "insufficient_quota", "key_budget_exceeded", "API key monthly budget exceeded")
 		}
 	}
+	if e := g.admitPolicy(ctx, p); e != nil {
+		return e
+	}
 	if p.Key.TPM > 0 {
 		used, err := g.Lim.Get(ctx, "t:"+p.Key.ID)
 		if err == nil && used >= int64(p.Key.TPM) {
@@ -341,10 +356,16 @@ func (g *Gateway) resolve(p *principal, id, kind string, affinity func() string)
 	if len(p.Key.Models) > 0 && !slices.Contains(p.Key.Models, m.ID) {
 		return m, nil, errf(403, "permission_error", "model_not_allowed", "this API key may not use model %q", id)
 	}
+	if by := p.pol.modelDenier(m.ID); by != "" {
+		return m, nil, policyErr(403, "policy_model_not_allowed", by, "policy %q does not allow model %q", by, id)
+	}
 	if m.Kind != kind {
 		return m, nil, errf(400, "invalid_request_error", "wrong_model_kind", "model %q is a %s model", id, m.Kind)
 	}
-	ts := plan(m, snap, g.rt, affinity)
+	ts, e := g.policyTargets(p, snap, m, plan(m, snap, g.rt, affinity))
+	if e != nil {
+		return m, nil, e
+	}
 	if !g.cfg.AllowPrivateURLs {
 		ts = slices.DeleteFunc(ts, func(t store.Target) bool {
 			return !tenantReachable(snap.Providers[t.ProviderID], false, false)
@@ -427,6 +448,7 @@ func (g *Gateway) record(p *principal, m store.Model, l store.RequestLog, start 
 		_, _ = g.Lim.Incr(context.Background(), "t:"+p.Key.ID, int64(l.InTokens+l.OutTokens))
 	}
 	g.Usage.Record(l)
+	g.recordPolicySpend(p, m, l.Cost)
 	if l.Error != "" && l.Status >= 400 && l.Status != 499 && !strings.HasPrefix(l.Error, "guardrail") {
 		// upstream failure after all fallbacks; no prompt or upstream text in the payload
 		g.emit(p.Org.ID, "request.failed", map[string]any{"model": m.ID, "status": l.Status, "code": "provider_error", "key_id": p.Key.ID})
@@ -805,7 +827,7 @@ func (g *Gateway) Models(w http.ResponseWriter, r *http.Request) {
 	data := []ModelInfo{}
 	snap := g.snap.Load()
 	for _, m := range snap.Visible(p.Org.ID) {
-		if len(p.Key.Models) == 0 || slices.Contains(p.Key.Models, m.ID) {
+		if (len(p.Key.Models) == 0 || slices.Contains(p.Key.Models, m.ID)) && p.pol.AllowModel(m.ID) {
 			data = append(data, snap.Info(m))
 		}
 	}

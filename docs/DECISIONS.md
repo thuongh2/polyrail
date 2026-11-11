@@ -256,3 +256,25 @@ ntfy, …) instead of hand-written integrations. Cooldown only stops sending to 
 not used to rotate around provider limits. Implementation ruling: the gateway builds shoutrrr
 services directly (not its router, which imports XMPP/MQTT clients); `smtp` and `generic` are behind
 `-tags alertsfull` because their `text/template` use costs +16 MB of binary (CONFIG.md).
+
+**D26 Guardrail policies and provider privacy (OpenRouter W1-A).** Owner request: OpenRouter-style
+policies. `store.Policy` (KV `policy/<org>/<id>`, written with the config version bump) applies to a
+key as org default (minus opted-out members/keys), via its creator (`APIKey.CreatedBy` in
+`member_ids`) or via `key_ids`. Combination follows OpenRouter: model and provider allowlists
+intersect (every list must admit), `require_zdr` / `deny_data_collection` OR, filters union with
+block beating redact, budgets checked one by one. Budgets are per person and per key: a policy
+reaching the key as org default or by member limits the creator's spend over all their keys; by key
+it limits that key (creatorless keys fall back to per key). Spend goes to `spend/pol/<org>/<u|k>/<id>/<period>/<a|p>`
+counters on the AddAgg pipeline (period `dYYYYMMDD`, `wYYYYMMDD` of the Monday, `mYYYYMM`, `l`, UTC;
+`/p` = platform models only, `/a` = with BYOK), read with `Pipeline.Spent` in admit (D7 delta, no DB
+wait on a warm cache). Shortcut: counters are written only for keys under a budget, so a new budget
+counts from when it applies. The effective policy is compiled at authentication and cached in the
+principal (auth cache, cleared by `InvalidateAuth` on policy writes and by every catalog reload).
+Providers carry admin-declared `privacy {zdr, trains_on_data, retention_days, region}`; undeclared
+privacy fails ZDR and data-collection rules (fail closed). Routing seam: `EffectivePolicy.AllowTarget(p)`
+filters planned targets in `resolve` (one call site, `policyTargets`); request-level `provider`
+filters compose by also having to pass; if none is left the request gets 403
+`policy_no_eligible_provider` instead of falling back. Refusals are 403 with `error.policy`.
+`allowed_regions` is stored for W2 data regions. Org guardrails and key limits stay and apply on top.
+If wrong: per-org policy counts beyond ~100 or per-request compile cost would move compilation into
+the catalog snapshot; budgets that must count spend before assignment need counters for every key.

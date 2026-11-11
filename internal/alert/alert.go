@@ -275,6 +275,9 @@ func Message(typ string, data map[string]any) (string, string) {
 		if s("code") == "key_budget_exceeded" {
 			return "Polyrail: API key budget reached", fmt.Sprintf("API key %s reached its monthly budget; its requests are refused until next month or a budget change.", s("key_id"))
 		}
+		if s("code") == "policy_budget_exceeded" {
+			return "Polyrail: policy budget reached", fmt.Sprintf("API key %s reached a budget of policy %s; its requests are refused until the budget interval resets or the policy changes.", s("key_id"), orDash(s("policy")))
+		}
 		return "Polyrail: out of credits", "The organization is out of credits; requests are refused until credits are added."
 	case RequestFailed:
 		return "Polyrail: requests failing", fmt.Sprintf("Requests to model %s failed at every provider (status %s).", s("model"), s("status"))

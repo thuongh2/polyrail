@@ -148,6 +148,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerProxyPools(mux)
 	a.registerKeys(mux)
 	a.registerAlerts(mux)
+	a.registerPolicies(mux)
 
 	// Unknown API paths answer JSON 404 instead of falling through to the UI's index.html.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeErr(w, http.StatusNotFound, "not found") })
@@ -1043,6 +1044,10 @@ func (a *API) putProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.checkProxyPool(&p, r); err != nil {
+		fail(w, err)
+		return
+	}
+	if err := checkPrivacy(p.Privacy); err != nil {
 		fail(w, err)
 		return
 	}

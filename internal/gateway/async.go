@@ -218,8 +218,8 @@ func fileOut(j *store.Job, status string) map[string]any {
 // the model's kind and body.model the catalog model id, which is replaced by the upstream model
 // name. This pins what a batch may run (and how it is priced) to the model the file was made for.
 // Each request also gets what a synchronous call would: the org's guardrails on its text and the
-// org's output token cap.
-func rewriteBatchFile(data []byte, m store.Model, upstream string, org store.Org) ([]byte, error) {
+// org's output token cap, and the key's policy filters.
+func rewriteBatchFile(data []byte, m store.Model, upstream string, org store.Org, pol *EffectivePolicy) ([]byte, error) {
 	var out bytes.Buffer
 	for i, line := range bytes.Split(data, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -243,6 +243,9 @@ func rewriteBatchFile(data []byte, m store.Model, upstream string, org store.Org
 		}
 		var segs []*string
 		body = batchTexts(body, "", &segs).(map[string]any)
+		if by := pol.filter(segs); by != "" {
+			return nil, fmt.Errorf("line %d: %w: input matches a block filter of policy %q", i+1, errGuardrail, by)
+		}
 		v, err := applyGuardrails(org, guardInput{all: segs}) // shortcut: no role info here, so no injection scan or compression
 		if err != nil {
 			return nil, err
@@ -366,7 +369,7 @@ func (g *Gateway) UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	t := ts[0] // the file lives at the primary target; batches using it follow it there
 	if purpose == "batch" {
-		if data, err = rewriteBatchFile(data, m, t.Model, p.Org); err != nil {
+		if data, err = rewriteBatchFile(data, m, t.Model, p.Org, p.pol); err != nil {
 			code := "bad_batch_file"
 			if errors.Is(err, errGuardrail) {
 				code = "guardrail_blocked"

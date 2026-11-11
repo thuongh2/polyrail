@@ -26,33 +26,33 @@ Status: **have** · **partial** · **gap** (with proposed wave) · **skip** (rea
 | OpenRouter | Polyrail | Notes |
 |---|---|---|
 | Per-key credit limit | have | `monthly_budget_micros` |
-| Budget `limit_usd` + `reset_interval` daily / weekly / monthly | partial · W1 | add daily / weekly / lifetime intervals |
-| Per-member budgets (not only per key) | gap · W1 | spend tracked per user across their keys |
+| Budget `limit_usd` + `reset_interval` daily / weekly / monthly | have | policy `budget` with daily / weekly / monthly / lifetime (UTC) (D26) |
+| Per-member budgets (not only per key) | have | policy budgets count the key creator's spend across their keys (D26) |
 | Workspace budgets | gap · W3 | with workspaces |
-| Include BYOK spend in budgets toggle | gap · W1 | org providers are BYOK; flag on the policy |
+| Include BYOK spend in budgets toggle | have | `budget.include_byok` (org-provider models) |
 | Billing, invoices, payment methods | skip | business integration (Stripe) — later, optional plugin |
 
 ## Guardrails and policies
 
 | OpenRouter | Polyrail | Notes |
 |---|---|---|
-| Allowed models | have | per key; add per member / org default |
-| Allowed providers | gap · W1 | policy field, enforced in routing |
+| Allowed models | have | per key, and policy globs per org default / member / key |
+| Allowed providers | have | policy `allowed_providers`, enforced on planned targets |
 | Prompt-injection detection | have | `prompt_injection` warn / block |
 | PII redact / block | have | `mask_pii` (redact); add block mode |
-| Custom regex filters, redact or block | partial · W1 | today block only; add redact action |
-| Policy assignment: org default, per member, per key, opt-outs; intersect allowlists, OR privacy, union filters | gap · W1 | one policy engine replacing scattered settings |
-| 403 + machine-readable reason | partial | we return 400/402/403; align codes, add `policy` field |
+| Custom regex filters, redact or block | have | policy `filters` (RE2, redact / block); org `blocked_patterns` stay |
+| Policy assignment: org default, per member, per key, opt-outs; intersect allowlists, OR privacy, union filters | have | `/api/orgs/{org}/policies`, effective policy per key (D26); existing org/key settings still apply |
+| 403 + machine-readable reason | have | policy refusals: 403 `policy_*` codes with `error.policy`; older checks keep 400/402 |
 
 ## Data and privacy
 
 | OpenRouter | Polyrail | Notes |
 |---|---|---|
-| ZDR enforcement (account / guardrail / request `provider.zdr`, OR-ed) | gap · W1 | provider metadata `zdr`, `retention`, `trains_on_data`; routing filters |
-| `data_collection: deny` | gap · W1 | same metadata |
+| ZDR enforcement (account / guardrail / request `provider.zdr`, OR-ed) | have (policy) | provider `privacy` metadata; policy `require_zdr` filters targets; request-level `provider.zdr` with the request routing work |
+| `data_collection: deny` | have (policy) | policy `deny_data_collection`; request-level with the request routing work |
 | Data regions (`allowed_data_regions`: global / europe / us), regional endpoints | gap · W2 | provider `region` tag + policy; regional hostnames are a deploy concern |
 | Prompt / response logging off by default, opt-in per workspace | partial · W1 | we store metadata only; add opt-in content logging with TTL + encryption |
-| BYOK with declared ZDR | partial | org providers = BYOK; add the declaration |
+| BYOK with declared ZDR | have | org providers take the same `privacy` declaration |
 
 ## Routing (request level)
 

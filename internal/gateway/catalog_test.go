@@ -120,3 +120,20 @@ func TestSnapshotHidesModelsWithoutLiveProvider(t *testing.T) {
 		t.Fatalf("org o1 sees %d models, want 2 (a/dark own, a/live public)", n)
 	}
 }
+
+// Bifrost's OpenAI-style adapters append "/v1/..." themselves, so a base URL copied from a
+// vendor's docs with "/v1" (https://ollama.com/v1) must not become /v1/v1/chat/completions.
+func TestUpstreamBaseDropsV1(t *testing.T) {
+	for _, c := range []struct{ typ, in, want string }{
+		{"ollama", "https://ollama.com/v1", "https://ollama.com"},
+		{"ollama", "http://localhost:11434/v1/", "http://localhost:11434"},
+		{"openai", "https://api.example.com/api/v1", "https://api.example.com/api"},
+		{"vllm", "http://10.0.0.5:8000/", "http://10.0.0.5:8000"},
+		{"openai", "https://api.example.com", "https://api.example.com"},
+		{"anthropic", "https://proxy.example.com/v1", "https://proxy.example.com/v1"}, // other adapters untouched
+	} {
+		if got := UpstreamBase(c.typ, c.in); got != c.want {
+			t.Errorf("%s %q: got %q, want %q", c.typ, c.in, got, c.want)
+		}
+	}
+}

@@ -406,8 +406,8 @@ export function ProviderDialog({
               needsURL(type)
                 ? type === "databricks"
                   ? "Required: the workspace URL. Put the access token in API keys."
-                  : "Required: the server's URL. The key is optional."
-                : "Optional for hosted providers. Any OpenAI-compatible API works as type openai with its base URL."
+                  : "Required: the server's URL, e.g. http://localhost:11434 or https://ollama.com (with an API key). A trailing /v1 is dropped: the gateway adds it."
+                : "Optional for hosted providers. Any OpenAI-compatible API works as type openai with its base URL, e.g. https://ollama.com (a trailing /v1 is dropped: the gateway adds it)."
             }
           >
             {(id, hint) => (

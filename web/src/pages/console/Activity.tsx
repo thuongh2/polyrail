@@ -409,6 +409,11 @@ function ConnectTools({ firstRun }: { firstRun: boolean }) {
               API keys
             </Link>
             . Any model id from Models works; Claude Code uses the Anthropic-compatible endpoint, the others the OpenAI-compatible one.
+            More tools (Gemini CLI, Cline, Open WebUI, SDKs) and a key picker are on{" "}
+            <Link href="/connect" className="underline underline-offset-4">
+              Connect
+            </Link>
+            .
           </p>
           <CodeTabs samples={toolSamples(example)} />
         </div>

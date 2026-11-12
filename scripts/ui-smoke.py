@@ -9,7 +9,7 @@ from playwright.sync_api import sync_playwright
 
 base, email, password = sys.argv[1].rstrip("/"), sys.argv[2], sys.argv[3]
 public = ["/", "/models", "/status", "/docs"]
-console = ["activity", "logs", "playground", "keys", "credits", "models", "presets", "kbs", "providers", "workspaces", "members", "policies",
+console = ["activity", "logs", "playground", "connect", "keys", "credits", "models", "presets", "kbs", "providers", "workspaces", "members", "policies",
            "settings", "webhooks", "alerts", "observability", "sso", "audit", "account", "platform/activity", "platform/orgs", "platform/providers",
            "platform/models", "platform/users", "platform/mcp", "platform/alerts", "platform/observability", "platform/proxies", "platform/audit"]
 main_nav = ["activity", "logs", "playground", "keys", "models", "presets", "kbs", "providers", "policies", "credits", "settings", "account"]

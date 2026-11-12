@@ -75,7 +75,7 @@ jobs:
           provenance: mode=max
           sbom: true
       # GitHub attestations are not available to private repositories on a personal account.
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         if: ${{ !github.event.repository.private }}
         with:
           subject-name: ${{ env.IMAGE }}

@@ -121,16 +121,24 @@ func TestSnapshotHidesModelsWithoutLiveProvider(t *testing.T) {
 	}
 }
 
-// Bifrost's OpenAI-style adapters append "/v1/..." themselves, so a base URL copied from a
-// vendor's docs with "/v1" (https://ollama.com/v1) must not become /v1/v1/chat/completions.
-func TestUpstreamBaseDropsV1(t *testing.T) {
+// Stored base URLs are rewritten to the form each adapter expects ("" keeps the adapter default).
+func TestUpstreamBase(t *testing.T) {
 	for _, c := range []struct{ typ, in, want string }{
 		{"ollama", "https://ollama.com/v1", "https://ollama.com"},
 		{"ollama", "http://localhost:11434/v1/", "http://localhost:11434"},
 		{"openai", "https://api.example.com/api/v1", "https://api.example.com/api"},
 		{"vllm", "http://10.0.0.5:8000/", "http://10.0.0.5:8000"},
 		{"openai", "https://api.example.com", "https://api.example.com"},
-		{"anthropic", "https://proxy.example.com/v1", "https://proxy.example.com/v1"}, // other adapters untouched
+		{"anthropic", "https://proxy.example.com/v1", "https://proxy.example.com"},
+		{"cohere", "https://api.cohere.com/v2", "https://api.cohere.com"},
+		{"byteplus", "https://ark.ap-southeast.bytepluses.com/api/v3/", "https://ark.ap-southeast.bytepluses.com"},
+		{"wafer", "https://pass.wafer.ai/v1", "https://pass.wafer.ai/v1"}, // its adapter adds no /v1
+		{"wafer", "https://pass.wafer.ai", "https://pass.wafer.ai/v1"},
+		{"gemini", "https://generativelanguage.googleapis.com", "https://generativelanguage.googleapis.com/v1beta"},
+		{"gemini", "https://generativelanguage.googleapis.com/v1", "https://generativelanguage.googleapis.com/v1"},
+		{"gemini", "https://v1", "https://v1/v1beta"}, // a host is not a version
+		{"databricks", "https://adb-1.azuredatabricks.net/v1", "https://adb-1.azuredatabricks.net/v1"},
+		{"groq", "", ""}, {"gemini", "", ""}, {"wafer", "/", ""},
 	} {
 		if got := UpstreamBase(c.typ, c.in); got != c.want {
 			t.Errorf("%s %q: got %q, want %q", c.typ, c.in, got, c.want)

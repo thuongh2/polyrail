@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -293,15 +294,46 @@ func (a *account) GetKeysForProvider(_ context.Context, k schemas.ModelProvider)
 	return enabled, nil
 }
 
-// v1Appending are the provider types whose Bifrost adapter appends "/v1/..." to the base URL.
-var v1Appending = map[string]bool{"openai": true, "ollama": true, "vllm": true, "sgl": true}
+// How each Bifrost v1.15.2 adapter joins the base URL and its request paths. Vendor docs and users
+// write the same host in several forms (https://host, https://host/v1), and the adapters disagree
+// on which they expect, so UpstreamBase rewrites the stored URL to the adapter's form.
+// TestUpstreamBaseContract checks every entry against the real adapters; re-run it on a Bifrost
+// upgrade and add an entry with every new provider type.
+var (
+	// addsV1: the adapter appends "/v1/..." (perplexity and deepseek chat append "/chat/completions",
+	// which their APIs serve at the root), so a trailing "/v1" is dropped.
+	addsV1 = map[string]bool{"openai": true, "anthropic": true, "mistral": true, "groq": true, "ollama": true,
+		"cerebras": true, "perplexity": true, "openrouter": true, "nebius": true, "parasail": true, "sgl": true,
+		"elevenlabs": true, "deepseek": true, "xai": true, "fireworks": true, "huggingface": true, "replicate": true,
+		"vllm": true, "minimax": true, "sarvam": true, "typesafe": true, "opencode-go": true, "opencode-zen": true,
+		"runway": true}
+	// wantsVersion: the adapter appends unversioned paths ("/chat/completions", "/models/..."), so
+	// the base must end in an API version; this one is added when the URL has none.
+	wantsVersion  = map[string]string{"wafer": "/v1", "runware": "/v1", "gemini": "/v1beta"}
+	versionSuffix = regexp.MustCompile(`[^/]/v\d+(alpha|beta)?$`)
+)
 
-// UpstreamBase is the base URL handed to Bifrost: without a trailing slash and, for adapters that
-// add "/v1/..." themselves, without a trailing "/v1" — vendor docs list base URLs as
-// "https://host/v1", which would otherwise become /v1/v1/chat/completions (a 404 on every key).
+// BaseRuleKnown reports whether UpstreamBase knows how type t's adapter uses a base URL.
+// databricks takes a workspace host and normalizes it itself.
+func BaseRuleKnown(t string) bool {
+	return addsV1[t] || wantsVersion[t] != "" || t == "cohere" || t == "byteplus" || t == "databricks"
+}
+
+// UpstreamBase is the base URL handed to Bifrost: the stored one without a trailing slash, in the
+// form the type's adapter expects ("" stays "", the adapter's default host).
 func UpstreamBase(t, u string) string {
 	u = strings.TrimRight(u, "/")
-	if v1Appending[t] || OpenAICompatible[t] != "" {
+	switch {
+	case u == "":
+	case wantsVersion[t] != "":
+		if !versionSuffix.MatchString(u) {
+			u += wantsVersion[t]
+		}
+	case t == "cohere": // appends /v1/... and /v2/chat
+		u = strings.TrimSuffix(strings.TrimSuffix(u, "/v2"), "/v1")
+	case t == "byteplus": // appends /api/v3/...
+		u = strings.TrimSuffix(u, "/api/v3")
+	case addsV1[t]:
 		u = strings.TrimSuffix(u, "/v1")
 	}
 	return u

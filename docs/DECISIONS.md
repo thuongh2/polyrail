@@ -474,3 +474,21 @@ requests (chat, Responses, Anthropic, GenAI). Note: OpenCode Go is a single-memb
 coding agents; serving many users through it may break its terms — use OpenCode Zen or Go Teams.
 Temporary: Bifrost core fixed this itself in maximhq/bifrost#7052 (main, 2026-11-07), not yet in a
 tagged release; remove `internal/gateway/opencode.go` on the first core release that contains it.
+
+**D36 Provider config contract with Bifrost.** Owner report: every newly configured provider cost
+manual debugging. Three causes, all at the seam where a stored provider becomes Bifrost config.
+(1) Base URLs: adapters disagree on the form they expect (most append `/v1/...`; `wafer` and
+`runware` append `/chat/completions` to a base ending in `/v1`; `gemini` needs `/v1beta`; `byteplus`
+appends `/api/v3/...`; `cohere` appends `/v1/...` and `/v2/chat`), and the gateway knew only four
+types, so `https://api.anthropic.com/v1` called `/v1/v1/messages` and the `/v1` rule from ffdf0c4
+broke a platform `wafer` URL. `gateway.UpstreamBase` now has a rule per type. (2) Bifrost builds a
+provider once: the gateway restarted it only when a loaded provider's network fields changed, so a
+first key added to a keyless provider was never sent (`IsKeyLess` stayed true), a provider edited
+while disabled came back with its old URL, and a provider created after another of the same
+platform type was deleted inherited the deleted one's config. Reload now compares what each
+Bifrost provider key was built with (`bifrostConfig`) and restarts on any difference. (3) A key
+test without a model passed on `fireworks`, `byteplus` and `replicate` without any request to the
+vendor; it now asks for a model. Guard: `TestUpstreamBaseContract` drives the real adapters for
+every type and URL form, and `TestSupportedTypesHaveBaseRule` fails when a type is added without a
+rule. If wrong: a vendor whose API lives under a path the rule rewrites needs an exception in
+`UpstreamBase`; re-run the contract test on every Bifrost upgrade.

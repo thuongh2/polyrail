@@ -293,9 +293,24 @@ func (a *account) GetKeysForProvider(_ context.Context, k schemas.ModelProvider)
 	return enabled, nil
 }
 
+// v1Appending are the provider types whose Bifrost adapter appends "/v1/..." to the base URL.
+var v1Appending = map[string]bool{"openai": true, "ollama": true, "vllm": true, "sgl": true}
+
+// UpstreamBase is the base URL handed to Bifrost: without a trailing slash and, for adapters that
+// add "/v1/..." themselves, without a trailing "/v1" — vendor docs list base URLs as
+// "https://host/v1", which would otherwise become /v1/v1/chat/completions (a 404 on every key).
+func UpstreamBase(t, u string) string {
+	u = strings.TrimRight(u, "/")
+	if v1Appending[t] || OpenAICompatible[t] != "" {
+		u = strings.TrimSuffix(u, "/v1")
+	}
+	return u
+}
+
 // withServerURL sets the per-key server URL Bifrost requires for Ollama, SGLang and vLLM to the
 // provider's base URL (the only place the platform configures it).
 func withServerURL(p store.Provider, k schemas.Key) schemas.Key {
+	p.BaseURL = UpstreamBase(p.Type, p.BaseURL)
 	switch p.Type {
 	case "vllm":
 		k.VLLMKeyConfig = &schemas.VLLMKeyConfig{URL: secret(p.BaseURL)}
@@ -390,7 +405,7 @@ func (a *account) GetConfigForProvider(k schemas.ModelProvider) (*schemas.Provid
 	}
 	cfg := &schemas.ProviderConfig{
 		NetworkConfig: schemas.NetworkConfig{
-			BaseURL:                        p.BaseURL,
+			BaseURL:                        UpstreamBase(p.Type, p.BaseURL),
 			DefaultRequestTimeoutInSeconds: timeout,
 			MaxRetries:                     1,
 			RetryBackoffInitial:            200 * time.Millisecond,

@@ -82,3 +82,29 @@ func TestAddProviderKeysDedupeAndStatusDefaults(t *testing.T) {
 		t.Fatalf("stored provider: %s", raw)
 	}
 }
+
+// A keyless catalog provider is off until it has keys: its first keys enable it, while a provider
+// an operator switched off with keys in place stays off when more keys are added.
+func TestAddProviderKeysEnablesKeylessProvider(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.CreateKeylessProvider(ctx, &Provider{ID: "seed", Name: "seed", Type: "openai"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddProviderKeys(ctx, "", "seed", []ProviderKey{{Value: "key-one-000000"}}); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := s.GetProvider(ctx, "seed"); !p.Enabled {
+		t.Fatal("first keys must enable a keyless provider")
+	}
+	off := &Provider{Name: "off", Type: "openai", Keys: []ProviderKey{{Value: "key-two-000000"}}}
+	if err := s.PutProvider(ctx, off); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddProviderKeys(ctx, "", off.ID, []ProviderKey{{Value: "key-three-0000"}}); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := s.GetProvider(ctx, off.ID); p.Enabled {
+		t.Fatal("a disabled provider with keys stays disabled")
+	}
+}

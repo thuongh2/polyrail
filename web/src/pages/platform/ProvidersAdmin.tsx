@@ -295,7 +295,8 @@ export function ProviderDialog({
   const [baseURL, setBaseURL] = useState(provider?.base_url ?? "");
   const [keys, setKeys] = useState("");
   const [timeout, setTimeoutS] = useState(provider?.timeout_seconds ? String(provider.timeout_seconds) : "");
-  const [enabled, setEnabled] = useState(provider?.enabled ?? true);
+  // New providers, and keyless ones (catalog seeds stay off until they get keys), start enabled.
+  const [enabled, setEnabled] = useState(!provider?.keys?.length || provider.enabled);
   const stored = provider?.keys?.length ?? 0;
   // Stored cloud config only applies while the type is unchanged.
   const sameType = !!provider && provider.type === type;

@@ -1005,6 +1005,9 @@ func (s *Store) AddProviderKeys(ctx context.Context, org, id string, keys []Prov
 		if p.OrgID != org {
 			return ErrNotFound
 		}
+		// A provider without keys (a catalog seed, D19) is disabled because it cannot serve;
+		// its first keys switch it on. One that already had keys keeps its state.
+		firstKeys := len(p.Keys) == 0
 		seen := map[string]bool{}
 		for _, k := range p.Keys {
 			if k.Sealed == "" {
@@ -1030,6 +1033,9 @@ func (s *Store) AddProviderKeys(ctx context.Context, org, id string, keys []Prov
 			k.Value = ""
 			p.Keys = append(p.Keys, k)
 			added = append(added, k.Redacted())
+		}
+		if firstKeys && len(added) > 0 {
+			p.Enabled = true
 		}
 		return putJSON(tx, "prov/"+p.ID, p)
 	})

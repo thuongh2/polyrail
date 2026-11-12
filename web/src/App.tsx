@@ -17,6 +17,7 @@ const ConsoleLayout = lazy(() => import("@/components/layout/ConsoleLayout").the
 const Activity = lazy(() => import("@/pages/console/Activity"));
 const Logs = lazy(() => import("@/pages/console/Logs"));
 const Playground = lazy(() => import("@/pages/console/Playground"));
+const Connect = lazy(() => import("@/pages/console/Connect"));
 const Keys = lazy(() => import("@/pages/console/Keys"));
 const Credits = lazy(() => import("@/pages/console/Credits"));
 const Members = lazy(() => import("@/pages/console/Members"));
@@ -71,6 +72,7 @@ export function App() {
                       <Route path="/activity" component={page(Activity, "org")} />
                       <Route path="/logs" component={page(Logs)} />
                       <Route path="/playground" component={page(Playground)} />
+                      <Route path="/connect" component={page(Connect)} />
                       <Route path="/keys" component={page(Keys)} />
                       <Route path="/credits" component={page(Credits)} />
                       <Route path="/models" component={page(ModelsAdmin, "org")} />

@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Bell, BookOpen, Boxes, Building2, CircleUserRound, CreditCard, FileText, FolderKanban, KeyRound,
+  Activity, BarChart3, Bell, Cable, BookOpen, Boxes, Building2, CircleUserRound, CreditCard, FileText, FolderKanban, KeyRound,
   LockKeyhole, MessageSquare, Network, Plug, Scale, ScrollText, Server, Settings, ShieldCheck, SlidersHorizontal, Telescope,
   UserRound, Users, Webhook, Wrench,
 } from "lucide-react";
@@ -27,6 +27,7 @@ export const mainGroups: Group[] = [
       { href: "/app/activity", label: "Activity", icon: BarChart3, keywords: "usage dashboard spend" },
       { href: "/app/logs", label: "Logs", icon: ScrollText, keywords: "requests" },
       { href: "/app/playground", label: "Playground", icon: MessageSquare, keywords: "chat try" },
+      { href: "/app/connect", label: "Connect", icon: Cable, keywords: "codex claude code opencode gemini cli cline open webui setup endpoint" },
     ],
   },
   {

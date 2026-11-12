@@ -225,7 +225,11 @@ Upgrading a running deployment from a v1.2.38 build:
   a check that the committed `internal/web/dist` matches a fresh `npm run build` (Node 22), and a
   multi-arch Docker build without pushing.
 - `.github/workflows/release.yml` — pushes `ghcr.io/<owner>/polyrail` for `linux/amd64` and
-  `linux/arm64` with SBOM, max provenance and a GitHub build attestation:
+  `linux/arm64` with SBOM, max provenance and a GitHub build attestation (the attestation step is
+  skipped in private repositories, where GitHub does not offer it on personal accounts). Each push
+  publishes two variants: the light default, and `-full` built with every optional build tag
+  (`TAGS=alertsfull`, +16 MB; docs/CONFIG.md "Build tags"), tagged with a `-full` suffix
+  (`edge-full`, `1.2.3-full`, `latest-full`):
   - push to the default branch → tags `edge` and `sha-<short>`;
   - tag `v1.2.3` → `1.2.3`, `1.2`, `1` (not for `v0.x`) and `latest`, plus a GitHub release with
     `polyrail-<os>-<arch>` binaries and `SHA256SUMS`.

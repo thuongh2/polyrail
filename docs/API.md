@@ -945,6 +945,12 @@ vendors `groq`, `deepseek`, `xai`, `mistral`, `openrouter`, `fireworks`, `cerebr
 `nebius`, `parasail`, `minimax`, `sarvam`, `wafer`, `opencode-go`, `opencode-zen`, which an org
 provider runs through Bifrost's OpenAI engine at the vendor's fixed API URL (`base_url` is refused,
 400; platform providers of these types keep Bifrost's native adapter and may override `base_url`).
+`base_url` may be written with or without the API version: the gateway hands each Bifrost adapter the
+form it expects. A trailing `/v1` is dropped for the types whose adapter adds it (`openai`,
+`anthropic`, `ollama`, `vllm`, `sgl`, `groq`, `mistral` and the other OpenAI-style types; `/v1` or
+`/v2` for `cohere`, `/api/v3` for `byteplus`), and a missing version is added for the types whose
+adapter adds none (`/v1` for `wafer` and `runware`, `/v1beta` for `gemini`). Other paths are kept:
+`https://host/proxy/v1` for type `openai` calls `https://host/proxy/v1/chat/completions`.
 Fireworks has no model list endpoint, so discovery fails for it: add its models by hand. Not offered: `github-copilot`
 (it signs in with a personal GitHub Copilot subscription through an OAuth device flow; using a
 consumer subscription as a shared API backend is outside GitHub's terms).

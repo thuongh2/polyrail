@@ -72,7 +72,10 @@ stats). Retained like provider health rollups.
   per-id results (`clear` resets cooldown/quarantine).
 - `POST …/providers/{id}/keys/{kid}/test` `{model?}` → `{ok, status, latency_ms, error}` — a list
   models call (or a 1-token chat on `model`) pinned to that key; error text sanitized for tenants.
-  Success clears quarantine/cooldown.
+  Success clears quarantine/cooldown. Platform `fireworks`, `byteplus` and `replicate` have no model
+  list the vendor answers (Bifrost builds it from the key's config), so without `model` the test
+  returns `ok: false` with "test this key with a model" instead of a pass that proves nothing; a
+  bulk `test` reports the same for their keys.
 - `GET …/providers/{id}/keys/{kid}/stats?hours=72` → `[{hour, requests, errors, avg_latency_ms,
   in_tokens, out_tokens}]` oldest first.
 Cloud types (azure/bedrock/vertex…) keep their key forms; the list shows them with `masked` of the

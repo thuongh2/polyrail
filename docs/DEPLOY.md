@@ -224,7 +224,7 @@ Upgrading a running deployment from a v1.2.38 build:
   against Postgres 16 and Redis 7 service containers, an `alertsfull` build, the web type check plus
   a check that the committed `internal/web/dist` matches a fresh `npm run build` (Node 22), and a
   multi-arch Docker build without pushing.
-- `.github/workflows/release.yml` — pushes `ghcr.io/<owner>/polyrail` for `linux/amd64` and
+- `.github/workflows/release.yml` — pushes `ghcr.io/thuongh2/polyrail` for `linux/amd64` and
   `linux/arm64` with SBOM, max provenance and a GitHub build attestation (the attestation step is
   skipped in private repositories, where GitHub does not offer it on personal accounts). Each push
   publishes two variants: the light default, and `-full` built with every optional build tag
@@ -243,4 +243,4 @@ Upgrading a running deployment from a v1.2.38 build:
   modules and npm packages.
 
 Release: `git tag v0.1.0 && git push origin v0.1.0`. Run: `docker run -p 8080:8080 -v polyrail:/data
--e MASTER_KEY=… ghcr.io/<owner>/polyrail:latest`.
+-e MASTER_KEY=… ghcr.io/thuongh2/polyrail:latest`.

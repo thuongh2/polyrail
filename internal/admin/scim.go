@@ -44,7 +44,7 @@ var scimMu sync.Mutex
 func (a *API) newSCIMServer() (http.Handler, error) {
 	return scim.NewServer(&scim.ServerArgs{
 		ServiceProviderConfig: &scim.ServiceProviderConfig{
-			DocumentationURI: optional.NewString("https://github.com/polyrail/polyrail/blob/main/docs/API.md#scim-20"),
+			DocumentationURI: optional.NewString("https://github.com/thuongh2/polyrail/blob/master/docs/API.md#scim-20"),
 			AuthenticationSchemes: []scim.AuthenticationScheme{{Type: scim.AuthenticationTypeOauthBearerToken,
 				Name: "Bearer token", Description: "Per-organization SCIM token from the SSO settings", Primary: true}},
 			MaxResults: 100, SupportFiltering: true, SupportPatch: true,

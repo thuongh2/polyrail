@@ -4,7 +4,7 @@
 services:
   polyrail:
     build: ..
-    image: polyrail:latest
+    image: ghcr.io/thuongh2/polyrail:latest
     restart: unless-stopped
     env_file: .env
     environment:

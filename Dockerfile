@@ -17,7 +17,7 @@ ARG TARGETOS TARGETARCH
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -tags "$TAGS" -ldflags="-s -w -X main.version=${VERSION}" -o /out/polyrail ./cmd/polyrail
 
 FROM gcr.io/distroless/static-debian12:nonroot
-LABEL org.opencontainers.image.source="https://github.com/polyrail/polyrail" \
+LABEL org.opencontainers.image.source="https://github.com/thuongh2/polyrail" \
       org.opencontainers.image.description="Polyrail: one API for every model. Self-hosted, light, open." \
       org.opencontainers.image.licenses="Apache-2.0"
 COPY --from=build /out/polyrail /polyrail

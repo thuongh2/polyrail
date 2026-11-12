@@ -2,6 +2,7 @@ name: Release
 
 # Pushes the image to GHCR on every push to the default branch (tags: edge, sha-<short>) and on
 # version tags v1.2.3 (tags: 1.2.3, 1.2, 1, latest). Version tags also publish binaries.
+# Two variants per push: the light default, and "-full" (every optional build tag, e.g. edge-full).
 on:
   push:
     branches: [main, master]
@@ -13,8 +14,18 @@ permissions:
 
 jobs:
   image:
-    name: Build and push ghcr.io image
+    name: Build and push ghcr.io image (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: light     # default build, smallest image
+            tags: ""
+            suffix: ""
+          - variant: full      # all optional build tags (docs/CONFIG.md "Build tags")
+            tags: alertsfull
+            suffix: -full
     permissions:
       contents: read
       packages: write        # push to ghcr.io with GITHUB_TOKEN
@@ -38,6 +49,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
+            suffix=${{ matrix.suffix }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -53,12 +67,16 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ steps.version.outputs.value }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+            TAGS=${{ matrix.tags }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
           provenance: mode=max
           sbom: true
+      # GitHub attestations are not available to private repositories on a personal account.
       - uses: actions/attest-build-provenance@v2
+        if: ${{ !github.event.repository.private }}
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}

@@ -69,7 +69,7 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
   - Credits/budgets: stored spend + this node's unflushed spend, refreshed each 1 s flush (D7).
 - D4 HTTP: stdlib `net/http` (Go 1.22 patterns). UI: plain HTML/CSS/JS embedded via `go:embed`, no build step.
 - D5 Provider secrets encrypted at rest with AES-GCM using `MASTER_KEY`. API keys stored as SHA-256 hash only.
-- D6–D35 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding, UI, cloud providers, routing strategies, guardrails, idempotency + cost header, webhooks, semantic cache, models.dev catalog seed + visibility rule, org OpenAI-compatible types, knowledge bases / gateway RAG, upstream proxy, proxy pools, rename to Polyrail, provider key status + alert channels, policy engine, request routing + presets, key identity/exports/content logging, enterprise identity: domains/SAML/SCIM, data regions + OTLP trace export, workspaces, prompt cache pricing, Playground Markdown renderer, budgets count BYOK by default, OpenCode session header).
+- D6–D36 in docs/DECISIONS.md (KV seam, delta-flush budgets, Prometheus, MCP grants, same-owner routing, rounding, UI, cloud providers, routing strategies, guardrails, idempotency + cost header, webhooks, semantic cache, models.dev catalog seed + visibility rule, org OpenAI-compatible types, knowledge bases / gateway RAG, upstream proxy, proxy pools, rename to Polyrail, provider key status + alert channels, policy engine, request routing + presets, key identity/exports/content logging, enterprise identity: domains/SAML/SCIM, data regions + OTLP trace export, workspaces, prompt cache pricing, Playground Markdown renderer, budgets count BYOK by default, OpenCode session header, provider config contract with Bifrost).
 
 ## Lessons (do not repeat)
 
@@ -77,6 +77,9 @@ A feature is *done* only when: `make check` passes (vet + tests + race), docs up
 - Every admin mutation that affects keys/orgs must call `G.InvalidateAuth()`.
 - Tenant-controlled URLs: validate at save time AND at request time; never echo upstream bodies to tenants.
 - Tenant IdPs (SAML/SCIM) may only vouch for emails on domains their org verified, never for operators (D29).
+- A new provider type or a Bifrost upgrade: add its base URL rule (`gateway.UpstreamBase`) and a case in
+  `TestUpstreamBaseContract`, which drives the real adapter; never guess how an adapter joins URL and path (D36).
+- Bifrost builds a provider once: anything that feeds `GetConfigForProvider` must be in `bifrostConfig` (D36).
 - Docs must describe what the code does; the slop reviewer checks this.
 - No docker daemon in the sandbox: Dockerfile/compose are written but not built here.
 - UI agents working in parallel must not run `vite build` (shared dist) — verify with tsc + dev server.

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -106,6 +107,37 @@ type Gateway struct {
 	idem  idemStore
 	pools *poolForwarder
 	now   func() time.Time // policy budget clock; nil = time.Now (tests set it)
+
+	// bfConfig is the provider config each Bifrost provider key was last given (bifrostConfig).
+	// Bifrost builds a provider once and keeps it, so Reload restarts the ones whose config changed.
+	// shortcut: entries of deleted providers stay (a few bytes each); prune if providers churn by the million.
+	bfMu     sync.Mutex
+	bfConfig map[schemas.ModelProvider]string
+}
+
+// bifrostConfig fingerprints what GetConfigForProvider derives from p: Bifrost reads it only
+// when it builds the provider (keys are read per request and are not part of it).
+func bifrostConfig(p store.Provider) string {
+	return fmt.Sprintf("%q", []any{p.Type, p.OrgID, p.BaseURL, p.TimeoutSeconds, proxyOf(p), p.NoProxy, p.ProxyPool, len(p.Keys) == 0})
+}
+
+// syncBifrost restarts the Bifrost providers whose config differs from the one they were built
+// with: an edit, a first key on a keyless provider, a provider changed while disabled, or a new
+// provider that took over a deleted one's type slot.
+func (g *Gateway) syncBifrost() {
+	g.bfMu.Lock()
+	defer g.bfMu.Unlock()
+	snap := g.snap.Load() // the one Bifrost reads, whichever concurrent Reload stored it
+	for k, id := range snap.byBifrost {
+		cfg := bifrostConfig(snap.Providers[id])
+		if old, seen := g.bfConfig[k]; seen && old != cfg {
+			if err := g.BF.UpdateProvider(k); err != nil {
+				slog.Error("provider update failed", "provider", id, "err", err)
+				continue // retried on the next catalog change
+			}
+		}
+		g.bfConfig[k] = cfg
+	}
 }
 
 type principal struct {
@@ -142,6 +174,10 @@ func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipe
 		return nil, err
 	}
 	g.snap.Store(snap)
+	g.bfConfig = map[schemas.ModelProvider]string{}
+	for k, id := range snap.byBifrost {
+		g.bfConfig[k] = bifrostConfig(snap.Providers[id])
+	}
 	mcpCfg, err := g.mcpConfig(ctx)
 	if err != nil {
 		return nil, err
@@ -198,20 +234,9 @@ func (g *Gateway) Reload(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	prev := g.snap.Swap(next)
+	g.snap.Store(next)
 	g.auth.Clear() // key revocations and org changes take effect now
-	for id, p := range next.Providers {
-		old, ok := prev.Providers[id]
-		if ok && old.BaseURL == p.BaseURL && old.TimeoutSeconds == p.TimeoutSeconds && proxyOf(old) == proxyOf(p) && old.NoProxy == p.NoProxy &&
-			old.ProxyPool == p.ProxyPool {
-			continue // keys are read per request; only network config needs a provider restart
-		}
-		if ok {
-			if err := g.BF.UpdateProvider(BifrostKey(p)); err != nil {
-				slog.Error("provider update failed", "provider", id, "err", err)
-			}
-		}
-	}
+	g.syncBifrost()
 	return g.syncMCP(ctx)
 }
 

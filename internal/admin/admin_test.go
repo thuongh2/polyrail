@@ -868,3 +868,14 @@ func TestUsageReportHours(t *testing.T) {
 	}
 	expect(t, f.do(t, "owner", "GET", "/api/orgs/"+f.orgA.ID+"/usage?hours=100", ""), 400, "hours over 72")
 }
+
+// Every provider type that takes a base_url needs a rule for how its Bifrost adapter joins it
+// (gateway.UpstreamBase); a type added without one would send whatever the admin typed.
+func TestSupportedTypesHaveBaseRule(t *testing.T) {
+	for typ := range supportedTypes {
+		cloud := typ == "azure" || awsTypes[typ] || typ == "vertex" || typ == "cloudflare" // base_url rejected
+		if !cloud && !gateway.BaseRuleKnown(typ) {
+			t.Errorf("%s: add a base URL rule in gateway/catalog.go and a case in TestUpstreamBaseContract", typ)
+		}
+	}
+}

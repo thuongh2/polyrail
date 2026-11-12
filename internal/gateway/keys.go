@@ -289,6 +289,10 @@ func (g *Gateway) settleKeys(bctx *schemas.BifrostContext, snap *Snapshot, ok bo
 	}
 }
 
+// configOnlyList are the types whose Bifrost v1.15.2 adapter lists models from key config alone
+// (no upstream request; replicate only calls out for deployment keys, which this schema lacks).
+var configOnlyList = map[string]bool{"fireworks": true, "byteplus": true, "replicate": true}
+
 // TestKeyResult is the outcome of a pinned key test.
 type TestKeyResult struct {
 	OK        bool   `json:"ok"`
@@ -313,6 +317,11 @@ func (g *Gateway) TestKey(ctx context.Context, pid, kid, model string) (TestKeyR
 	}
 	if p.OrgID != "" && !tenantReachable(p, g.cfg.AllowPrivateURLs, true) {
 		return TestKeyResult{Status: 502, Error: "provider host is not reachable from this gateway"}, nil
+	}
+	if model == "" && configOnlyList[p.Type] && !orgCompatible(p) { // org fireworks lists live on the openai base
+		// Bifrost answers these types' model list from the key's config without calling the
+		// vendor, so it would report a wrong key or URL as working.
+		return TestKeyResult{Error: p.Type + " has no model list to call: test this key with a model"}, nil
 	}
 	w := p.Keys[i].Weight
 	if w <= 0 {

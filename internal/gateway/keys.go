@@ -350,3 +350,27 @@ func (g *Gateway) TestKey(ctx context.Context, pid, kid, model string) (TestKeyR
 	}
 	return res, nil
 }
+
+// explainKeys adds what the provider said to Bifrost's "all configured keys returned permanent
+// per-key errors": core collapses every key failing with an account-level error (401/402/403)
+// into that 502 and keeps the reasons only in the attempt trail, which left operators guessing
+// (a wrong key, or a plan without the model). Tenants on private routes still get only the status
+// (fromBifrost), and secrets in the reason are redacted there too.
+func explainKeys(bctx *schemas.BifrostContext, be *schemas.BifrostError) {
+	if be == nil || be.ExtraFields.ErrorType != schemas.ErrorTypeProviderCredentialsExhausted || be.Error == nil || bctx == nil {
+		return
+	}
+	trail, _ := bctx.Value(schemas.BifrostContextKeyAttemptTrail).([]schemas.KeyAttemptRecord)
+	for i := len(trail) - 1; i >= 0; i-- {
+		a := trail[i]
+		if a.StatusCode == nil {
+			continue
+		}
+		reason := ""
+		if a.FailReason != nil {
+			reason = ": " + *a.FailReason
+		}
+		be.Error.Message = fmt.Sprintf("the provider refused every key; last refusal was HTTP %d%s (check the API key and that the account's plan includes this model)", *a.StatusCode, reason)
+		return
+	}
+}

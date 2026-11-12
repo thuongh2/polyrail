@@ -81,6 +81,7 @@ func (g *Gateway) guardIn(w http.ResponseWriter, p *principal, m store.Model, in
 
 // upstreamFailed settles, records and writes a Bifrost error.
 func (g *Gateway) upstreamFailed(w http.ResponseWriter, bctx *schemas.BifrostContext, snap *Snapshot, p *principal, m store.Model, ts []store.Target, berr *schemas.BifrostError, start time.Time) {
+	explainKeys(bctx, berr)
 	ae := fromBifrost(berr, privateRoute(m, ts))
 	g.settleErr(bctx, snap, m, ts, berr, start)
 	g.record(p, m, store.RequestLog{Status: ae.status, Error: ae.msg}, start)
@@ -498,6 +499,7 @@ func (g *Gateway) pump(w http.ResponseWriter, bctx *schemas.BifrostContext, snap
 		var payload any
 		hasUsage := false
 		if c.BifrostError != nil {
+			explainKeys(bctx, c.BifrostError)
 			ae := fromBifrost(c.BifrostError, privateRoute(m, ts))
 			l.Status, l.Error = ae.status, ae.msg
 			event, payload = errorBody(w, ae)

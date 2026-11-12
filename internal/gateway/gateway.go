@@ -635,6 +635,7 @@ func (g *Gateway) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	done := g.rt.begin(ts[0])
 	resp, berr := g.BF.ChatCompletionRequest(bctx, breq)
+	explainKeys(bctx, berr)
 	done()
 	if berr != nil {
 		ae := fromBifrost(berr, privateRoute(m, ts))
@@ -684,6 +685,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 	snap := g.snap.Load()
 	defer g.rt.begin(ts[0])()
 	ch, berr := g.BF.ChatCompletionStreamRequest(ctx, breq)
+	explainKeys(ctx, berr)
 	if berr != nil {
 		ae := fromBifrost(berr, privateRoute(m, ts))
 		g.settleErr(ctx, snap, m, ts, berr, start)
@@ -706,6 +708,7 @@ func (g *Gateway) stream(w http.ResponseWriter, ctx *schemas.BifrostContext, p *
 		}
 		var data []byte
 		if chunk.BifrostError != nil {
+			explainKeys(ctx, chunk.BifrostError)
 			ae := fromBifrost(chunk.BifrostError, privateRoute(m, ts))
 			l.Status, l.Error = ae.status, ae.msg
 			data, _ = json.Marshal(map[string]any{"error": map[string]any{"message": ae.msg, "type": ae.typ, "code": ae.code}})
@@ -793,6 +796,7 @@ func (g *Gateway) Embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 	breq.Provider, breq.Model, breq.Fallbacks = bifrostTargets(snap, ts)
 	resp, berr := g.BF.EmbeddingRequest(bctx, breq)
+	explainKeys(bctx, berr)
 	if berr != nil {
 		ae := fromBifrost(berr, privateRoute(m, ts))
 		g.settleErr(bctx, snap, m, ts, berr, start)

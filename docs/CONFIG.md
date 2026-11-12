@@ -39,7 +39,7 @@ All configuration is by environment variable. Only `MASTER_KEY` is required.
 | `KB_MAX_DOC_MB` | `10` | Largest knowledge-base document upload. |
 | `USAGE_QUEUE` | `10000` | Request-log rows buffered before rows are dropped (billing counters are never dropped). |
 | `METRICS_TOKEN` | – | If set, `/metrics` requires `Authorization: Bearer <token>`. |
-| `LOG_LEVEL` | `info` | `debug` for more. |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. `debug` adds one line per HTTP request (method, path without query string, status, bytes, ms, client; never headers or bodies) and Bifrost core's debug log. |
 | `OIDC_ISSUER` | – | Enables SSO, e.g. `https://accounts.google.com`. Register `<PUBLIC_URL>/api/auth/oidc/callback` as the redirect URI. |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – | OIDC client credentials. |
 | `OIDC_ALLOWED_DOMAINS` | – | Comma-separated email domains allowed to sign in. Empty = any. |

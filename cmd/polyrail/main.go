@@ -86,11 +86,11 @@ func main() {
 		}
 		return
 	}
-	level := slog.LevelInfo
-	if env("LOG_LEVEL", "info") == "debug" {
-		level = slog.LevelDebug
-	}
+	level, lerr := logLevel(env("LOG_LEVEL", "info"))
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+	if lerr != nil {
+		slog.Warn("LOG_LEVEL not understood, using info", "err", lerr)
+	}
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -178,6 +178,7 @@ func run() error {
 		Buffer:       envInt("PROVIDER_BUFFER", 256),
 		CacheMB:      envInt("RESPONSE_CACHE_MB", 64),
 		PollInterval: 2 * time.Second,
+		DebugLog:     slog.Default().Enabled(context.Background(), slog.LevelDebug),
 
 		AllowPrivateURLs: allowPrivate,
 		Proxy:            proxy,
@@ -312,7 +313,7 @@ func run() error {
 
 	go retention(ctx, s, acfg.LogRetentionDays)
 
-	srv := &http.Server{Addr: env("LISTEN_ADDR", ":8080"), Handler: withCORS(mux),
+	srv := &http.Server{Addr: env("LISTEN_ADDR", ":8080"), Handler: withAccessLog(withCORS(mux)),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	// No global WriteTimeout: streams can run for minutes; each stream write sets its own deadline.
 	errc := make(chan error, 1)

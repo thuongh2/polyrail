@@ -52,6 +52,8 @@ type Config struct {
 	// RegionLock (REGION_LOCK, normalized) routes every request only to providers of that data
 	// region, for a regional deployment; "" = no lock.
 	RegionLock string
+	// DebugLog (LOG_LEVEL=debug) also turns on Bifrost core's debug log; otherwise it logs warnings.
+	DebugLog bool
 }
 
 // Events receives org events for webhooks (internal/webhook) and alert channels (internal/alert).
@@ -195,7 +197,7 @@ func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipe
 		}}
 	g.BF, err = bifrost.Init(ctx, schemas.BifrostConfig{
 		Account:   g.acct,
-		Logger:    bifrost.NewDefaultLogger(schemas.LogLevelWarn),
+		Logger:    bifrost.NewDefaultLogger(bifrostLevel(cfg.DebugLog)),
 		MCPConfig: mcpCfg,
 	})
 	if err != nil {
@@ -203,6 +205,13 @@ func New(ctx context.Context, s *store.Store, lim limits.Limiter, up *usage.Pipe
 	}
 	go g.watch(ctx)
 	return g, nil
+}
+
+func bifrostLevel(debug bool) schemas.LogLevel {
+	if debug {
+		return schemas.LogLevelDebug
+	}
+	return schemas.LogLevelWarn
 }
 
 // Snapshot returns the current catalog.

@@ -16,7 +16,11 @@ import { useAsync, useQueryParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 import { Link } from "wouter";
 
-const PERIODS = ["7", "30", "90"];
+// "1h"/"3h"/"6h" read hourly rollups (?hours=); the rest are days.
+const PERIODS = ["1h", "3h", "6h", "7", "30", "90"];
+const periodLabel = (p: string) => (p.endsWith("h") ? `Last ${p.slice(0, -1)} hour${p === "1h" ? "" : "s"}` : `Last ${p} days`);
+/** Query for a period: hourly periods ask for hours, and the end-user breakdown (daily only) for the day. */
+const periodQuery = (p: string, daily = false) => (p.endsWith("h") ? (daily ? "days=1" : `hours=${p.slice(0, -1)}`) : `days=${p}`);
 type Metric = "spend" | "requests" | "tokens";
 
 const errRate = (r: UsageRow) => (r.requests ? r.errors / r.requests : null);
@@ -31,20 +35,20 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
   const [metric, setMetric] = useQueryParam("metric", "spend") as [Metric, (v: string) => void];
   const period = PERIODS.includes(days) ? days : "30";
 
-  const usage = useAsync(() => get<UsageReport>(inWS(`${base}/usage?days=${period}`)), [base, period]);
+  const usage = useAsync(() => get<UsageReport>(inWS(`${base}/usage?${periodQuery(period)}`)), [base, period]);
   const orgInfo = useAsync(() => (platform || !base ? Promise.resolve(null) : get<Org>(base)), [base, platform]);
   const keys = useAsync(() => (platform || !base ? Promise.resolve([] as APIKey[]) : get<APIKey[]>(inWS(`${base}/keys`))), [base, platform]);
   // Model rows are org-wide rollups, so one workspace starts on its keys.
   const [by, setBy] = useQueryParam("by", ws ? "key" : "model");
   const breakdown = platform ? "model" : by;
   const endUsers = useAsync(
-    () => (breakdown === "end_user" && base ? get<UsageReport>(`${base}/usage?days=${period}&group=end_user`).then((r) => r.end_users ?? []) : Promise.resolve(null)),
+    () => (breakdown === "end_user" && base ? get<UsageReport>(`${base}/usage?${periodQuery(period, true)}&group=end_user`).then((r) => r.end_users ?? []) : Promise.resolve(null)),
     [base, period, breakdown],
   );
   const byWorkspace = useAsync(
     () =>
       breakdown === "workspace" && canAllWs && base
-        ? get<UsageReport>(`${base}/usage?days=${period}&group=workspace`).then((r) => r.workspaces ?? [])
+        ? get<UsageReport>(`${base}/usage?${periodQuery(period)}&group=workspace`).then((r) => r.workspaces ?? [])
         : Promise.resolve(null),
     [base, period, breakdown, canAllWs],
   );
@@ -78,7 +82,7 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
             <SelectContent>
               {PERIODS.map((p) => (
                 <SelectItem key={p} value={p}>
-                  Last {p} days
+                  {periodLabel(p)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -111,7 +115,7 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
             </StatStrip>
 
             <Section
-              title="Daily"
+              title={period.endsWith("h") ? "Hourly" : "Daily"}
               actions={
                 <Tabs value={metric} onValueChange={setMetric}>
                   <TabsList aria-label="Chart metric">
@@ -175,7 +179,7 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
                     {ws ? ", across all workspaces" : ""}.
                   </p>
                   <DataState state={endUsers} rows={3}>
-                    {(rows) => <UsageTable rows={rows ?? []} first="End user" empty="No requests with a user field in this period." name={(id) => <span className="font-mono text-xs">{id}</span>} />}
+                    {(rows) => <UsageTable rows={rows ?? []} first="End user" empty={period.endsWith("h") ? "No requests with a user field today (end users are counted per day)." : "No requests with a user field in this period."} name={(id) => <span className="font-mono text-xs">{id}</span>} />}
                   </DataState>
                 </>
               ) : ws && !platform ? (
@@ -198,13 +202,17 @@ function DailyChart({ rows, metric, period }: { rows: UsageRow[]; metric: Metric
   const value = (r: UsageRow) => (metric === "spend" ? r.cost_usd : metric === "requests" ? r.requests : r.in_tokens + r.out_tokens);
   const format = (v: number) => (metric === "spend" ? money(v) : compact(v));
   const tick = (v: number, max: number) => (metric === "spend" ? usdTick(v, max) : compact(v));
-  const label = (k: string) => dayDate(k).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  // Hourly buckets are UTC yyyymmddhh; daily ones yyyymmdd.
+  const label = (k: string) =>
+    k.length === 10
+      ? new Date(Date.UTC(+k.slice(0, 4), +k.slice(4, 6) - 1, +k.slice(6, 8), +k.slice(8, 10))).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+      : dayDate(k).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   const total = rows.reduce((s, r) => s + value(r), 0);
   const peak = rows.reduce((a, r) => (value(r) > value(a) ? r : a), rows[0]);
   const name = metric === "spend" ? "spend" : metric === "requests" ? "requests" : "tokens";
   return (
     <BarChart
-      label={`Daily ${name} over the last ${period} days: ${format(total)} in total, highest on ${label(peak.key)} at ${format(value(peak))}.`}
+      label={`${period.endsWith("h") ? "Hourly" : "Daily"} ${name} over the ${periodLabel(period).toLowerCase()}: ${format(total)} in total, highest on ${label(peak.key)} at ${format(value(peak))}.`}
       format={tick}
       bars={rows.map((r) => ({
         label: label(r.key),

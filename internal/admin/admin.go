@@ -1431,13 +1431,28 @@ func (a *API) usageReport(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	// hours=1..72 reports the last hours from hourly rollups (one bucket per hour, keys yyyymmddhh)
+	// instead of days; per-end-user rows are daily only.
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	if hours < 0 || hours > 72 || (hours > 0 && group == "end_user") {
+		writeErr(w, http.StatusBadRequest, "hours must be 1..72 and cannot be combined with group=end_user")
+		return
+	}
+	buckets := days
+	if hours > 0 {
+		buckets = hours
+	}
 	daily := []usageRow{}
 	byModel, byKey, byUser, byWS := map[string]store.Agg{}, map[string]store.Agg{}, map[string]store.Agg{}, map[string]store.Agg{}
 	var total store.Agg
 	now := time.Now()
-	for d := days - 1; d >= 0; d-- {
+	for d := buckets - 1; d >= 0; d-- {
 		day := store.Day(now.AddDate(0, 0, -d))
 		prefix := "agg/" + org + "/" + day + "/"
+		if hours > 0 {
+			t := now.Add(-time.Duration(d) * time.Hour)
+			day, prefix = usage.HealthHour(t), usage.HourAggPrefix(org, t)
+		}
 		m, err := a.S.KV.ScanAgg(r.Context(), prefix)
 		if err != nil {
 			fail(w, err)

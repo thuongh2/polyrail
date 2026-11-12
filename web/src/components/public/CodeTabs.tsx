@@ -376,3 +376,60 @@ client.models.generate_content(model="${model}", contents="Hello")`,
 
 /** Gateway base URL as seen by this browser. */
 export const apiBase = () => `${location.origin}/v1`;
+
+/** Setup for coding agents and curl: point each tool at this gateway with a gateway API key. */
+export function toolSamples(model: string): Sample[] {
+  const origin = location.origin;
+  return [
+    {
+      label: "Claude Code",
+      code: `# Claude Code speaks the Anthropic API: use the gateway's /anthropic endpoint.
+export ANTHROPIC_BASE_URL="${origin}/anthropic"
+export ANTHROPIC_AUTH_TOKEN="$GATEWAY_API_KEY"
+# Gateway model ids (any model in the catalog):
+export ANTHROPIC_MODEL="${model}"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="${model}"
+claude`,
+    },
+    {
+      label: "Codex",
+      code: `# ~/.codex/config.toml
+model = "${model}"
+model_provider = "polyrail"
+
+[model_providers.polyrail]
+name = "Polyrail"
+base_url = "${origin}/v1"
+env_key = "GATEWAY_API_KEY"
+wire_api = "responses"
+
+# then: export GATEWAY_API_KEY=sk-gw-… && codex`,
+    },
+    {
+      label: "OpenCode",
+      code: `// opencode.json (project) or ~/.config/opencode/opencode.json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "polyrail": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Polyrail",
+      "options": {
+        "baseURL": "${origin}/v1",
+        "apiKey": "{env:GATEWAY_API_KEY}"
+      },
+      "models": { "${model}": { "name": "${model}" } }
+    }
+  },
+  "model": "polyrail/${model}"
+}`,
+    },
+    {
+      label: "curl",
+      code: `curl ${origin}/v1/chat/completions \\
+  -H "Authorization: Bearer $GATEWAY_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hello"}]}'`,
+    },
+  ];
+}

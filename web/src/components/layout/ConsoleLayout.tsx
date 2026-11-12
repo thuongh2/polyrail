@@ -177,7 +177,12 @@ function SettingsHub({ children }: { children: ReactNode }) {
   }, [current]);
   return (
     <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
-      <nav ref={nav} aria-label="Settings" className="no-scrollbar relative -mx-4 shrink-0 overflow-x-auto px-4 lg:mx-0 lg:w-48 lg:overflow-visible lg:px-0">
+      {/* Sticky in the scrolling panel: the tab row on top below lg, the side column from lg. */}
+      <nav
+        ref={nav}
+        aria-label="Settings"
+        className="no-scrollbar sticky top-0 z-10 -mx-4 shrink-0 overflow-x-auto bg-background px-4 lg:top-4 lg:mx-0 lg:max-h-[calc(100dvh-7rem)] lg:w-48 lg:self-start lg:overflow-y-auto lg:bg-transparent lg:px-0"
+      >
         <ul className="flex gap-1 border-b text-sm lg:flex-col lg:gap-3 lg:border-b-0">
           {groups.map((g, n) => (
             <li key={g.label ?? n} className="contents lg:block">
@@ -255,6 +260,14 @@ function WorkspaceSwitcher() {
  * scrollable by wheel, touch and keyboard since the panel is focusable).
  */
 export function ConsoleLayout({ children }: { children: ReactNode }) {
+  // The console never scrolls the document: only the content panel and the sidebar scroll. Lock
+  // html/body while the console is mounted, so focus moves, anchors or wide content can't scroll
+  // the page (which slid the top bar and the Settings menu out of view).
+  useEffect(() => {
+    document.documentElement.classList.add("console-lock");
+    return () => document.documentElement.classList.remove("console-lock");
+  }, []);
+
   const { user, orgs, org, setOrg, refresh, loading, wsId } = useSession();
   const [loc, navigate] = useLocation();
   const [open, setOpen] = useState(false);
@@ -295,7 +308,7 @@ export function ConsoleLayout({ children }: { children: ReactNode }) {
   const navLabel = admin ? "Admin area" : "Console";
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-frame">
+    <div className="flex h-dvh flex-col overflow-clip bg-frame">
       <header className="flex h-12 shrink-0 items-center gap-2 px-3">
         <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open menu" onClick={() => setOpen(true)}>
           <Menu />

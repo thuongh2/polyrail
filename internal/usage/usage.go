@@ -77,8 +77,11 @@ func (p *Pipeline) Record(l store.RequestLog) {
 		a[store.AggCacheHits] = 1
 	}
 	d := store.Day(l.At)
+	h := HourAggPrefix(l.OrgID, l.At)
 	p.mu.Lock()
 	for _, k := range []string{
+		h + "t", h + "m/" + l.Model, h + "k/" + l.KeyID, // hourly, for the last-hours views
+		HourAggPrefix("_", l.At) + "m/" + l.Model,
 		"agg/" + l.OrgID + "/" + d + "/t",
 		"agg/" + l.OrgID + "/" + d + "/m/" + l.Model,
 		"agg/" + l.OrgID + "/" + d + "/k/" + l.KeyID,
@@ -103,6 +106,10 @@ func (p *Pipeline) Record(l store.RequestLog) {
 		p.DroppedLogs.Add(1)
 	}
 }
+
+// HourAggPrefix is where an org's ("_" = platform) usage rollups of one UTC hour live. Hour
+// first, so retention deletes old hours with one range delete (store.PruneHealth).
+func HourAggPrefix(org string, t time.Time) string { return "aggh/" + HealthHour(t) + "/" + org + "/" }
 
 // AddSpend adds cost (micro-USD) to extra spend counters, read back with Spent (policy budgets,
 // D26). Never blocks.

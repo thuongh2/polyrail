@@ -847,3 +847,24 @@ func TestModelListReturnsStrategy(t *testing.T) {
 		t.Fatalf("strategy missing from list: %s", r.body)
 	}
 }
+
+// The last-hours view reads hourly rollups: one bucket per hour, the request in the current one.
+func TestUsageReportHours(t *testing.T) {
+	f := setup(t, Config{})
+	f.g.Usage.Record(store.RequestLog{OrgID: f.orgA.ID, KeyID: "k1", Model: "a/m", Status: 200, InTokens: 3, OutTokens: 4, Cost: 7, At: time.Now()})
+	var rep struct {
+		Total struct{ Requests int } `json:"total"`
+		Daily []struct {
+			Key      string
+			Requests int
+		} `json:"daily"`
+	}
+	for i := 0; i < 50 && rep.Total.Requests == 0; i++ {
+		time.Sleep(20 * time.Millisecond)
+		f.do(t, "owner", "GET", "/api/orgs/"+f.orgA.ID+"/usage?hours=3", "").json(t, &rep)
+	}
+	if rep.Total.Requests != 1 || len(rep.Daily) != 3 || rep.Daily[2].Requests != 1 || len(rep.Daily[2].Key) != 10 {
+		t.Fatalf("hours=3: %+v", rep)
+	}
+	expect(t, f.do(t, "owner", "GET", "/api/orgs/"+f.orgA.ID+"/usage?hours=100", ""), 400, "hours over 72")
+}

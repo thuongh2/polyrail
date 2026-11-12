@@ -1230,11 +1230,12 @@ func (s *Store) PruneLogs(ctx context.Context, keepDays int) error {
 	return nil
 }
 
-// PruneHealth deletes hourly provider health and per-key counters (keystat/) older than keepDays.
+// PruneHealth deletes hourly provider health, per-key counters (keystat/) and hourly usage
+// rollups (aggh/) older than keepDays.
 // Counters of deleted keys and providers are left to this retention.
 func (s *Store) PruneHealth(ctx context.Context, keepDays int) error {
 	cutoff := time.Now().AddDate(0, 0, -keepDays).UTC().Format("2006010215")
-	for _, p := range []string{"health/", "keystat/"} {
+	for _, p := range []string{"health/", "keystat/", "aggh/"} {
 		if err := s.KV.DeleteRange(ctx, p, p+cutoff); err != nil {
 			return err
 		}

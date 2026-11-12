@@ -4,7 +4,7 @@ import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataState, EmptyState } from "@/components/states";
-import { apiBase, CodeTabs, CopyButton, requestSamples } from "@/components/public/CodeTabs";
+import { apiBase, CodeTabs, CopyButton, requestSamples, toolSamples } from "@/components/public/CodeTabs";
 import { ModelListHead, ModelRow } from "@/components/public/ModelRow";
 import { publicApi, type ModelInfo } from "@/lib/api";
 import { useAsync } from "@/lib/hooks";
@@ -117,6 +117,21 @@ export default function Home() {
           </ol>
         </div>
         <CodeTabs samples={requestSamples(base, example)} />
+      </section>
+
+      <section aria-labelledby="tools-h" className="grid gap-8 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+        <div>
+          <h2 id="tools-h" className="text-xl font-semibold tracking-tight">
+            Use it from your coding agent
+          </h2>
+          <p className="mt-4 text-sm text-muted-foreground">
+            Claude Code, Codex and OpenCode work through the gateway with a gateway API key in{" "}
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">GATEWAY_API_KEY</code>. Claude Code uses the
+            Anthropic-compatible endpoint; Codex and OpenCode use the OpenAI-compatible one. Any model id from the
+            catalog works, so one agent can switch between providers.
+          </p>
+        </div>
+        <CodeTabs samples={toolSamples(example)} />
       </section>
     </div>
   );

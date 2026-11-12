@@ -126,6 +126,13 @@
   body {
     overflow-x: clip;
   }
+  /* Set by ConsoleLayout: the document itself never scrolls in the console. */
+  html.console-lock,
+  html.console-lock body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
   body {
     @apply bg-background text-foreground antialiased;
     font-family: var(--font-sans);

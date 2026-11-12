@@ -1008,3 +1008,9 @@ Requests routed to an `opencode-go` or `opencode-zen` provider carry `x-opencode
 (letters, digits, `. _ : -`, ≤128 chars) to choose the session id; otherwise the gateway derives one
 from the API key and the conversation's first two messages, so all turns of a conversation share it
 (D35).
+
+### Usage: last hours
+
+`GET …/usage?hours=N` (1–72) returns the same report from hourly rollups: `daily` holds one row per
+UTC hour (`key` = `yyyymmddhh`). Not combinable with `group=end_user` (end users are counted per day).
+Hourly rollups (`aggh/`) are kept 30 days, like provider health.

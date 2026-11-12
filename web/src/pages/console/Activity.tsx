@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
-import { Download } from "lucide-react";
+import { ChevronDown, Download, Terminal } from "lucide-react";
+import { CodeTabs, toolSamples } from "@/components/public/CodeTabs";
 import type { Scope } from "@/App";
 import { BarChart } from "@/components/console/BarChart";
 import { Section, Stat, StatStrip, TableFrame, dayDate, money, ms, usdTick } from "@/components/console/bits";
@@ -11,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PLATFORM, compact, fmt, get, orgBase, pct, usd, type APIKey, type Org, type UsageReport, type UsageRow } from "@/lib/api";
+import { PLATFORM, publicApi, compact, fmt, get, orgBase, pct, usd, type APIKey, type Org, type UsageReport, type UsageRow } from "@/lib/api";
 import { useAsync, useQueryParam } from "@/lib/hooks";
 import { useSession } from "@/lib/session";
 import { Link } from "wouter";
@@ -91,6 +92,8 @@ export default function Activity({ scope = "org" }: { scope?: Scope }) {
         }
       />
       <ExportDialog open={exporting} onOpenChange={setExporting} base={base} platform={platform} workspace={platform ? undefined : ws?.id} allWs={canAllWs && !ws} />
+
+      {!platform && <ConnectTools firstRun={usage.data ? usage.data.total.requests === 0 : false} />}
 
       <DataState state={usage} rows={3}>
         {(u) => (
@@ -353,5 +356,63 @@ function ExportDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+const CONNECT_KEY = "polyrail.activity.connect";
+
+/** Setup for Claude Code, Codex, OpenCode and curl. Open on a first run (no requests yet); the
+ *  viewer's open/closed choice is remembered in this browser. */
+function ConnectTools({ firstRun }: { firstRun: boolean }) {
+  const [pref, setPref] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(CONNECT_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const open = pref ? pref === "open" : firstRun;
+  const toggle = () => {
+    const next = open ? "closed" : "open";
+    setPref(next);
+    try {
+      localStorage.setItem(CONNECT_KEY, next);
+    } catch {
+      /* private mode: keep it for this visit only */
+    }
+  };
+  const models = useAsync(() => publicApi.models(), []);
+  const example = models.data?.find((m) => m.kind === "chat")?.id ?? "openai/gpt-4o-mini";
+  return (
+    <section aria-labelledby="connect-h" className="mb-6 rounded-lg border">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        aria-controls="connect-body"
+        className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left hover:bg-muted/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+      >
+        <Terminal className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="min-w-0 flex-1">
+          <span id="connect-h" className="block text-sm font-medium">
+            Connect Claude Code, Codex, OpenCode or curl
+          </span>
+          <span className="block text-xs text-muted-foreground">Point your tool at this gateway with an API key from API keys.</span>
+        </span>
+        <ChevronDown className={"size-4 shrink-0 text-muted-foreground " + (open ? "rotate-180" : "")} aria-hidden />
+      </button>
+      {open && (
+        <div id="connect-body" className="border-t px-4 pt-3 pb-4">
+          <p className="mb-3 text-sm text-muted-foreground">
+            Set <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">GATEWAY_API_KEY</code> to a key from{" "}
+            <Link href="/keys" className="underline underline-offset-4">
+              API keys
+            </Link>
+            . Any model id from Models works; Claude Code uses the Anthropic-compatible endpoint, the others the OpenAI-compatible one.
+          </p>
+          <CodeTabs samples={toolSamples(example)} />
+        </div>
+      )}
+    </section>
   );
 }
